@@ -293,12 +293,33 @@ const config: ExpoConfig = {
       "expo-camera",
       {
         cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
-        microphonePermission: false,
+        // The voice oracle records mic audio via WebRTC; `false` here would
+        // delete the usage description that the webrtc plugin adds.
+        microphonePermission:
+          "Allow T3 Code to use the microphone for voice conversations with the oracle.",
         barcodeScannerEnabled: true,
-        recordAudioAndroid: false,
+        recordAudioAndroid: true,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: false,
+        microphonePermission:
+          "Allow T3 Code to use the microphone for voice conversations with the oracle.",
+      },
+    ],
+    [
+      "@config-plugins/react-native-webrtc",
+      {
+        // Voice oracle: WebRTC carries mic audio directly to the realtime
+        // speech provider. Camera stays unused; the plugin requires a usage
+        // string but no camera permission is ever requested at runtime.
+        microphonePermission:
+          "Allow T3 Code to use the microphone for voice conversations with the oracle.",
+        cameraPermission: "T3 Code does not use the camera for voice sessions.",
+      },
+    ],
     [
       "expo-splash-screen",
       {
