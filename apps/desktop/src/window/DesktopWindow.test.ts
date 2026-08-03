@@ -61,7 +61,12 @@ const environmentInput = {
 function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
+  const session = {
+    setPermissionRequestHandler: vi.fn(),
+    setPermissionCheckHandler: vi.fn(),
+  };
   const webContents = {
+    session,
     copyImageAt: vi.fn(),
     getURL: vi.fn(() => "t3code-dev://app/"),
     isLoadingMainFrame: vi.fn(() => false),
@@ -117,6 +122,8 @@ function makeFakeBrowserWindow() {
     reload: webContents.reload,
     send: webContents.send,
     setAutoHideCursor: window.setAutoHideCursor,
+    setPermissionRequestHandler: session.setPermissionRequestHandler,
+    setPermissionCheckHandler: session.setPermissionCheckHandler,
     webContentsListeners,
     windowListeners,
   };
@@ -434,6 +441,44 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("grants the microphone to the renderer and denies unrequested permissions", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        createdWindowOptions: [],
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.activate;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const requestHandler = fakeWindow.setPermissionRequestHandler.mock.calls[0]?.[0];
+        const checkHandler = fakeWindow.setPermissionCheckHandler.mock.calls[0]?.[0];
+        assert.isFunction(requestHandler);
+        assert.isFunction(checkHandler);
+
+        // The voice oracle depends on `media`; clipboard needs both handlers.
+        for (const permission of ["media", "clipboard-read", "clipboard-sanitized-write"]) {
+          const granted = vi.fn();
+          requestHandler(null, permission, granted);
+          assert.deepEqual(granted.mock.calls, [[true]], `expected ${permission} to be granted`);
+          assert.isTrue(checkHandler(null, permission), `expected ${permission} check to pass`);
+        }
+
+        for (const permission of ["geolocation", "display-capture", "midi", "hid"]) {
+          const denied = vi.fn();
+          requestHandler(null, permission, denied);
+          assert.deepEqual(denied.mock.calls, [[false]], `expected ${permission} to be denied`);
+          assert.isFalse(checkHandler(null, permission), `expected ${permission} check to fail`);
+        }
       }).pipe(Effect.provide(layer));
     }),
   );

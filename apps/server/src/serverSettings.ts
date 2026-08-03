@@ -97,6 +97,16 @@ function redactProviderEnvironmentVariable(
   };
 }
 
+const VOICE_OPENAI_API_KEY_SECRET_NAME = "voice-openai-api-key";
+
+function redactVoiceSettings(voice: ServerSettings["voice"]): ServerSettings["voice"] {
+  if (voice.openaiApiKey.length === 0 && !voice.openaiApiKeyRedacted) {
+    const { openaiApiKeyRedacted: _omit, ...rest } = voice;
+    return rest;
+  }
+  return { ...voice, openaiApiKey: "", openaiApiKeyRedacted: true };
+}
+
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
@@ -109,7 +119,7 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  return { ...settings, providerInstances, voice: redactVoiceSettings(settings.voice) };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -358,12 +368,82 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializeVoiceSecret = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      if (!settings.voice.openaiApiKeyRedacted) {
+        return settings;
+      }
+      const secret = yield* secretStore.get(VOICE_OPENAI_API_KEY_SECRET_NAME).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "read-secret",
+              cause,
+            }),
+        ),
+      );
+      return {
+        ...settings,
+        voice: {
+          ...settings.voice,
+          openaiApiKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        },
+      };
+    });
+
+  const materializeSecrets = (settings: ServerSettings) =>
+    materializeProviderEnvironmentSecrets(settings).pipe(Effect.flatMap(materializeVoiceSecret));
+
+  // A freshly submitted key always wins over the redacted marker; the marker
+  // only means "value lives in the secret store", never "ignore the patch".
+  const persistVoiceSecret = (
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      if (next.voice.openaiApiKey.length > 0) {
+        yield* secretStore
+          .set(VOICE_OPENAI_API_KEY_SECRET_NAME, textEncoder.encode(next.voice.openaiApiKey))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "write-secret",
+                  cause,
+                }),
+            ),
+          );
+        return {
+          ...next,
+          voice: { ...next.voice, openaiApiKey: "", openaiApiKeyRedacted: true },
+        };
+      }
+      if (next.voice.openaiApiKeyRedacted) {
+        return next;
+      }
+      yield* secretStore.remove(VOICE_OPENAI_API_KEY_SECRET_NAME).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "remove-secret",
+              cause,
+            }),
+        ),
+      );
+      const { openaiApiKeyRedacted: _omit, ...voice } = next.voice;
+      return { ...next, voice };
+    });
+
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
     changes.pipe(
       Stream.mapEffect((settings) =>
-        materializeProviderEnvironmentSecrets(settings).pipe(
+        materializeSecrets(settings).pipe(
           Effect.catch((error: ServerSettingsError) =>
-            Effect.logWarning("failed to materialize provider environment secrets", {
+            Effect.logWarning("failed to materialize settings secrets", {
               operation: error.operation,
               providerInstanceId: error.providerInstanceId,
               environmentVariable: error.environmentVariable,
@@ -572,7 +652,7 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
-      Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
@@ -582,12 +662,12 @@ const make = Effect.gen(function* () {
           const nextPersisted = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
-          );
+          ).pipe(Effect.flatMap(persistVoiceSecret));
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const materialized = yield* materializeSecrets(next);
           return resolveTextGenerationProvider(materialized);
         }),
       ),

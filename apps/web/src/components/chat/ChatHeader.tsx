@@ -19,6 +19,9 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { cn } from "~/lib/utils";
+import { AudioLinesIcon } from "lucide-react";
+import { openVoiceMode } from "~/voice/voiceModeBus";
+import { Button } from "../ui/button";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -140,6 +143,23 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Talk to the voice oracle"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => openVoiceMode()}
+              />
+            }
+          >
+            <AudioLinesIcon className="size-4" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Voice oracle</TooltipPopup>
+        </Tooltip>
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

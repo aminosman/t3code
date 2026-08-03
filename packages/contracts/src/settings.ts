@@ -401,6 +401,20 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+// Voice oracle settings. The OpenAI API key follows the same redaction
+// contract as sensitive provider environment variables: the server moves a
+// freshly submitted key into the secret store, persists/serves `openaiApiKey`
+// as "" with `openaiApiKeyRedacted: true`, and rehydrates the real value only
+// for server-internal reads. A non-empty submitted value always replaces the
+// stored secret; empty with `openaiApiKeyRedacted` unset clears it.
+export const VoiceSettings = Schema.Struct({
+  openaiApiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  openaiApiKeyRedacted: Schema.optionalKey(Schema.Boolean),
+  model: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  voice: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type VoiceSettings = typeof VoiceSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -530,6 +544,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  voice: VoiceSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -654,6 +669,14 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  voice: Schema.optionalKey(
+    Schema.Struct({
+      openaiApiKey: Schema.optionalKey(TrimmedString),
+      openaiApiKeyRedacted: Schema.optionalKey(Schema.Boolean),
+      model: Schema.optionalKey(TrimmedString),
+      voice: Schema.optionalKey(TrimmedString),
     }),
   ),
   providers: Schema.optionalKey(

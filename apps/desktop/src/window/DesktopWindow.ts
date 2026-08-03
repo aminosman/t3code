@@ -19,6 +19,19 @@ import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/cha
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
+// Permissions the T3 UI itself is allowed to request in the main window.
+// Electron grants every permission when no handler is installed, so voice
+// worked only by accident; naming the list makes microphone access a decision
+// and closes the rest. `media` covers getUserMedia for the voice oracle.
+// Clipboard needs both entries and both handlers — async writes are gated by
+// the *check* handler, not just the request handler (see BrowserSession.ts).
+// The preview browser runs in its own partition with its own, tighter list.
+const ALLOWED_MAIN_WINDOW_PERMISSIONS: ReadonlySet<string> = new Set([
+  "media",
+  "clipboard-read",
+  "clipboard-sanitized-write",
+]);
+
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
@@ -342,6 +355,14 @@ export const make = Effect.gen(function* () {
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
+
+    window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
+      callback(ALLOWED_MAIN_WINDOW_PERMISSIONS.has(permission));
+    });
+    window.webContents.session.setPermissionCheckHandler((_webContents, permission) =>
+      ALLOWED_MAIN_WINDOW_PERMISSIONS.has(permission),
+    );
+
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;

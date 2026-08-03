@@ -223,6 +223,8 @@ import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
+import { VoiceOverlay } from "~/voice/VoiceOverlay";
+import { onOpenVoiceMode } from "~/voice/voiceModeBus";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -1577,6 +1579,8 @@ function ChatViewContent(props: ChatViewProps) {
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
+  const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false);
+  useEffect(() => onOpenVoiceMode(() => setVoiceOverlayOpen(true)), []);
   const sourcePlanThreadRef = useMemo(() => {
     const sourceThreadId = activeLatestTurn?.sourceProposedPlan?.threadId;
     if (!activeThread || !sourceThreadId || sourceThreadId === activeThread.id) {
@@ -4556,6 +4560,59 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  // Voice oracle sends bypass the composer entirely: no draft is touched and
+  // no optimistic message is pushed — the thread stream materializes the
+  // message when the server echoes it.
+  const sendVoiceAgentMessage = useCallback(
+    async (text: string): Promise<string | null> => {
+      if (!activeThread || !isServerThread) {
+        return "This conversation has not started yet — send the first message from the composer.";
+      }
+      if (isConnecting || activeEnvironmentUnavailable) {
+        return "The environment is not connected right now.";
+      }
+      const sendCtx = composerRef.current?.getSendContext();
+      if (!sendCtx?.providerAvailable) {
+        return "The agent provider is not available right now.";
+      }
+      const outgoingText = formatOutgoingPrompt({
+        provider: sendCtx.selectedProvider,
+        model: sendCtx.selectedModel,
+        models: sendCtx.selectedProviderModels,
+        effort: sendCtx.selectedPromptEffort,
+        text,
+      });
+      const startResult = await startThreadTurn({
+        environmentId,
+        input: {
+          threadId: activeThread.id,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: outgoingText,
+            attachments: [],
+          },
+          modelSelection: sendCtx.selectedModelSelection,
+          runtimeMode,
+          interactionMode,
+        },
+      });
+      return startResult._tag === "Failure"
+        ? chatActionErrorMessage(squashAtomCommandFailure(startResult))
+        : null;
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeThread,
+      environmentId,
+      interactionMode,
+      isConnecting,
+      isServerThread,
+      runtimeMode,
+      startThreadTurn,
+    ],
+  );
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     if (
@@ -6169,6 +6226,19 @@ function ChatViewContent(props: ChatViewProps) {
           </RightPanelTabs>
         </RightPanelSheet>
       ) : null}
+
+      {voiceOverlayOpen && activeThread && (
+        <VoiceOverlay
+          environmentId={environmentId}
+          threadTitle={activeThread.title}
+          projectName={activeProject?.title ?? null}
+          messages={activeThread.messages}
+          session={activeThread.session ?? null}
+          latestTurn={activeLatestTurn}
+          onSendToAgent={sendVoiceAgentMessage}
+          onClose={() => setVoiceOverlayOpen(false)}
+        />
+      )}
 
       {expandedImage && (
         <ExpandedImageDialog

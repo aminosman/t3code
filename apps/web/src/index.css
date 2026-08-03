@@ -1670,3 +1670,87 @@ label:has(> select#reasoning-effort) select {
   opacity: 0.3;
   pointer-events: none;
 }
+
+/* ── Voice oracle orb ─────────────────────────────────────────────────
+   The orb never runs a continuous animation: `--voice-orb-level` is written
+   from a rAF loop only while live audio energy changes, and the finite
+   transitions below cover status changes. Silence paints nothing. */
+.voice-orb {
+  --voice-orb-level: 0;
+  --voice-orb-hue: var(--color-primary);
+  position: relative;
+  width: clamp(9rem, 28vmin, 13rem);
+  aspect-ratio: 1;
+}
+
+.voice-orb[data-status="connecting"] {
+  --voice-orb-hue: color-mix(in oklab, var(--color-muted-foreground) 70%, transparent);
+}
+
+.voice-orb[data-status="listening"] {
+  --voice-orb-hue: oklch(0.75 0.13 200);
+}
+
+.voice-orb[data-status="thinking"] {
+  --voice-orb-hue: oklch(0.68 0.16 295);
+}
+
+.voice-orb[data-status="speaking"] {
+  --voice-orb-hue: oklch(0.78 0.14 85);
+}
+
+.voice-orb[data-status="error"] {
+  --voice-orb-hue: var(--color-destructive);
+}
+
+.voice-orb-halo {
+  position: absolute;
+  inset: -30%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--voice-orb-hue) 55%, transparent) 0%,
+    transparent 70%
+  );
+  filter: blur(18px);
+  opacity: calc(0.35 + var(--voice-orb-level) * 0.65);
+  transform: scale(calc(1 + var(--voice-orb-level) * 0.22));
+  transition: opacity 600ms ease;
+}
+
+.voice-orb-ring {
+  position: absolute;
+  inset: -6%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--voice-orb-hue) 45%, transparent);
+  opacity: calc(0.4 + var(--voice-orb-level) * 0.6);
+  transform: scale(calc(1 + var(--voice-orb-level) * 0.12));
+}
+
+.voice-orb-core {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 28%,
+    color-mix(in oklab, white 55%, var(--voice-orb-hue)) 0%,
+    color-mix(in oklab, var(--voice-orb-hue) 85%, var(--color-background)) 38%,
+    color-mix(in oklab, var(--voice-orb-hue) 40%, var(--color-background)) 100%
+  );
+  box-shadow:
+    inset 0 -1.5rem 3rem color-mix(in oklab, var(--voice-orb-hue) 35%, transparent),
+    0 0 3rem color-mix(in oklab, var(--voice-orb-hue) 30%, transparent);
+  transform: scale(calc(1 + var(--voice-orb-level) * 0.09));
+  transition:
+    background 600ms ease,
+    box-shadow 600ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-orb-halo,
+  .voice-orb-ring,
+  .voice-orb-core {
+    transform: none;
+    transition: none;
+  }
+}

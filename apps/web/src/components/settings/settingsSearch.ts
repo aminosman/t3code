@@ -5,6 +5,7 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/source-control"
   | "/settings/connections"
+  | "/settings/voice"
   | "/settings/beta"
   | "/settings/archived";
 
@@ -26,6 +27,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
+  "/settings/voice": "Voice",
   "/settings/beta": "Beta",
   "/settings/archived": "Archive",
 };
@@ -145,6 +147,21 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",
+  },
+  {
+    id: "voice-openai-api-key",
+    title: "Voice OpenAI API key",
+    to: "/settings/voice",
+  },
+  {
+    id: "voice-realtime-model",
+    title: "Voice model",
+    to: "/settings/voice",
+  },
+  {
+    id: "voice-oracle-voice",
+    title: "Oracle voice",
+    to: "/settings/voice",
   },
   {
     id: "sidebar-v2",

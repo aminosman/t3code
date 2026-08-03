@@ -691,4 +691,64 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("stores the voice OpenAI API key outside settings.json", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const next = yield* serverSettings.updateSettings({
+        voice: { openaiApiKey: "sk-voice-secret", model: "gpt-realtime" },
+      });
+      assert.deepEqual(next.voice, {
+        openaiApiKey: "sk-voice-secret",
+        openaiApiKeyRedacted: true,
+        model: "gpt-realtime",
+        voice: "",
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "sk-voice-secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).voice, {
+        openaiApiKeyRedacted: true,
+        model: "gpt-realtime",
+      });
+
+      // A patch that leaves the key redacted keeps the stored secret.
+      const roundTripped = yield* serverSettings.updateSettings({
+        voice: { voice: "cedar" },
+      });
+      assert.equal(roundTripped.voice.openaiApiKey, "sk-voice-secret");
+      assert.equal(roundTripped.voice.voice, "cedar");
+
+      // Clearing the key removes the secret and the redaction marker.
+      const cleared = yield* serverSettings.updateSettings({
+        voice: { openaiApiKey: "", openaiApiKeyRedacted: false },
+      });
+      assert.deepEqual(cleared.voice, { openaiApiKey: "", model: "gpt-realtime", voice: "cedar" });
+
+      assert.notInclude(
+        yield* fileSystem.readFileString(serverConfig.settingsPath),
+        "openaiApiKeyRedacted",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("redacts the voice OpenAI API key for clients", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const next = yield* serverSettings.updateSettings({
+        voice: { openaiApiKey: "sk-voice-secret" },
+      });
+      const redacted = ServerSettingsModule.redactServerSettingsForClient(next);
+      assert.deepEqual(redacted.voice, {
+        openaiApiKey: "",
+        openaiApiKeyRedacted: true,
+        model: "",
+        voice: "",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 });

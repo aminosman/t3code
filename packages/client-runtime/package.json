@@ -123,6 +123,10 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/voiceHttp": {
+      "types": "./src/state/voiceHttp.ts",
+      "default": "./src/state/voiceHttp.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
