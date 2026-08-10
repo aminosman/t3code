@@ -164,6 +164,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/voice",
   },
   {
+    id: "voice-microphone-access",
+    title: "Microphone access",
+    to: "/settings/voice",
+  },
+  {
     id: "sidebar-v2",
     title: "Sidebar v2",
     to: "/settings/beta",

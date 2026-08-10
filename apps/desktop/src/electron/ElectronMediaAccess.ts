@@ -35,7 +35,16 @@ export const make = ElectronMediaAccess.of({
         return Effect.succeed<DesktopMicrophoneAccess>(status);
       }
       return Effect.promise(() => Electron.systemPreferences.askForMediaAccess("microphone")).pipe(
-        Effect.map((granted): DesktopMicrophoneAccess => (granted ? "granted" : "denied")),
+        // `ask` returning false covers two very different cases: the user
+        // declined (status flips to "denied") or macOS suppressed the prompt
+        // entirely (status stays "not-determined" and nothing is recorded —
+        // headless/scripted launch contexts do this). Re-read the status
+        // instead of assuming a denial, so a suppressed prompt does not
+        // block the renderer's own getUserMedia prompt path.
+        Effect.map(
+          (granted): DesktopMicrophoneAccess =>
+            granted ? "granted" : Electron.systemPreferences.getMediaAccessStatus("microphone"),
+        ),
         // A rejected TCC call means the OS refused to answer, not that the
         // user declined; report the status rather than inventing a denial.
         Effect.catchCause(() =>

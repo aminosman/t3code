@@ -91,6 +91,74 @@ function VoiceApiKeyControl({
   );
 }
 
+type MicrophoneCheckState =
+  | { readonly kind: "idle" }
+  | { readonly kind: "checking" }
+  | { readonly kind: "result"; readonly granted: boolean; readonly detail: string };
+
+function MicrophoneAccessControl() {
+  const [state, setState] = useState<MicrophoneCheckState>({ kind: "idle" });
+
+  const request = async () => {
+    setState({ kind: "checking" });
+    // Desktop first: resolves the macOS-level (TCC) grant and raises the
+    // system prompt when the user has never been asked.
+    const osStatus = await window.desktopBridge
+      ?.requestMicrophoneAccess?.()
+      .catch(() => "unknown" as const);
+    if (osStatus === "denied" || osStatus === "restricted") {
+      setState({
+        kind: "result",
+        granted: false,
+        detail:
+          "macOS reports microphone access as denied. Enable T3 Code in System Settings → Privacy & Security → Microphone, then request again.",
+      });
+      return;
+    }
+    // Browser layer: triggers the in-app prompt and proves capture works.
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      for (const track of stream.getTracks()) track.stop();
+      setState({ kind: "result", granted: true, detail: "Microphone access is granted." });
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : "";
+      setState({
+        kind: "result",
+        granted: false,
+        detail:
+          name === "NotAllowedError" || name === "SecurityError"
+            ? osStatus === "not-determined" || osStatus === "unknown"
+              ? "The system never showed a permission prompt. Quit and relaunch the app from Finder, then request again."
+              : "Microphone access was denied at the browser layer. Allow the microphone for this app and request again."
+            : name === "NotFoundError"
+              ? "No microphone device was found."
+              : "Could not open the microphone.",
+      });
+    }
+  };
+
+  return (
+    <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:items-end">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={state.kind === "checking"}
+        onClick={() => void request()}
+      >
+        {state.kind === "checking" ? "Requesting…" : "Request microphone access"}
+      </Button>
+      {state.kind === "result" && (
+        <p
+          className={`max-w-72 text-xs ${state.granted ? "text-muted-foreground" : "text-destructive"}`}
+        >
+          {state.detail}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function VoiceSettingsPanel() {
   const voice = usePrimarySettings((settings) => settings.voice);
   const updateSettings = useUpdatePrimarySettings();
@@ -119,6 +187,11 @@ export function VoiceSettingsPanel() {
               onCommit={(model) => updateSettings({ voice: { model } })}
             />
           }
+        />
+        <SettingsRow
+          {...searchableSetting("voice-microphone-access")}
+          description="Trigger the system microphone permission prompt without starting a voice session, and see exactly what the OS reports. Useful when a session says the microphone is blocked."
+          control={<MicrophoneAccessControl />}
         />
         <SettingsRow
           {...searchableSetting("voice-oracle-voice")}
