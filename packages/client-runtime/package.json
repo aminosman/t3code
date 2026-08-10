@@ -127,6 +127,14 @@
       "types": "./src/state/voiceHttp.ts",
       "default": "./src/state/voiceHttp.ts"
     },
+    "./voice/oracle": {
+      "types": "./src/voice/oracle.ts",
+      "default": "./src/voice/oracle.ts"
+    },
+    "./voice/realtimeSession": {
+      "types": "./src/voice/realtimeSession.ts",
+      "default": "./src/voice/realtimeSession.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"

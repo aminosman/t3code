@@ -239,7 +239,9 @@ export const VoiceOverlay = memo(function VoiceOverlay({
     inputAnalyser.fftSize = 256;
     const outputAnalyser = audioContext.createAnalyser();
     outputAnalyser.fftSize = 256;
-    audioContext.createMediaStreamSource(voiceSession.localStream).connect(inputAnalyser);
+    audioContext
+      .createMediaStreamSource(voiceSession.localStream as MediaStream)
+      .connect(inputAnalyser);
 
     let outputAttached = false;
     const inputData = new Uint8Array(inputAnalyser.frequencyBinCount);
@@ -256,7 +258,9 @@ export const VoiceOverlay = memo(function VoiceOverlay({
 
     const tick = () => {
       if (!outputAttached && voiceSession.remoteStream) {
-        audioContext.createMediaStreamSource(voiceSession.remoteStream).connect(outputAnalyser);
+        audioContext
+          .createMediaStreamSource(voiceSession.remoteStream as MediaStream)
+          .connect(outputAnalyser);
         outputAttached = true;
       }
       const level = Math.min(

@@ -25,6 +25,7 @@ import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/Thread
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
+import { VoiceOracleScreen } from "./features/voice/VoiceOracleScreen";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
@@ -269,6 +270,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "SettingsLegal",
   "SettingsSheet",
   "ThreadReviewComment",
+  "ThreadVoiceOracle",
 ]);
 
 /**
@@ -420,6 +422,14 @@ export const RootStack = createNativeStackNavigator({
         presentation: Platform.OS === "android" ? "fullScreenModal" : "formSheet",
         sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
         sheetGrabberVisible: Platform.OS !== "android",
+      },
+    }),
+    ThreadVoiceOracle: createNativeStackScreen({
+      screen: VoiceOracleScreen,
+      linking: `${THREAD_LINKING_PREFIX}/voice`,
+      options: {
+        presentation: "fullScreenModal",
+        headerShown: false,
       },
     }),
     ThreadFiles: createNativeStackScreen({

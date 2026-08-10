@@ -660,6 +660,24 @@ function ThreadRouteContent(
     ],
     [panes.primarySidebarVisible, props.onReturnToThread, navigation, togglePrimarySidebar],
   );
+  const openVoiceOracle = useCallback(() => {
+    navigation.navigate("ThreadVoiceOracle", {
+      environmentId: props.route.params.environmentId,
+      threadId: props.route.params.threadId,
+    });
+  }, [navigation, props.route.params.environmentId, props.route.params.threadId]);
+  const voiceHeaderItems = useMemo<NativeHeaderItems>(
+    () => [
+      withNativeGlassHeaderItem({
+        accessibilityLabel: "Talk to the voice oracle",
+        icon: { name: "mic", type: "sfSymbol" as const },
+        identifier: "thread-right-voice",
+        onPress: openVoiceOracle,
+        type: "button" as const,
+      }),
+    ],
+    [openVoiceOracle],
+  );
   const androidHeaderActions = useMemo<ReadonlyArray<AndroidHeaderAction>>(() => {
     if (Platform.OS !== "android") return [];
 
@@ -671,6 +689,11 @@ function ThreadRouteContent(
         onPress: props.onReturnToThread,
       });
     }
+    actions.push({
+      accessibilityLabel: "Talk to the voice oracle",
+      icon: "mic",
+      onPress: openVoiceOracle,
+    });
     if (selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Open files",
@@ -704,6 +727,7 @@ function ThreadRouteContent(
     handleOpenTerminal,
     handleOpenGitInspector,
     handleToggleInspector,
+    openVoiceOracle,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
@@ -827,7 +851,10 @@ function ThreadRouteContent(
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+              ? () => [
+                  ...voiceHeaderItems,
+                  ...(layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems),
+                ]
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
         }}

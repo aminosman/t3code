@@ -1535,9 +1535,18 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       }
     | undefined,
 ) {
+  // Personal side-install builds: a distinct bundle id + product name lets a
+  // feature-branch build run beside the official install (LaunchServices and
+  // Electron userData both key off these), and T3CODE_DESKTOP_HOME bakes an
+  // LSEnvironment T3CODE_HOME into the app so Finder launches use their own
+  // data directory instead of contending for ~/.t3 with the official app.
+  const appIdOverride = process.env.T3CODE_DESKTOP_APP_ID?.trim();
+  const productNameOverride = process.env.T3CODE_DESKTOP_PRODUCT_NAME?.trim();
+  const homeDirOverride = process.env.T3CODE_DESKTOP_HOME?.trim();
+
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
+    appId: appIdOverride || DESKTOP_APP_ID,
+    productName: productNameOverride || resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [...DESKTOP_FILE_EXCLUSIONS],
@@ -1579,13 +1588,18 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSMicrophoneUsageDescription:
           "T3 Code uses the microphone for voice conversations with the oracle.",
+        ...(homeDirOverride ? { LSEnvironment: { T3CODE_HOME: homeDirOverride } } : {}),
       },
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
             provisioningProfile: macPasskeySigning.provisioningProfilePath,
           }
-        : {}),
+        : // Ad-hoc sign unsigned local builds. Without any signature identity
+          // the app ships with Electron's stub linker signature, which
+          // LaunchServices refuses to launch and TCC refuses to attribute —
+          // no mic prompt, no folder-access prompts, silent denials only.
+          { identity: "-" }),
     };
   }
 
