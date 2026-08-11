@@ -859,6 +859,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -1534,6 +1536,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
+  adhocEntitlementsPath?: string,
 ) {
   // Personal side-install builds: a distinct bundle id + product name lets a
   // feature-branch build run beside the official install (LaunchServices and
@@ -1599,7 +1602,20 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           // the app ships with Electron's stub linker signature, which
           // LaunchServices refuses to launch and TCC refuses to attribute —
           // no mic prompt, no folder-access prompts, silent denials only.
-          { identity: "-" }),
+          // Explicit entitlements (absolute path — electron-builder resolves
+          // relative paths against the staged project, not the repo): the
+          // hardened runtime auto-denies microphone access (silently,
+          // promptlessly) without device.audio-input, which Electron's
+          // defaults omit.
+          {
+            identity: "-",
+            ...(adhocEntitlementsPath
+              ? {
+                  entitlements: adhocEntitlementsPath,
+                  entitlementsInherit: adhocEntitlementsPath,
+                }
+              : {}),
+          }),
     };
   }
 
@@ -1907,6 +1923,17 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* fs.writeFileString(macEntitlementsPath, renderMacPasskeyEntitlements(macPasskeySigning));
   }
 
+  // Unsigned mac builds are ad-hoc signed with explicit entitlements; stage
+  // the plist so electron-builder gets an absolute path.
+  let adhocEntitlementsPath: string | undefined;
+  if (options.platform === "mac" && !macPasskeySigning) {
+    adhocEntitlementsPath = path.join(stageAppDir, "entitlements.adhoc.plist");
+    yield* fs.copyFile(
+      path.join(repoRoot, "apps/desktop/resources/entitlements.adhoc.plist"),
+      adhocEntitlementsPath,
+    );
+  }
+
   const stageDependencies = {
     ...resolvedServerDependencies,
     ...resolvedDesktopRuntimeDependencies,
@@ -1954,6 +1981,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
+      adhocEntitlementsPath,
     ),
     dependencies: stageDependencies,
     devDependencies: {
