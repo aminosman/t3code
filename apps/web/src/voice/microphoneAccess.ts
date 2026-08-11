@@ -42,7 +42,11 @@ export async function acquireMicrophoneStream(): Promise<MediaStream> {
   }
 
   try {
-    return await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Echo cancellation keeps the oracle's own voice, played through the
+    // speakers, from being captured and read as the user interrupting.
+    return await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
   } catch (error) {
     const name = error instanceof DOMException ? error.name : "";
     if (name === "NotAllowedError" || name === "SecurityError") {

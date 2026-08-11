@@ -61,6 +61,19 @@ export interface PeerConnectionLike {
 }
 
 export interface VoicePlatform {
+  /**
+   * Mic distance profile for server-side noise reduction. A handset is
+   * near-field; a laptop across a desk (speakers well away from the mic) is
+   * far-field. Defaults to far-field.
+   */
+  readonly audioEnvironment?: "near_field" | "far_field";
+  /**
+   * Mute the microphone for as long as the oracle is speaking. Needed where
+   * the speaker feeds the mic badly enough that echo reads as the user
+   * talking (a phone on speakerphone); it trades away mid-sentence barge-in
+   * for not being interrupted by itself.
+   */
+  readonly suppressEchoByMuting?: boolean;
   /** Acquire the microphone stream, raising platform permission prompts. */
   acquireAudioStream(): Promise<MediaStreamLike>;
   createPeerConnection(): PeerConnectionLike;
@@ -122,6 +135,8 @@ export class RealtimeVoiceSession {
   private detachRemoteAudio: (() => void) | null = null;
   private assistantTranscriptBuffer = "";
   private closed = false;
+  private userMuted = false;
+  private oracleSpeaking = false;
   private hangUpPending = false;
   private hangUpTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -207,7 +222,28 @@ export class RealtimeVoiceSession {
             parameters: tool.parameters,
           })),
           tool_choice: "auto",
-          audio: { input: { transcription: { model: "whisper-1" } } },
+          audio: {
+            input: {
+              // gpt-4o-mini-transcribe over whisper-1: whisper hallucinates
+              // confident text out of near-silence and speaker bleed, which
+              // surfaces as the oracle "hearing" words nobody said.
+              transcription: { model: "gpt-4o-mini-transcribe" },
+              noise_reduction: {
+                type: this.platform.audioEnvironment ?? "far_field",
+              },
+              // Deliberately less trigger-happy than the defaults. Any audio
+              // the speaker leaks back into the mic reads as the user
+              // barging in, which cuts the oracle off mid-sentence; a higher
+              // threshold plus a longer silence window makes a real
+              // interruption the only thing that stops it.
+              turn_detection: {
+                type: "server_vad",
+                threshold: 0.7,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 700,
+              },
+            },
+          },
         },
       });
       if (this.options.openingContext) {
@@ -287,8 +323,19 @@ export class RealtimeVoiceSession {
   }
 
   setMuted(muted: boolean): void {
+    this.userMuted = muted;
+    this.applyMicState();
+  }
+
+  /**
+   * The mic is live only when the user has not muted it and — on platforms
+   * that need echo suppression — the oracle is not currently speaking.
+   */
+  private applyMicState(): void {
+    const gatedForEcho = this.platform.suppressEchoByMuting === true && this.oracleSpeaking;
+    const enabled = !this.userMuted && !gatedForEcho;
     for (const track of this.micStream.getAudioTracks()) {
-      track.enabled = !muted;
+      track.enabled = enabled;
     }
   }
 
@@ -347,11 +394,15 @@ export class RealtimeVoiceSession {
         return;
       }
       case "output_audio_buffer.started": {
+        this.oracleSpeaking = true;
+        this.applyMicState();
         this.options.onStatusChange("speaking");
         return;
       }
       case "output_audio_buffer.stopped":
       case "response.done": {
+        this.oracleSpeaking = false;
+        this.applyMicState();
         // A hang-up armed mid-response waits for the sign-off audio to drain.
         if (this.hangUpPending) {
           this.finalizeHangUp();

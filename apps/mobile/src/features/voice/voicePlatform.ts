@@ -46,11 +46,20 @@ export function stopVoiceAudioSession(): void {
 }
 
 export const reactNativeVoicePlatform: VoicePlatform = {
+  // A handset is held close to the mouth even on speakerphone.
+  audioEnvironment: "near_field",
+  // Speakerphone puts the oracle's own voice straight back into the mic, and
+  // the OS echo canceller cannot fully suppress it when the session is
+  // routed to the loudspeaker. Gate the mic while it speaks instead.
+  suppressEchoByMuting: true,
   acquireAudioStream: async () => {
     startAudioSession();
     try {
       // getUserMedia raises the OS microphone prompt on first use; the usage
-      // string ships in the app config.
+      // string ships in the app config. Audio processing constraints are not
+      // part of react-native-webrtc's constraint surface (libwebrtc runs its
+      // own echo canceller), so echo is handled by muting the mic while the
+      // oracle speaks — see `suppressEchoByMuting`.
       const stream = await mediaDevices.getUserMedia({ audio: true });
       return stream as unknown as MediaStreamLike;
     } catch (error) {
