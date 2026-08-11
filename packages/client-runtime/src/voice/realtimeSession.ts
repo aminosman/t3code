@@ -238,9 +238,12 @@ export class RealtimeVoiceSession {
               // interruption the only thing that stops it.
               turn_detection: {
                 type: "server_vad",
-                threshold: 0.7,
+                // Tuned for a phone in a room with other things happening.
+                // Below ~0.8 typing, traffic, and other people's voices read
+                // as the user speaking, which stops the oracle mid-word.
+                threshold: 0.85,
                 prefix_padding_ms: 300,
-                silence_duration_ms: 700,
+                silence_duration_ms: 900,
               },
             },
           },
@@ -390,6 +393,11 @@ export class RealtimeVoiceSession {
       }
       case "response.created": {
         this.assistantTranscriptBuffer = "";
+        // Gate from the moment a response starts forming, not just when its
+        // audio begins: noise in the gap between the two cancels the
+        // in-flight response, which is heard as stuttering.
+        this.oracleSpeaking = true;
+        this.applyMicState();
         this.options.onStatusChange("thinking");
         return;
       }

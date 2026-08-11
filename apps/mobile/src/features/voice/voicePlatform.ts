@@ -22,13 +22,39 @@ export class MicrophoneAccessError extends Error {
 }
 
 let audioSessionActive = false;
+let speakerForced = false;
 
-function startAudioSession(): void {
+/**
+ * Route audio to the loudspeaker, or release the override so the OS can use
+ * whatever the user actually has connected.
+ *
+ * `setForceSpeakerphoneOn(true)` maps to an audio-port *override*, which
+ * outranks a connected Bluetooth device — force it unconditionally and
+ * AirPods get bypassed every session. So it is off whenever headphones are
+ * present, and the voice screen exposes a toggle for everything else.
+ */
+export function setVoiceSpeakerphone(enabled: boolean): void {
+  speakerForced = enabled;
+  InCallManager.setForceSpeakerphoneOn(enabled);
+}
+
+export function isVoiceSpeakerphoneOn(): boolean {
+  return speakerForced;
+}
+
+async function startAudioSession(): Promise<void> {
   if (audioSessionActive) return;
   audioSessionActive = true;
   InCallManager.start({ media: "audio" });
-  InCallManager.setForceSpeakerphoneOn(true);
   InCallManager.setKeepScreenOn(true);
+
+  // Wired headsets are detectable; Bluetooth is not through this library, so
+  // leaving the override off lets iOS pick AirPods on its own. Speakerphone
+  // is only forced as the fallback for a bare handset.
+  const wired = await InCallManager.getIsWiredHeadsetPluggedIn().catch(() => ({
+    isWiredHeadsetPluggedIn: false,
+  }));
+  setVoiceSpeakerphone(!wired.isWiredHeadsetPluggedIn);
 }
 
 /**
@@ -40,6 +66,7 @@ function startAudioSession(): void {
 export function stopVoiceAudioSession(): void {
   if (!audioSessionActive) return;
   audioSessionActive = false;
+  speakerForced = false;
   InCallManager.setKeepScreenOn(false);
   InCallManager.setForceSpeakerphoneOn(false);
   InCallManager.stop();
@@ -53,7 +80,7 @@ export const reactNativeVoicePlatform: VoicePlatform = {
   // routed to the loudspeaker. Gate the mic while it speaks instead.
   suppressEchoByMuting: true,
   acquireAudioStream: async () => {
-    startAudioSession();
+    await startAudioSession();
     try {
       // getUserMedia raises the OS microphone prompt on first use; the usage
       // string ships in the app config. Audio processing constraints are not

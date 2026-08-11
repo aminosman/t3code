@@ -160,7 +160,20 @@ const make = Effect.fn("desktop.environment.make")(function* (
     baseDir,
     isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
   );
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
+  // A packaged build pointed at a non-default data home (a side-install like
+  // "T3 Code (Voice)", which bakes its own T3CODE_HOME) must not share the
+  // Chromium userData dir with the official install — two apps on one
+  // IndexedDB/localStorage fight over locks and the second one's renderer
+  // fails to initialize. Suffix the dir with the home's basename so each
+  // side-install is isolated. Official Alpha (no custom home) and dev flows
+  // are unaffected.
+  const customHomeSuffix =
+    !isDevelopment &&
+    Option.isSome(configuredBaseDir) &&
+    path.resolve(configuredBaseDir.value) !== path.join(homeDirectory, ".t3")
+      ? `-${path.basename(path.resolve(configuredBaseDir.value)).replace(/[^a-zA-Z0-9_-]/g, "")}`
+      : "";
+  const userDataDirName = `${isDevelopment ? "t3code-dev" : "t3code"}${customHomeSuffix}`;
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const resourcesPath = input.resourcesPath;
 

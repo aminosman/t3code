@@ -36,7 +36,12 @@ import { threadEnvironment, useEnvironmentThread } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { describeVoiceStartError, mintVoiceRealtimeSession } from "./mintVoiceSession";
-import { reactNativeVoicePlatform, stopVoiceAudioSession } from "./voicePlatform";
+import {
+  isVoiceSpeakerphoneOn,
+  reactNativeVoicePlatform,
+  setVoiceSpeakerphone,
+  stopVoiceAudioSession,
+} from "./voicePlatform";
 
 type VoiceOracleScreenProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -70,6 +75,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
 
   const [phase, setPhase] = useState<OverlayPhase>({ kind: "connecting" });
   const [muted, setMuted] = useState(false);
+  const [speakerOn, setSpeakerOn] = useState(true);
   const [hangingUp, setHangingUp] = useState(false);
   const [captions, setCaptions] = useState<{ user: string | null; oracle: string | null }>({
     user: null,
@@ -190,6 +196,9 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
           return;
         }
         voiceSessionRef.current = voiceSession;
+        // The session picks the initial route (headphones win over speaker);
+        // reflect whatever it chose so the toggle starts truthful.
+        setSpeakerOn(isVoiceSpeakerphoneOn());
         lastTurnRef.current = {
           turnId: viewRef.current.latestTurn?.turnId ?? null,
           state: viewRef.current.latestTurn?.state ?? null,
@@ -283,6 +292,14 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     });
   }, []);
 
+  const toggleSpeaker = useCallback(() => {
+    setSpeakerOn((current) => {
+      const next = !current;
+      setVoiceSpeakerphone(next);
+      return next;
+    });
+  }, []);
+
   const endSession = useCallback(() => {
     navigation.goBack();
   }, [navigation]);
@@ -340,6 +357,13 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
           variant={muted ? "danger" : "circle"}
           disabled={phase.kind !== "active"}
           onPress={toggleMuted}
+        />
+        <ControlPill
+          icon={speakerOn ? "speaker.wave.2.fill" : "airpods"}
+          accessibilityLabel={speakerOn ? "Use headphones" : "Use speaker"}
+          variant="circle"
+          disabled={phase.kind !== "active"}
+          onPress={toggleSpeaker}
         />
         <ControlPill
           icon="xmark"
