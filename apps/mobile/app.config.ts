@@ -185,6 +185,12 @@ const config: ExpoConfig = {
     // showcase capture build requires full screen (see infoPlist below).
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
+    // EAS profiles auto-increment the build number remotely; a local archive
+    // has no such counter, so allow one to be supplied. App Store Connect
+    // rejects a re-used build number for the same version.
+    ...(process.env.T3CODE_IOS_BUILD_NUMBER
+      ? { buildNumber: process.env.T3CODE_IOS_BUILD_NUMBER }
+      : {}),
     // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
     // does not fall back to a personal team (which cannot sign app groups,
     // Sign in with Apple, or push notification entitlements).
@@ -194,6 +200,11 @@ const config: ExpoConfig = {
       `webcredentials:${variant.relyingParty}`,
     ],
     infoPlist: {
+      // A voice session has to keep streaming while the screen is locked or
+      // the user is in another app — talking to the oracle from the car is
+      // the whole point. Without this the OS suspends the app and the call
+      // dies mid-sentence.
+      UIBackgroundModes: ["audio"],
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
