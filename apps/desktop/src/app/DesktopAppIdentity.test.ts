@@ -40,6 +40,7 @@ const makeElectronAppLayer = (calls: ElectronAppCalls) =>
   Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
     name: Effect.succeed("T3 Code"),
+    systemLocale: Effect.succeed("en-US"),
     whenReady: Effect.void,
     quit: Effect.void,
     exit: () => Effect.void,
@@ -64,6 +65,7 @@ const makeElectronAppLayer = (calls: ElectronAppCalls) =>
       }),
     appendCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: () => Effect.void,
+    removeCommandLineSwitch: () => Effect.void,
     on: () => Effect.void,
   } satisfies ElectronApp.ElectronApp["Service"]);
 

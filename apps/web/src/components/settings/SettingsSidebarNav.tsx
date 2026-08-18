@@ -11,8 +11,8 @@ import {
   ArchiveIcon,
   ArrowLeftIcon,
   AudioLinesIcon,
+  BlocksIcon,
   BotIcon,
-  FlaskConicalIcon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
@@ -51,10 +51,10 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
+  "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
   "/settings/voice": AudioLinesIcon,
-  "/settings/beta": FlaskConicalIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -224,9 +224,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             {isSearching ? (
               <Button
                 type="button"
-                size="icon-xs"
+                size="icon-micro"
                 variant="ghost"
-                className="size-5 shrink-0 rounded-sm text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
+                className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
                 aria-label="Clear settings search"
                 onClick={() => {
                   clearSearch();
@@ -236,9 +236,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 <XIcon className="size-3" />
               </Button>
             ) : (
-              <Kbd className="mr-px h-4 min-w-0 rounded-sm bg-sidebar-control-surface px-1.5 text-[10px] text-sidebar-muted-foreground ring-1 ring-sidebar-border">
-                /
-              </Kbd>
+              <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">/</Kbd>
             )}
           </div>
           {isSearching && results.length === 0 ? (
@@ -250,6 +248,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             </p>
           ) : null}
           <SidebarMenu
+            className="ps-px"
             id={isSearching && hasResults ? "settings-search-results" : undefined}
             role={isSearching && hasResults ? "listbox" : undefined}
             aria-label={isSearching && hasResults ? "Settings search results" : undefined}
@@ -282,7 +281,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))
               : SETTINGS_NAV_ITEMS.map((item) => {
                   const Icon = item.icon;
-                  const isActive = pathname === item.to;
+                  const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
                   return (
                     <SidebarMenuItem key={item.to}>
                       <SidebarMenuButton
