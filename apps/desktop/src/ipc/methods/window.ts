@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopMicrophoneAccessSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -31,6 +32,7 @@ import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
+import * as ElectronMediaAccess from "../../electron/ElectronMediaAccess.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
@@ -377,5 +379,15 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
         Effect.orElseSucceed((): PickedThemeFile => ({ name, size: 0, text: "" })),
       );
     });
+  }),
+});
+
+export const requestMicrophoneAccess = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REQUEST_MICROPHONE_ACCESS_CHANNEL,
+  payload: Schema.Void,
+  result: DesktopMicrophoneAccessSchema,
+  handler: Effect.fn("desktop.ipc.window.requestMicrophoneAccess")(function* () {
+    const mediaAccess = yield* ElectronMediaAccess.ElectronMediaAccess;
+    return yield* mediaAccess.requestMicrophone;
   }),
 });

@@ -179,6 +179,10 @@
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"
     },
+    "./state/voiceHttp": {
+      "types": "./src/state/voiceHttp.ts",
+      "default": "./src/state/voiceHttp.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"

@@ -2633,6 +2633,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // The voice oracle captures microphone audio; without this usage
+      // description macOS kills the app on the first getUserMedia call.
+      extendInfo: {
+        NSMicrophoneUsageDescription:
+          "T3 Code uses the microphone for voice conversations with the oracle.",
+      },
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,

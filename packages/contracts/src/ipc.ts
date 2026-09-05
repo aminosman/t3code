@@ -182,6 +182,18 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
   "error",
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
+// Mirrors Electron's `systemPreferences.getMediaAccessStatus` values, plus
+// "unsupported" for platforms where the OS has no microphone gate at all.
+export const DesktopMicrophoneAccessSchema = Schema.Literals([
+  "granted",
+  "denied",
+  "restricted",
+  "not-determined",
+  "unknown",
+  "unsupported",
+]);
+export type DesktopMicrophoneAccess = typeof DesktopMicrophoneAccessSchema.Type;
+
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
@@ -1137,6 +1149,13 @@ export interface DesktopBridge {
    * builds lack it; callers fall back to VS Code only.
    */
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
+  /**
+   * Ensure the OS-level microphone grant before the renderer calls
+   * `getUserMedia`. On macOS this raises the TCC prompt from the main process
+   * so the outcome is known up front instead of surfacing as an opaque
+   * `getUserMedia` failure. A no-op returning "unsupported" elsewhere.
+   */
+  requestMicrophoneAccess: () => Promise<DesktopMicrophoneAccess>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit

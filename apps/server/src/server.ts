@@ -22,6 +22,7 @@ import {
   httpCompressionLayer,
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
+import { voiceRealtimeSessionRouteLayer } from "./voice/http.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -540,6 +541,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
+    voiceRealtimeSessionRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
     staticAndDevRouteLayer,
