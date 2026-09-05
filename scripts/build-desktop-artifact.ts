@@ -2577,12 +2577,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
-  adhocEntitlementsPath?: string,
   // Windows only, and false when no Linux node-pty prebuild was bundled: the
   // sidecar staging skips the archive in that case, and listing a resource
   // whose source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  adhocEntitlementsPath?: string,
 ) {
   // Personal side-install builds: a distinct bundle id + product name lets a
   // feature-branch build run beside the official install (LaunchServices and
@@ -3726,9 +3726,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
-      adhocEntitlementsPath,
       bundlesWslRuntime({ arch: options.arch, prebuildPath: options.wslPrebuild }),
       options.arch,
+      adhocEntitlementsPath,
     ),
     dependencies: stageDependencies,
     devDependencies: {
