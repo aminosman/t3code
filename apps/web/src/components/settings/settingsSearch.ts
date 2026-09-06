@@ -523,6 +523,33 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/voice",
   },
   {
+    id: "push-enabled",
+    title: "Phone notifications",
+    to: "/settings/voice",
+    searchTerms: ["push apns notify alerts phone mobile"],
+  },
+  {
+    id: "push-apns-auth-key",
+    title: "APNs auth key",
+    to: "/settings/voice",
+    searchTerms: ["push notification p8 apple key"],
+  },
+  {
+    id: "push-apns-key-id",
+    title: "APNs key ID",
+    to: "/settings/voice",
+  },
+  {
+    id: "push-apns-team-id",
+    title: "Apple team ID",
+    to: "/settings/voice",
+  },
+  {
+    id: "push-bundle-id",
+    title: "Mobile app bundle ID",
+    to: "/settings/voice",
+  },
+  {
     id: "voice-microphone-access",
     title: "Microphone access",
     to: "/settings/voice",

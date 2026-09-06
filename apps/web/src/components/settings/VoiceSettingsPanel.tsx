@@ -1,6 +1,7 @@
 import {
   DEFAULT_VOICE_REALTIME_MODEL,
   DEFAULT_VOICE_REALTIME_VOICE,
+  type PushSettings,
   type VoiceSettings,
 } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
@@ -8,6 +9,7 @@ import { useEffect, useState } from "react";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -159,8 +161,56 @@ function MicrophoneAccessControl() {
   );
 }
 
+
+function PushAuthKeyControl({
+  push,
+  onUpdate,
+}: {
+  push: PushSettings;
+  onUpdate: (patch: { authKey: string; authKeyRedacted: boolean }) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const configured = push.authKeyRedacted === true;
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed.length === 0) return;
+    onUpdate({ authKey: trimmed, authKeyRedacted: false });
+    setDraft("");
+  };
+
+  return (
+    <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center">
+      <Input
+        type="password"
+        autoComplete="off"
+        className="w-full sm:w-64"
+        value={draft}
+        placeholder={configured ? "Configured — paste a new key to replace" : "-----BEGIN PRIVATE KEY-----"}
+        aria-label="APNs auth key"
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+        }}
+        onBlur={commit}
+      />
+      {configured && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onUpdate({ authKey: "", authKeyRedacted: false })}
+        >
+          Remove key
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function VoiceSettingsPanel() {
   const voice = usePrimarySettings((settings) => settings.voice);
+  const push = usePrimarySettings((settings) => settings.push);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
@@ -202,6 +252,62 @@ export function VoiceSettingsPanel() {
               placeholder={DEFAULT_VOICE_REALTIME_VOICE}
               ariaLabel="Oracle voice"
               onCommit={(next) => updateSettings({ voice: { voice: next } })}
+            />
+          }
+        />
+      </SettingsSection>
+      <SettingsSection title="Phone notifications">
+        <SettingsRow
+          {...searchableSetting("push-enabled")}
+          description="Notify paired phones when an agent finishes, fails, or needs you. This server talks to Apple directly with the key below — no T3 Connect account and nothing in between."
+          control={
+            <Switch
+              checked={push.enabled}
+              aria-label="Deliver push notifications from this server"
+              onCheckedChange={(enabled) => updateSettings({ push: { enabled } })}
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("push-apns-auth-key")}
+          description="The .p8 auth key from developer.apple.com → Certificates, Identifiers & Profiles → Keys. Stored encrypted on the server and never sent to clients."
+          control={
+            <PushAuthKeyControl push={push} onUpdate={(patch) => updateSettings({ push: patch })} />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("push-apns-key-id")}
+          description="Key ID shown next to the auth key in the Apple developer portal."
+          control={
+            <VoiceTextSetting
+              value={push.keyId}
+              placeholder="ABCD123456"
+              ariaLabel="APNs key id"
+              onCommit={(keyId) => updateSettings({ push: { keyId } })}
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("push-apns-team-id")}
+          description="Your Apple Developer team id."
+          control={
+            <VoiceTextSetting
+              value={push.teamId}
+              placeholder="ABCD123456"
+              ariaLabel="Apple team id"
+              onCommit={(teamId) => updateSettings({ push: { teamId } })}
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("push-bundle-id")}
+          description="Bundle id of the mobile app that receives the notifications."
+          control={
+            <VoiceTextSetting
+              value={push.bundleId}
+              placeholder="co.example.app"
+              ariaLabel="Mobile app bundle id"
+              onCommit={(bundleId) => updateSettings({ push: { bundleId } })}
             />
           }
         />

@@ -28,6 +28,7 @@ import {
   refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
+import { registerDeviceWithConnectedEnvironments } from "../push/directPushRegistration";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
@@ -231,6 +232,11 @@ function ConfiguredSettingsRouteScreen() {
         ),
       ),
     );
+    // Environments that deliver their own notifications need this device's
+    // token directly; the relay registration above does not reach them.
+    if (result._tag === "Success" && result.value.type === "granted") {
+      await registerDeviceWithConnectedEnvironments().catch(() => undefined);
+    }
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
