@@ -29,6 +29,7 @@ import {
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
 import { registerDeviceWithConnectedEnvironments } from "../push/directPushRegistration";
+import { DirectPushNotificationsRow } from "../push/DirectPushNotificationsRow";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
@@ -138,6 +139,9 @@ function LocalSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          {/* Cloud-less builds still get notifications, delivered by the
+              environment itself rather than the relay. */}
+          <DirectPushNotificationsRow />
         </SettingsSection>
 
         <GeneralSettingsSection />
