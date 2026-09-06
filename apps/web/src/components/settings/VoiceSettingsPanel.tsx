@@ -10,6 +10,7 @@ import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSet
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -181,17 +182,18 @@ function PushAuthKeyControl({
 
   return (
     <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center">
-      <Input
-        type="password"
+      <Textarea
         autoComplete="off"
-        className="w-full sm:w-64"
+        rows={3}
+        className="w-full font-mono text-xs sm:w-72"
         value={draft}
-        placeholder={configured ? "Configured — paste a new key to replace" : "-----BEGIN PRIVATE KEY-----"}
+        placeholder={
+          configured
+            ? "Configured — paste a new key to replace"
+            : "-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----"
+        }
         aria-label="APNs auth key"
         onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") commit();
-        }}
         onBlur={commit}
       />
       {configured && (
