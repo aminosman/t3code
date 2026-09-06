@@ -23,6 +23,10 @@ import {
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { voiceRealtimeSessionRouteLayer } from "./voice/http.ts";
+import { pushDeviceRegisterRouteLayer, pushDeviceUnregisterRouteLayer } from "./push/http.ts";
+import * as ApnsClient from "./push/ApnsClient.ts";
+import * as PushDeviceRegistry from "./push/PushDeviceRegistry.ts";
+import * as PushNotifier from "./push/PushNotifier.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -271,6 +275,12 @@ const PlatformServicesLive = Layer.unwrap(
   }),
 );
 
+// Registry reads and writes go straight to the secret store, so the routes
+// and the notifier can each build it without sharing in-memory state.
+export const PushDeviceRegistryLive = PushDeviceRegistry.layer.pipe(
+  Layer.provide(ServerSecretStore.layer),
+);
+
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
@@ -279,6 +289,9 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+  Layer.provideMerge(
+    PushNotifier.layer.pipe(Layer.provide(ApnsClient.layer)),
+  ),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 
@@ -452,6 +465,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
+  Layer.provideMerge(PushDeviceRegistryLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(
     Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
@@ -542,6 +556,8 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     voiceRealtimeSessionRouteLayer,
+    pushDeviceRegisterRouteLayer,
+    pushDeviceUnregisterRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
     staticAndDevRouteLayer,

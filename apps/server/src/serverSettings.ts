@@ -160,6 +160,7 @@ function redactProviderEnvironmentVariable(
 }
 
 const VOICE_OPENAI_API_KEY_SECRET_NAME = "voice-openai-api-key";
+const PUSH_APNS_AUTH_KEY_SECRET_NAME = "push-apns-auth-key";
 
 function redactVoiceSettings(voice: ServerSettings["voice"]): ServerSettings["voice"] {
   if (voice.openaiApiKey.length === 0 && !voice.openaiApiKeyRedacted) {
@@ -167,6 +168,14 @@ function redactVoiceSettings(voice: ServerSettings["voice"]): ServerSettings["vo
     return rest;
   }
   return { ...voice, openaiApiKey: "", openaiApiKeyRedacted: true };
+}
+
+function redactPushSettings(push: ServerSettings["push"]): ServerSettings["push"] {
+  if (push.authKey.length === 0 && !push.authKeyRedacted) {
+    const { authKeyRedacted: _omit, ...rest } = push;
+    return rest;
+  }
+  return { ...push, authKey: "", authKeyRedacted: true };
 }
 
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
@@ -196,6 +205,7 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     providerInstances,
     usageLimitSources,
     voice: redactVoiceSettings(settings.voice),
+    push: redactPushSettings(settings.push),
   };
 }
 
@@ -600,8 +610,37 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializePushSecret = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      if (!settings.push.authKeyRedacted) {
+        return settings;
+      }
+      const secret = yield* secretStore.get(PUSH_APNS_AUTH_KEY_SECRET_NAME).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "read-secret",
+              cause,
+            }),
+        ),
+      );
+      return {
+        ...settings,
+        push: {
+          ...settings.push,
+          authKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        },
+      };
+    });
+
   const materializeSecrets = (settings: ServerSettings) =>
-    materializeProviderEnvironmentSecrets(settings).pipe(Effect.flatMap(materializeVoiceSecret));
+    materializeProviderEnvironmentSecrets(settings).pipe(
+      Effect.flatMap(materializeVoiceSecret),
+      Effect.flatMap(materializePushSecret),
+    );
 
   // A freshly submitted key always wins over the redacted marker; the marker
   // only means "value lives in the secret store", never "ignore the patch".
@@ -642,6 +681,45 @@ const make = Effect.gen(function* () {
       );
       const { openaiApiKeyRedacted: _omit, ...voice } = next.voice;
       return { ...next, voice };
+    });
+
+  const persistPushSecret = (
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      if (next.push.authKey.length > 0) {
+        yield* secretStore
+          .set(PUSH_APNS_AUTH_KEY_SECRET_NAME, textEncoder.encode(next.push.authKey))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "write-secret",
+                  cause,
+                }),
+            ),
+          );
+        return {
+          ...next,
+          push: { ...next.push, authKey: "", authKeyRedacted: true },
+        };
+      }
+      if (next.push.authKeyRedacted) {
+        return next;
+      }
+      yield* secretStore.remove(PUSH_APNS_AUTH_KEY_SECRET_NAME).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "remove-secret",
+              cause,
+            }),
+        ),
+      );
+      const { authKeyRedacted: _omit, ...push } = next.push;
+      return { ...next, push };
     });
 
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
@@ -911,7 +989,7 @@ const make = Effect.gen(function* () {
           const nextPersisted = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
-          ).pipe(Effect.flatMap(persistVoiceSecret));
+          ).pipe(Effect.flatMap(persistVoiceSecret), Effect.flatMap(persistPushSecret));
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);

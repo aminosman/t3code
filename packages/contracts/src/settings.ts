@@ -780,6 +780,20 @@ export const VoiceSettings = Schema.Struct({
 });
 export type VoiceSettings = typeof VoiceSettings.Type;
 
+// Direct push notification settings. The environment delivers its own
+// notifications, so it holds the APNs auth key itself; `authKey` follows the
+// same redaction contract as the voice key, and the remaining fields are the
+// non-secret identifiers Apple pairs with it.
+export const PushSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  authKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  authKeyRedacted: Schema.optionalKey(Schema.Boolean),
+  keyId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  teamId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  bundleId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type PushSettings = typeof PushSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -972,6 +986,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   voice: VoiceSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  push: PushSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1169,6 +1184,16 @@ export const ServerSettingsPatch = Schema.Struct({
       openaiApiKeyRedacted: Schema.optionalKey(Schema.Boolean),
       model: Schema.optionalKey(TrimmedString),
       voice: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  push: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      authKey: Schema.optionalKey(TrimmedString),
+      authKeyRedacted: Schema.optionalKey(Schema.Boolean),
+      keyId: Schema.optionalKey(TrimmedString),
+      teamId: Schema.optionalKey(TrimmedString),
+      bundleId: Schema.optionalKey(TrimmedString),
     }),
   ),
   providers: Schema.optionalKey(

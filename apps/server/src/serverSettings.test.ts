@@ -1184,6 +1184,51 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("stores the APNs auth key outside settings.json", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const next = yield* serverSettings.updateSettings({
+        push: {
+          enabled: true,
+          authKey: "-----BEGIN PRIVATE KEY-----apns-secret",
+          keyId: "KEY1234567",
+          teamId: "TEAM123456",
+          bundleId: "co.example.app",
+        },
+      });
+      assert.equal(next.push.authKey, "-----BEGIN PRIVATE KEY-----apns-secret");
+      assert.isTrue(next.push.authKeyRedacted);
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "apns-secret");
+
+      // A patch that leaves the key redacted keeps the stored secret.
+      const roundTripped = yield* serverSettings.updateSettings({
+        push: { bundleId: "co.example.other" },
+      });
+      assert.equal(roundTripped.push.authKey, "-----BEGIN PRIVATE KEY-----apns-secret");
+      assert.equal(roundTripped.push.bundleId, "co.example.other");
+
+      // Clearing the key removes the secret and the redaction marker.
+      const cleared = yield* serverSettings.updateSettings({
+        push: { authKey: "", authKeyRedacted: false },
+      });
+      assert.equal(cleared.push.authKey, "");
+      assert.isUndefined(cleared.push.authKeyRedacted);
+
+      const redacted = ServerSettingsModule.redactServerSettingsForClient(
+        yield* serverSettings.updateSettings({
+          push: { authKey: "-----BEGIN PRIVATE KEY-----apns-secret" },
+        }),
+      );
+      assert.equal(redacted.push.authKey, "");
+      assert.isTrue(redacted.push.authKeyRedacted);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("redacts the voice OpenAI API key for clients", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
