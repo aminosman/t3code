@@ -37,6 +37,7 @@ import {
   ProviderWorkspaceMissingError,
 } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
+import { ClaudeAccountRouter } from "../../provider/Layers/ClaudeAccountRouter.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -328,6 +329,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const accountRouter = yield* ClaudeAccountRouter;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -588,7 +590,7 @@ const make = Effect.gen(function* () {
     }
 
     const desiredRuntimeMode = thread.runtimeMode;
-    const requestedModelSelection = options?.modelSelection;
+    let requestedModelSelection = options?.modelSelection;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
         .listSessions()
@@ -617,7 +619,37 @@ const make = Effect.gen(function* () {
       activeSession.providerInstanceId !== undefined
         ? activeSession.providerInstanceId
         : thread.modelSelection.instanceId;
-    const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
+    let desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
+
+    // Account rotation. When the bound instance is near its session limit and
+    // a sibling in the same account group is fresher, rewrite the request as
+    // though the user had picked that sibling. Everything below -- the
+    // continuation-key compatibility check, `instanceChanged`, and the restart
+    // that carries the resume cursor -- is the path a manual instance switch
+    // already takes, so rotation reuses it rather than growing a second one.
+    // No-ops unless the instance opts in with an `accountGroup`.
+    const accountRoute = yield* accountRouter.resolve(desiredModelSelection.instanceId);
+    if (accountRoute._tag === "Switch") {
+      yield* Effect.logInfo("provider command reactor rotating provider account", {
+        threadId,
+        from: accountRoute.from,
+        to: accountRoute.to,
+        fromSessionPercent: accountRoute.fromSessionPercent,
+        toSessionPercent: accountRoute.toSessionPercent,
+        toWeeklyPercent: accountRoute.toWeeklyPercent,
+      });
+      requestedModelSelection = { ...desiredModelSelection, instanceId: accountRoute.to };
+      desiredModelSelection = requestedModelSelection;
+    } else if (accountRoute._tag === "Exhausted") {
+      // Every account in the group is spent. Let the turn run and fail on the
+      // provider's own limit error, which carries the real reset time.
+      yield* Effect.logInfo("provider command reactor found no fresh account", {
+        threadId,
+        instanceId: accountRoute.instanceId,
+        sessionPercent: accountRoute.sessionPercent,
+        retryAt: accountRoute.retryAt,
+      });
+    }
     const desiredInstanceId = desiredModelSelection.instanceId;
     const currentInfo = yield* providerService.getInstanceInfo(currentInstanceId).pipe(
       Effect.mapError(

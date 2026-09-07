@@ -73,6 +73,9 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerActivation } from "../../serverActivation.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import { ClaudeAccountRouterNoopLayer } from "../../provider/testUtils/claudeAccountRouterMock.ts";
+import { ClaudeAccountRouter } from "../../provider/Layers/ClaudeAccountRouter.ts";
+import type { ClaudeRoutingDecision } from "../../provider/Layers/claudeAccountRouting.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -182,6 +185,8 @@ describe("ProviderCommandReactor", () => {
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
+    /** Account rotation decision applied when a thread's session starts. */
+    readonly accountRoute?: ClaudeRoutingDecision;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -445,7 +450,18 @@ describe("ProviderCommandReactor", () => {
         } satisfies OrchestrationEngineService["Service"];
       }),
     ).pipe(Layer.provide(orchestrationLayer));
+    const accountRouterLayer =
+      input?.accountRoute === undefined
+        ? ClaudeAccountRouterNoopLayer
+        : Layer.succeed(
+            ClaudeAccountRouter,
+            ClaudeAccountRouter.of({
+              listCandidates: Effect.succeed([]),
+              resolve: () => Effect.succeed(input.accountRoute!),
+            }),
+          );
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provide(accountRouterLayer),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
@@ -868,6 +884,78 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  // Rotation presents itself as a user-initiated instance switch, so the
+  // session starts on the sibling the router picked rather than the instance
+  // the thread is bound to.
+  it("starts the session on the account the router routes to", async () => {
+    const harness = await createHarness({
+      accountRoute: {
+        _tag: "Switch",
+        from: ProviderInstanceId.make("codex"),
+        to: ProviderInstanceId.make("codex-b"),
+        fromSessionPercent: 91,
+        toSessionPercent: 4,
+        toWeeklyPercent: 12,
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-rotate"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-rotate"),
+          role: "user",
+          text: "hello reactor",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      providerInstanceId: ProviderInstanceId.make("codex-b"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex-b") },
+    });
+  });
+
+  it("leaves the bound account alone when the router says to stay", async () => {
+    const harness = await createHarness({
+      accountRoute: {
+        _tag: "Stay",
+        instanceId: ProviderInstanceId.make("codex"),
+        reason: "underThreshold",
+        sessionPercent: 12,
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-stay"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-stay"),
+          role: "user",
+          text: "hello reactor",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
   });
 
   effectIt.effect("retains a turn dispatched immediately after start until activation", () =>
