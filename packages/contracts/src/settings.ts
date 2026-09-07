@@ -496,6 +496,9 @@ export type CodexSettings = typeof CodexSettings.Type;
 // the update that introduced it.
 const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
 
+// Empty, or 1-100. Empty means the built-in switch threshold.
+const CLAUDE_SWITCH_AT_PERCENT_PATTERN = /^(?:|100|[1-9]\d?)$/;
+
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -559,9 +562,35 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    accountGroup: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Account group",
+        description:
+          "Instances sharing a group are interchangeable accounts. When one nears its session limit, new turns route to the freshest sibling. Leave empty to keep this instance out of rotation.",
+        providerSettingsForm: { placeholder: "e.g. max-accounts", clearWhenEmpty: "omit" },
+      }),
+    ),
+    switchAtPercent: TrimmedString.check(Schema.isPattern(CLAUDE_SWITCH_AT_PERCENT_PATTERN)).pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Switch at",
+        description:
+          "Session-window percentage that hands the next turn to a sibling in the same account group. Empty uses the default of 85.",
+        providerSettingsForm: { placeholder: "85", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "autoCompactWindow", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "shadowHomePath",
+      "accountGroup",
+      "switchAtPercent",
+      "autoCompactWindow",
+      "launchArgs",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -1104,6 +1133,10 @@ const ClaudeSettingsPatch = Schema.Struct({
   // schema error instead of a generic whole-settings failure.
   autoCompactWindow: Schema.optionalKey(
     TrimmedString.check(Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN)),
+  ),
+  accountGroup: Schema.optionalKey(TrimmedString),
+  switchAtPercent: Schema.optionalKey(
+    TrimmedString.check(Schema.isPattern(CLAUDE_SWITCH_AT_PERCENT_PATTERN)),
   ),
 });
 
