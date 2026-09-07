@@ -59,7 +59,12 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { makeClaudeCapabilitiesCacheKey } from "./ClaudeHome.ts";
+import {
+  claudeContinuationIdentity,
+  materializeClaudeShadowHome,
+  resolveClaudeHomeLayout,
+} from "./ClaudeHomeLayout.ts";
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -120,10 +125,27 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         driverKind: DRIVER_KIND,
         instanceId,
       });
+      const homeLayout = yield* resolveClaudeHomeLayout(config);
+      const continuationIdentity = claudeContinuationIdentity(homeLayout);
+      yield* materializeClaudeShadowHome(homeLayout).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: cause.message,
+              cause,
+            }),
+        ),
+      );
+      // Downstream only ever reads `homePath`, so pointing it at the shadow
+      // sends CLAUDE_CONFIG_DIR, the capabilities cache key and the spawned
+      // CLI at this account without touching any of those call sites.
       const effectiveConfig = {
         ...config,
         enabled,
         binaryPath: expandHomePath(config.binaryPath),
+        homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies ClaudeSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
@@ -135,7 +157,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           Effect.provideService(Path.Path, path),
         ),
       );
-      const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig);
+      const continuationGroupKey = continuationIdentity.continuationKey;
       const stampIdentity = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
