@@ -13,7 +13,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 
 const MINT_TIMEOUT_MS = 10_000;
 
@@ -43,62 +43,69 @@ export const mintEnvironmentVoiceRealtimeSession = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
 }) {
+  // `/api/voice/realtime-session` is served by a hand-rolled handler rather
+  // than the typed environment HttpApi, so the request is issued directly
+  // instead of through the client the helper hands back. Voice already
+  // requires a cookie or bearer connection (see `mintVoiceSession`), so the
+  // DPoP re-authorization path that would rewrite `httpBaseUrl` does not
+  // apply here and the prepared base URL stays correct.
   const requestUrl = environmentEndpointUrl(
     input.prepared.httpBaseUrl,
     VOICE_REALTIME_SESSION_PATH,
   );
-  const headers = yield* buildEnvironmentAuthHeaders(
-    input.prepared.httpAuthorization,
-    "POST",
-    requestUrl,
-    input.signer,
-  ).pipe(
-    Effect.mapError(
-      (cause) => new VoiceRealtimeSessionMintError({ code: "unavailable", message: cause.message }),
-    ),
-  );
-  const client = yield* HttpClient.HttpClient;
 
-  const response = yield* withEnvironmentCredentials(
-    input.prepared.httpAuthorization,
-    client.post(requestUrl, {
-      headers: {
-        ...(headers.authorization === undefined ? {} : { authorization: headers.authorization }),
-        ...(headers.dpop === undefined ? {} : { dpop: headers.dpop }),
-      },
-    }),
-  ).pipe(
-    Effect.timeout(MINT_TIMEOUT_MS),
-    Effect.mapError(
-      (cause) =>
-        new VoiceRealtimeSessionMintError({
-          code: "unavailable",
-          message: `Could not reach the environment to start a voice session: ${String(cause)}`,
-        }),
-    ),
-  );
-
-  if (response.status < 200 || response.status >= 300) {
-    const body = yield* response.json.pipe(Effect.orElseSucceed(() => undefined));
-    const decoded = decodeErrorResponse(body);
-    return yield* Option.isSome(decoded)
-      ? new VoiceRealtimeSessionMintError({
-          code: decoded.value.error,
-          message: decoded.value.message,
-        })
-      : new VoiceRealtimeSessionMintError({
-          code: "unavailable",
-          message: `Voice session request failed with status ${response.status}.`,
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer: input.signer,
+    method: "POST",
+    url: () => requestUrl,
+    timeoutMs: MINT_TIMEOUT_MS,
+    request: ({ headers }) =>
+      Effect.gen(function* () {
+        const client = yield* HttpClient.HttpClient;
+        const response = yield* client.post(requestUrl, {
+          headers: {
+            ...(headers.authorization === undefined
+              ? {}
+              : { authorization: headers.authorization }),
+            ...(headers.dpop === undefined ? {} : { dpop: headers.dpop }),
+          },
         });
-  }
 
-  return yield* HttpClientResponse.schemaBodyJson(VoiceRealtimeSessionResponse)(response).pipe(
-    Effect.mapError(
-      () =>
-        new VoiceRealtimeSessionMintError({
-          code: "unavailable",
-          message: "The environment returned an unexpected voice session response.",
-        }),
+        if (response.status < 200 || response.status >= 300) {
+          const errorBody = yield* response.json.pipe(Effect.orElseSucceed(() => undefined));
+          const decoded = decodeErrorResponse(errorBody);
+          return yield* Option.isSome(decoded)
+            ? new VoiceRealtimeSessionMintError({
+                code: decoded.value.error,
+                message: decoded.value.message,
+              })
+            : new VoiceRealtimeSessionMintError({
+                code: "unavailable",
+                message: `Voice session request failed with status ${response.status}.`,
+              });
+        }
+
+        return yield* HttpClientResponse.schemaBodyJson(VoiceRealtimeSessionResponse)(
+          response,
+        ).pipe(
+          Effect.mapError(
+            () =>
+              new VoiceRealtimeSessionMintError({
+                code: "unavailable",
+                message: "The environment returned an unexpected voice session response.",
+              }),
+          ),
+        );
+      }),
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof VoiceRealtimeSessionMintError
+        ? cause
+        : new VoiceRealtimeSessionMintError({
+            code: "unavailable",
+            message: `Could not reach the environment to start a voice session: ${String(cause)}`,
+          }),
     ),
   );
 });

@@ -4,7 +4,7 @@ import {
   VoiceRealtimeSessionMintError,
 } from "@t3tools/client-runtime/state/voiceHttp";
 import * as Option from "effect/Option";
-import { remoteHttpRuntime } from "~/lib/runtime";
+import { runtime } from "~/lib/runtime";
 import { readPreparedConnection } from "~/state/session";
 import { MicrophoneAccessError } from "./microphoneAccess";
 
@@ -26,7 +26,10 @@ export async function mintVoiceRealtimeSession(
   // No DPoP signer is available outside the connection runtime, so voice
   // sessions require a cookie or bearer connection (same constraint as the
   // HTTP thread-snapshot fast path, which also degrades over relay).
-  return remoteHttpRuntime.runPromise(
+  // Run on the general runtime rather than `runPrimaryHttp`: the voice
+  // endpoint is issued as a raw request, so it needs `HttpClient`, which the
+  // primary runtime does not expose (it publishes the typed API client only).
+  return runtime.runPromise(
     mintEnvironmentVoiceRealtimeSession({ prepared, signer: Option.none() }),
   );
 }

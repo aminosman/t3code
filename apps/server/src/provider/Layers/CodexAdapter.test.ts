@@ -86,24 +86,22 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   public readonly compactThread = Effect.void;
 
-  public readonly interruptTurnImpl = vi.fn(
-    (_turnId?: TurnId): Promise<void> => Promise.resolve(undefined),
+  public readonly interruptTurnImpl = vi.fn((_turnId?: TurnId): Promise<void> =>
+    Promise.resolve(undefined),
   );
 
-  public readonly readThreadImpl = vi.fn(
-    (): Promise<CodexThreadSnapshot> =>
-      Promise.resolve({
-        threadId: "provider-thread-1",
-        turns: [],
-      }),
+  public readonly readThreadImpl = vi.fn((): Promise<CodexThreadSnapshot> =>
+    Promise.resolve({
+      threadId: "provider-thread-1",
+      turns: [],
+    }),
   );
 
-  public readonly rollbackThreadImpl = vi.fn(
-    (_numTurns: number): Promise<CodexThreadSnapshot> =>
-      Promise.resolve({
-        threadId: "provider-thread-1",
-        turns: [],
-      }),
+  public readonly rollbackThreadImpl = vi.fn((_numTurns: number): Promise<CodexThreadSnapshot> =>
+    Promise.resolve({
+      threadId: "provider-thread-1",
+      turns: [],
+    }),
   );
 
   public readonly uploadFeedbackImpl = vi.fn((_reason?: string) =>
@@ -355,7 +353,8 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         Stream.runHead,
         Effect.forkChild,
       );
-      yield* adapter.compactThread!(threadId);
+      NodeAssert.ok(adapter.compaction?.type === "native");
+      yield* adapter.compaction.start(threadId);
       yield* runtime.emit({
         id: asEventId("evt-compaction-item-completed"),
         kind: "notification",

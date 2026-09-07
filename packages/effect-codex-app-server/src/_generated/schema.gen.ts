@@ -3831,7 +3831,10 @@ export type V2ConfigWriteResponse__WriteStatus = "ok" | "okOverridden";
 export const V2ConfigWriteResponse__WriteStatus = Schema.Literals(["ok", "okOverridden"]);
 
 export type V2ConsumeAccountRateLimitResetCreditResponse__ConsumeAccountRateLimitResetCreditOutcome =
-  "reset" | "nothingToReset" | "noCredit" | "alreadyRedeemed";
+  | "reset"
+  | "nothingToReset"
+  | "noCredit"
+  | "alreadyRedeemed";
 export const V2ConsumeAccountRateLimitResetCreditResponse__ConsumeAccountRateLimitResetCreditOutcome =
   Schema.Literals(["reset", "nothingToReset", "noCredit", "alreadyRedeemed"]);
 
@@ -3960,16 +3963,16 @@ export const V2ExternalAgentConfigDetectResponse__SubagentMigration = Schema.Str
 });
 
 export type V2ExternalAgentConfigImportCompletedNotification__ExternalAgentConfigMigrationItemType =
-    | "AGENTS_MD"
-    | "CONFIG"
-    | "SKILLS"
-    | "PLUGINS"
-    | "MCP_SERVER_CONFIG"
-    | "SUBAGENTS"
-    | "HOOKS"
-    | "COMMANDS"
-    | "MEMORY"
-    | "SESSIONS";
+  | "AGENTS_MD"
+  | "CONFIG"
+  | "SKILLS"
+  | "PLUGINS"
+  | "MCP_SERVER_CONFIG"
+  | "SUBAGENTS"
+  | "HOOKS"
+  | "COMMANDS"
+  | "MEMORY"
+  | "SESSIONS";
 export const V2ExternalAgentConfigImportCompletedNotification__ExternalAgentConfigMigrationItemType =
   Schema.Literals([
     "AGENTS_MD",
@@ -3985,16 +3988,16 @@ export const V2ExternalAgentConfigImportCompletedNotification__ExternalAgentConf
   ]);
 
 export type V2ExternalAgentConfigImportHistoriesReadResponse__ExternalAgentConfigMigrationItemType =
-    | "AGENTS_MD"
-    | "CONFIG"
-    | "SKILLS"
-    | "PLUGINS"
-    | "MCP_SERVER_CONFIG"
-    | "SUBAGENTS"
-    | "HOOKS"
-    | "COMMANDS"
-    | "MEMORY"
-    | "SESSIONS";
+  | "AGENTS_MD"
+  | "CONFIG"
+  | "SKILLS"
+  | "PLUGINS"
+  | "MCP_SERVER_CONFIG"
+  | "SUBAGENTS"
+  | "HOOKS"
+  | "COMMANDS"
+  | "MEMORY"
+  | "SESSIONS";
 export const V2ExternalAgentConfigImportHistoriesReadResponse__ExternalAgentConfigMigrationItemType =
   Schema.Literals([
     "AGENTS_MD",
@@ -15944,6 +15947,8 @@ export type V2ThreadForkResponse__CodexErrorInfo =
   | "badRequest"
   | "threadRollbackFailed"
   | "sandboxError"
+  | "rateLimitExceeded"
+  | "misalignmentPolicyViolation"
   | "other"
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
@@ -15967,6 +15972,8 @@ export const V2ThreadForkResponse__CodexErrorInfo = Schema.Union(
       "badRequest",
       "threadRollbackFailed",
       "sandboxError",
+      "rateLimitExceeded",
+      "misalignmentPolicyViolation",
       "other",
     ]),
     Schema.Struct({
@@ -16852,6 +16859,7 @@ export type V2ThreadReadResponse__CodexErrorInfo =
   | "threadRollbackFailed"
   | "sandboxError"
   | "rateLimitExceeded"
+  | "misalignmentPolicyViolation"
   | "other"
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
@@ -16876,6 +16884,7 @@ export const V2ThreadReadResponse__CodexErrorInfo = Schema.Union(
       "threadRollbackFailed",
       "sandboxError",
       "rateLimitExceeded",
+      "misalignmentPolicyViolation",
       "other",
     ]),
     Schema.Struct({
@@ -17207,6 +17216,7 @@ export type V2ThreadResumeResponse__CodexErrorInfo =
   | "threadRollbackFailed"
   | "sandboxError"
   | "rateLimitExceeded"
+  | "misalignmentPolicyViolation"
   | "other"
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
@@ -17231,6 +17241,7 @@ export const V2ThreadResumeResponse__CodexErrorInfo = Schema.Union(
       "threadRollbackFailed",
       "sandboxError",
       "rateLimitExceeded",
+      "misalignmentPolicyViolation",
       "other",
     ]),
     Schema.Struct({
@@ -17487,6 +17498,7 @@ export type V2ThreadRollbackResponse__CodexErrorInfo =
   | "threadRollbackFailed"
   | "sandboxError"
   | "rateLimitExceeded"
+  | "misalignmentPolicyViolation"
   | "other"
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
@@ -17511,6 +17523,7 @@ export const V2ThreadRollbackResponse__CodexErrorInfo = Schema.Union(
       "threadRollbackFailed",
       "sandboxError",
       "rateLimitExceeded",
+      "misalignmentPolicyViolation",
       "other",
     ]),
     Schema.Struct({
@@ -18710,6 +18723,8 @@ export type V2TurnCompletedNotification__CodexErrorInfo =
   | "badRequest"
   | "threadRollbackFailed"
   | "sandboxError"
+  | "rateLimitExceeded"
+  | "misalignmentPolicyViolation"
   | "other"
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
@@ -18733,6 +18748,8 @@ export const V2TurnCompletedNotification__CodexErrorInfo = Schema.Union(
       "badRequest",
       "threadRollbackFailed",
       "sandboxError",
+      "rateLimitExceeded",
+      "misalignmentPolicyViolation",
       "other",
     ]),
     Schema.Struct({
