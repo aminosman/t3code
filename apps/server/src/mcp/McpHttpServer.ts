@@ -13,6 +13,8 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { KeaToolkitHandlersLive } from "./toolkits/kea/handlers.ts";
+import { KeaToolkit } from "./toolkits/kea/tools.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -219,6 +221,11 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+/** The Mac the agent is running on, reachable through the user's kea. */
+const KeaToolkitRegistrationLive = McpServer.toolkit(KeaToolkit).pipe(
+  Layer.provide(KeaToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -226,4 +233,7 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  KeaToolkitRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive));

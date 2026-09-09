@@ -8,6 +8,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as KeaBridge from "./KeaBridge.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 
@@ -128,7 +129,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(["preview"]),
+        // kea is granted only when it is actually running: the capability
+        // is minted per provider session, so a thread started while kea was
+        // down simply does not hold it, and `kea_ask` says so rather than
+        // hanging on a socket that is not there.
+        capabilities: new Set<McpInvocationContext.McpCapability>(
+          KeaBridge.available() ? ["preview", "kea"] : ["preview"],
+        ),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {

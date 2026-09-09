@@ -7,7 +7,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview";
+export type McpCapability = "preview" | "kea";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
@@ -23,8 +23,15 @@ export class McpInvocationContext extends Context.Service<
   McpInvocationScope
 >()("t3/mcp/McpInvocationContext") {}
 
+/**
+ * Narrowed to `preview` on purpose: the error it raises is
+ * `PreviewAutomationUnavailableError`, which names a preview capability in
+ * the contract. A second capability wants its own error rather than a
+ * preview error with someone else's name in it — `kea_ask` checks the set
+ * directly and fails as itself.
+ */
 export const requireMcpCapability = Effect.fn("mcp.requireCapability")(function* (
-  capability: McpCapability,
+  capability: Extract<McpCapability, "preview">,
 ) {
   const invocation = yield* McpInvocationContext;
   if (!invocation.capabilities.has(capability)) {
