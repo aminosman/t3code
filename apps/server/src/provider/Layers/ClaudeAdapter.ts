@@ -81,6 +81,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as KeaBridge from "../../mcp/KeaBridge.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -4654,6 +4655,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      // kea, as an MCP server the agent spawns: the collection surface of the
+      // Mac this thread runs on, offered to every model. Absent when kea is down.
+      const keaMcp = mcpSession ? KeaBridge.mcpServer(mcpSession.providerInstanceId) : undefined;
       // The attachments dir grant lets the agent Read/copy pasted images at
       // the paths ProviderService injects into the turn text, without an
       // approval prompt. It is a leaf directory holding only attachment
@@ -4704,6 +4708,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                     Authorization: mcpSession.authorizationHeader,
                   },
                 },
+                ...(keaMcp
+                  ? { kea: { type: "stdio", command: keaMcp.command, args: [...keaMcp.args] } }
+                  : {}),
               },
             }
           : {}),

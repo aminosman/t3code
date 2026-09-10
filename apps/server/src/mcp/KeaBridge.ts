@@ -22,16 +22,18 @@
  *
  * @module mcp/KeaBridge
  */
-import * as fs from "node:fs";
-import * as net from "node:net";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 export interface KeaRuntime {
   readonly pid: number;
   readonly socket: string;
   readonly token: string;
   readonly startedAt: string;
+  /** kea's own binary, so `<executable> mcp` can be spawned without guessing where it lives. */
+  readonly executable?: string;
 }
 
 /** Where kea publishes its bridge. `KEA_CONFIG_DIR` is kea's own override. */
@@ -39,21 +41,21 @@ export function runtimePath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.KEA_CONFIG_DIR?.trim();
   const dir = override
     ? override.startsWith("~")
-      ? path.join(os.homedir(), override.slice(1))
+      ? NodePath.join(NodeOS.homedir(), override.slice(1))
       : override
-    : path.join(os.homedir(), ".config", "kea");
-  return path.join(dir, "bridge-runtime.json");
+    : NodePath.join(NodeOS.homedir(), ".config", "kea");
+  return NodePath.join(dir, "bridge-runtime.json");
 }
 
 /** A live bridge, or undefined when kea is not running this build. */
 export function runtime(env: NodeJS.ProcessEnv = process.env): KeaRuntime | undefined {
   let parsed: Partial<KeaRuntime>;
   try {
-    parsed = JSON.parse(fs.readFileSync(runtimePath(env), "utf8")) as Partial<KeaRuntime>;
+    parsed = JSON.parse(NodeFS.readFileSync(runtimePath(env), "utf8")) as Partial<KeaRuntime>;
   } catch {
     return undefined;
   }
-  const { pid, socket, token, startedAt } = parsed;
+  const { pid, socket, token, startedAt, executable } = parsed;
   if (typeof pid !== "number" || typeof socket !== "string" || typeof token !== "string") {
     return undefined;
   }
@@ -63,7 +65,59 @@ export function runtime(env: NodeJS.ProcessEnv = process.env): KeaRuntime | unde
   } catch {
     return undefined;
   }
-  return { pid, socket, token, startedAt: startedAt ?? "" };
+  return {
+    pid,
+    socket,
+    token,
+    startedAt: startedAt ?? "",
+    ...(typeof executable === "string" && executable.length > 0 ? { executable } : {}),
+  };
+}
+
+export interface KeaMcpServer {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
+/**
+ * kea as an MCP server for an agent to spawn: `<kea> mcp --caller <who>`.
+ *
+ * The collection surface — what is on this Mac, read-only — offered to every
+ * model, over the standard transport, from the one kea the user is already
+ * talking to (`kea mcp` is a proxy onto the daemon's socket, not a second
+ * daemon). The caller is the provider instance id, which is what kea matches
+ * against the user's allowlist for the personal surface (dictation history,
+ * messages, mail); an unlisted caller gets collection only.
+ *
+ * Undefined when kea is not running, or runs a build that predates the
+ * executable field — the same "absent, not broken" reading as `runtime()`.
+ */
+export function mcpServer(
+  caller: string,
+  env: NodeJS.ProcessEnv = process.env,
+): KeaMcpServer | undefined {
+  const live = runtime(env);
+  if (!live?.executable) return undefined;
+  return { command: live.executable, args: ["mcp", "--caller", caller] };
+}
+
+/** A TOML basic string: quoted, with the two characters that need escaping escaped. */
+function tomlString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * The same server as Codex `-c` config overrides — Codex takes its MCP
+ * servers from its TOML config, and the app server accepts dotted overrides
+ * on the command line, one `-c key=value` pair per key.
+ */
+export function codexOverrides(server: KeaMcpServer): ReadonlyArray<string> {
+  return [
+    "-c",
+    `mcp_servers.kea.command=${tomlString(server.command)}`,
+    "-c",
+    `mcp_servers.kea.args=[${server.args.map(tomlString).join(",")}]`,
+  ];
 }
 
 export interface KeaReply {
@@ -101,7 +155,7 @@ export function request(
       socket.destroy();
       resolve(reply);
     };
-    const socket = net.createConnection({ path: live.socket });
+    const socket = NodeNet.createConnection({ path: live.socket });
     socket.setTimeout(timeoutMs);
     let buffer = "";
     socket.on("connect", () => {

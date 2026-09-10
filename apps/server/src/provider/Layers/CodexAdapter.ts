@@ -47,6 +47,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
+import * as KeaBridge from "../../mcp/KeaBridge.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 
 import {
@@ -2250,6 +2251,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        // kea, as an MCP server the agent spawns: the collection surface of the
+        // Mac this thread runs on, offered to every model. Absent when kea is down.
+        const keaMcp = mcpSession ? KeaBridge.mcpServer(mcpSession.providerInstanceId) : undefined;
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
@@ -2277,6 +2281,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
                   "-c",
                   'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                  ...(keaMcp ? KeaBridge.codexOverrides(keaMcp) : []),
                 ],
               }
             : {}),
