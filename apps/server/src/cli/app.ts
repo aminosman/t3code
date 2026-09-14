@@ -9,6 +9,7 @@ import {
   DesktopAppActivationResponse,
   type DesktopAppActivationPlatform,
   type DesktopAppActivationRequest,
+  ThreadId,
 } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
 import {
@@ -22,7 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
@@ -186,6 +187,7 @@ const appEnvironment = Config.all({
 const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   readonly baseDir: Option.Option<string>;
   readonly workspaceRoot: Option.Option<string>;
+  readonly thread: Option.Option<string>;
 }) {
   const environment = yield* appEnvironment;
   const hostPlatform = yield* HostProcessPlatform;
@@ -212,13 +214,22 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
       userId,
       joinPath: path.join,
     }).address;
-  const request: DesktopAppActivationRequest = {
-    version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
-    requestId: NodeCrypto.randomUUID(),
-    type: "open-workspace",
-    workspaceRoot,
-    platform: hostPlatform,
-  };
+  const threadId = Option.getOrUndefined(flags.thread)?.trim();
+  const request: DesktopAppActivationRequest =
+    threadId !== undefined && threadId.length > 0
+      ? {
+          version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
+          requestId: NodeCrypto.randomUUID(),
+          type: "open-thread",
+          threadId: ThreadId.make(threadId),
+        }
+      : {
+          version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
+          requestId: NodeCrypto.randomUUID(),
+          type: "open-workspace",
+          workspaceRoot,
+          platform: hostPlatform,
+        };
   const address = resolveAddress("userdata");
   const fallbackAddress = allowDevFallback ? resolveAddress("dev") : undefined;
 
@@ -246,16 +257,24 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
     });
   }
 
-  yield* Console.log(`Opened ${workspaceRoot} in T3 Code.`);
+  yield* Console.log(
+    request.type === "open-thread"
+      ? `Opened thread ${response.threadId} in T3 Code.`
+      : `Opened ${workspaceRoot} in T3 Code.`,
+  );
 });
 
 export const appCommand = Command.make("app", {
   baseDir: baseDirFlag,
+  thread: Flag.string("thread").pipe(
+    Flag.withDescription("Open this existing thread by id instead of a project."),
+    Flag.optional,
+  ),
   workspaceRoot: Argument.string("path").pipe(
     Argument.withDescription("Project directory. Default: current directory."),
     Argument.optional,
   ),
 }).pipe(
-  Command.withDescription("Open a project in the running T3 Code desktop app."),
+  Command.withDescription("Open a project, or a thread by id, in the running T3 Code desktop app."),
   Command.withHandler(runAppCommand),
 );

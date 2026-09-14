@@ -2,10 +2,13 @@ import type {
   DesktopAppActivationFailure,
   DesktopAppActivationRequest,
   DesktopAppActivationResponse,
+  DesktopAppOpenThreadRequest,
+  DesktopAppOpenWorkspaceRequest,
   EnvironmentId,
   ExecutionEnvironmentPlatformOs,
   ProjectId,
   ScopedProjectRef,
+  ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -34,6 +37,11 @@ export interface DesktopAppActivationDependencies {
   readonly openThread: (
     projectRef: ScopedProjectRef,
   ) => Promise<{ readonly threadId: ThreadId } | null>;
+  /** An existing thread by id, in any connected environment. */
+  readonly findThread: (
+    threadId: ThreadId,
+  ) => (ScopedThreadRef & { readonly projectId: ProjectId }) | null;
+  readonly navigateToThread: (threadRef: ScopedThreadRef) => Promise<void>;
 }
 
 function failure(
@@ -45,7 +53,7 @@ function failure(
 }
 
 function desktopPlatformToEnvironmentOs(
-  platform: DesktopAppActivationRequest["platform"],
+  platform: DesktopAppOpenWorkspaceRequest["platform"],
 ): ExecutionEnvironmentPlatformOs {
   return platform === "win32" ? "windows" : platform;
 }
@@ -56,6 +64,49 @@ function errorMessage(error: unknown, fallback: string): string {
 
 export async function handleDesktopAppActivationRequest(
   request: DesktopAppActivationRequest,
+  dependencies: DesktopAppActivationDependencies,
+): Promise<DesktopAppActivationResponse> {
+  if (request.type === "open-thread") {
+    return handleOpenThread(request, dependencies);
+  }
+  return handleOpenWorkspace(request, dependencies);
+}
+
+async function handleOpenThread(
+  request: DesktopAppOpenThreadRequest,
+  dependencies: DesktopAppActivationDependencies,
+): Promise<DesktopAppActivationResponse> {
+  const found = dependencies.findThread(request.threadId);
+  if (found === null) {
+    return failure(
+      request.requestId,
+      "thread-not-found",
+      "T3 Code has no thread with that id in a connected environment.",
+    );
+  }
+  try {
+    await dependencies.navigateToThread({
+      environmentId: found.environmentId,
+      threadId: found.threadId,
+    });
+  } catch (error) {
+    return failure(
+      request.requestId,
+      "thread-open-failed",
+      errorMessage(error, "T3 Code could not open the thread."),
+    );
+  }
+  return {
+    version: 1,
+    requestId: request.requestId,
+    ok: true,
+    projectId: found.projectId,
+    threadId: found.threadId,
+  };
+}
+
+async function handleOpenWorkspace(
+  request: DesktopAppOpenWorkspaceRequest,
   dependencies: DesktopAppActivationDependencies,
 ): Promise<DesktopAppActivationResponse> {
   const target = dependencies.getTarget();

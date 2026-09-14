@@ -31,9 +31,49 @@ function dependencies(
     createProject: vi.fn(async () => createdProjectId),
     waitForProject: vi.fn(async () => undefined),
     openThread: vi.fn(async () => ({ threadId })),
+    findThread: (id) =>
+      id === threadId ? { environmentId, threadId, projectId: existingProjectId } : null,
+    navigateToThread: vi.fn(async () => undefined),
     ...overrides,
   };
 }
+
+const openThreadRequest = {
+  version: 1,
+  requestId: "request-thread",
+  type: "open-thread",
+  threadId,
+} as const;
+
+describe("desktop app open-thread", () => {
+  it("navigates to an existing thread and reports where it is", async () => {
+    const deps = dependencies();
+
+    const response = await handleDesktopAppActivationRequest(openThreadRequest, deps);
+
+    expect(deps.navigateToThread).toHaveBeenCalledWith({ environmentId, threadId });
+    expect(deps.openThread).not.toHaveBeenCalled();
+    expect(response).toEqual({
+      version: 1,
+      requestId: openThreadRequest.requestId,
+      ok: true,
+      projectId: existingProjectId,
+      threadId,
+    });
+  });
+
+  it("fails without navigating when the thread is unknown", async () => {
+    const deps = dependencies({ findThread: () => null });
+
+    const response = await handleDesktopAppActivationRequest(
+      { ...openThreadRequest, threadId: ThreadId.make("thread-missing") },
+      deps,
+    );
+
+    expect(deps.navigateToThread).not.toHaveBeenCalled();
+    expect(response).toMatchObject({ ok: false, code: "thread-not-found" });
+  });
+});
 
 describe("desktop app activation", () => {
   it("reuses an existing project and opens a new thread", async () => {

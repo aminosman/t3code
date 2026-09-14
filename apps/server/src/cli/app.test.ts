@@ -198,11 +198,34 @@ describe("t3 app", () => {
         yield* runCli(["app"], { T3CODE_HOME: baseDir });
         yield* runCli(["app", explicitPath, "--base-dir", baseDir]);
 
-        expect(desktop.received.map((request) => request.workspaceRoot)).toEqual([
+        const workspaces = desktop.received.map((request) =>
+          request.type === "open-workspace" ? request : null,
+        );
+        expect(workspaces.map((request) => request?.workspaceRoot)).toEqual([
           workingDirectory,
           explicitPath,
         ]);
-        expect(desktop.received.every((request) => request.platform === platform)).toBe(true);
+        expect(workspaces.every((request) => request?.platform === platform)).toBe(true);
+      }).pipe(Effect.scoped),
+    ),
+  );
+
+  it.effect("sends an open-thread request for --thread", () =>
+    withTempDirectory("t3-app-thread-test-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, "t3-home");
+        const desktop = yield* fakeDesktop({ baseDir });
+
+        yield* runCli(["app", "--thread", "thread-42", "--base-dir", baseDir]);
+
+        expect(desktop.received).toEqual([
+          {
+            version: 1,
+            requestId: expect.any(String),
+            type: "open-thread",
+            threadId: "thread-42",
+          },
+        ]);
       }).pipe(Effect.scoped),
     ),
   );

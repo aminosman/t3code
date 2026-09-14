@@ -7,13 +7,28 @@ export const DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION = 1 as const;
 export const DesktopAppActivationPlatform = Schema.Literals(["darwin", "linux", "win32"]);
 export type DesktopAppActivationPlatform = typeof DesktopAppActivationPlatform.Type;
 
-export const DesktopAppActivationRequest = Schema.Struct({
+export const DesktopAppOpenWorkspaceRequest = Schema.Struct({
   version: Schema.Literal(DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION),
   requestId: TrimmedNonEmptyString,
   type: Schema.Literal("open-workspace"),
   workspaceRoot: TrimmedNonEmptyString,
   platform: DesktopAppActivationPlatform,
 });
+export type DesktopAppOpenWorkspaceRequest = typeof DesktopAppOpenWorkspaceRequest.Type;
+
+/** Bring an existing thread to the front: the deep link other apps on the machine use. */
+export const DesktopAppOpenThreadRequest = Schema.Struct({
+  version: Schema.Literal(DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION),
+  requestId: TrimmedNonEmptyString,
+  type: Schema.Literal("open-thread"),
+  threadId: ThreadId,
+});
+export type DesktopAppOpenThreadRequest = typeof DesktopAppOpenThreadRequest.Type;
+
+export const DesktopAppActivationRequest = Schema.Union([
+  DesktopAppOpenWorkspaceRequest,
+  DesktopAppOpenThreadRequest,
+]);
 export type DesktopAppActivationRequest = typeof DesktopAppActivationRequest.Type;
 
 export const DesktopAppActivationErrorCode = Schema.Literals([
@@ -23,6 +38,7 @@ export const DesktopAppActivationErrorCode = Schema.Literals([
   "platform-mismatch",
   "project-create-failed",
   "thread-open-failed",
+  "thread-not-found",
   "request-timeout",
   "internal-error",
 ]);
