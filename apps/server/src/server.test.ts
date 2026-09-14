@@ -43,6 +43,8 @@ import {
   WS_METHODS,
   WsRpcGroup,
   EditorId,
+  PUSH_DEVICE_REGISTER_PATH,
+  PUSH_DEVICE_UNREGISTER_PATH,
 } from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
@@ -97,7 +99,7 @@ const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unk
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
-import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
+import { HTTP_ROUTER_CONFIG, makeRoutesLayer, PushDeviceRegistryLive } from "./server.ts";
 import {
   isThreadDetailEvent,
   resolveAvailableEditorsForConfig,
@@ -744,6 +746,7 @@ const buildAppUnderTest = (options?: {
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
+          PushDeviceRegistryLive,
           Layer.mock(Keybindings.Keybindings)({
             loadConfigState: Effect.succeed({
               keybindings: [],
@@ -2114,6 +2117,101 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 200);
       assert.equal(snapshot.thread.id, threadId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("registers a push device and reports delivery as unconfigured", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const response = yield* fetchEffect(yield* getHttpServerUrl(PUSH_DEVICE_REGISTER_PATH), {
+        method: "POST",
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          "content-type": "application/json",
+        },
+        body: jsonRequestBody({
+          deviceToken: "a1b2c3",
+          platform: "ios",
+          pushEnvironment: "sandbox",
+          installationId: "install-under-test",
+          deviceName: "Simulator",
+        }),
+      });
+      const body = yield* responseJsonEffect<{
+        readonly registered: boolean;
+        readonly deliveryConfigured: boolean;
+      }>(response);
+
+      assert.equal(response.status, 200);
+      assert.isTrue(body.registered);
+      // No APNs key is configured in this environment, and the client needs to
+      // know that registering alone will not produce notifications.
+      assert.isFalse(body.deliveryConfigured);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects a push registration without a device token", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const response = yield* fetchEffect(yield* getHttpServerUrl(PUSH_DEVICE_REGISTER_PATH), {
+        method: "POST",
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          "content-type": "application/json",
+        },
+        body: jsonRequestBody({ platform: "ios", installationId: "install-under-test" }),
+      });
+
+      assert.equal(response.status, 400);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("refuses to register a device for an unauthenticated caller", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const response = yield* fetchEffect(yield* getHttpServerUrl(PUSH_DEVICE_REGISTER_PATH), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: jsonRequestBody({
+          deviceToken: "a1b2c3",
+          platform: "ios",
+          pushEnvironment: "sandbox",
+          installationId: "install-under-test",
+        }),
+      });
+
+      assert.equal(response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("unregisters a push device", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+
+      yield* fetchEffect(yield* getHttpServerUrl(PUSH_DEVICE_REGISTER_PATH), {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: jsonRequestBody({
+          deviceToken: "a1b2c3",
+          platform: "ios",
+          pushEnvironment: "sandbox",
+          installationId: "install-under-test",
+        }),
+      });
+
+      const response = yield* fetchEffect(yield* getHttpServerUrl(PUSH_DEVICE_UNREGISTER_PATH), {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: jsonRequestBody({ installationId: "install-under-test" }),
+      });
+      const body = yield* responseJsonEffect<{ readonly registered: boolean }>(response);
+
+      assert.equal(response.status, 200);
+      assert.isFalse(body.registered);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

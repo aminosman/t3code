@@ -10,6 +10,10 @@ Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+// A paid personal team can sign the push entitlement even though a free one
+// cannot, so the capability is gated separately from the team mode itself.
+const keepsIosPushEntitlement =
+  !isIosPersonalTeamBuild || repoEnv.T3CODE_IOS_KEEP_PUSH === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
@@ -393,6 +397,7 @@ const config: ExpoConfig = {
   extra: {
     appVariant: APP_VARIANT,
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
+    iosPushEntitlement: keepsIosPushEntitlement,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
     },

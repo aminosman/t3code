@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
 
-import { signProviderToken } from "./ApnsClient.ts";
+import { normalizePrivateKeyPem, signProviderToken } from "./ApnsClient.ts";
 
 // APNs rejects a malformed provider token with a generic 403, so the signing
 // details are worth pinning: they are otherwise only observable in production.
@@ -58,5 +58,28 @@ describe("signProviderToken", () => {
     // ieee-p1363 for P-256 is exactly 64 bytes; DER would be variable-length
     // and start with 0x30, which APNs rejects.
     assert.equal(Buffer.from(signature!, "base64url").length, 64);
+  });
+});
+
+describe("normalizePrivateKeyPem", () => {
+  const flattened = keyPair.privateKey.replace(/\n/g, "");
+
+  it("signs with a key whose newlines were stripped on paste", () => {
+    // The failure this prevents is a working-looking key that only fails
+    // later, as an opaque 403 from APNs.
+    const token = signProviderToken({ ...credentials, privateKey: flattened }, 1_700_000_000_000);
+    const [header, payload, signature] = token.split(".");
+    const verifier = NodeCrypto.createVerify("SHA256");
+    verifier.update(`${header}.${payload}`);
+    assert.isTrue(
+      verifier.verify(
+        { key: keyPair.publicKey, dsaEncoding: "ieee-p1363" },
+        Buffer.from(signature!, "base64url"),
+      ),
+    );
+  });
+
+  it("leaves a well-formed key untouched", () => {
+    assert.equal(normalizePrivateKeyPem(keyPair.privateKey), keyPair.privateKey.trim());
   });
 });

@@ -38,3 +38,11 @@ node_modules/
 *.log
 .env*
 !.env.example
+
+# Signing and push credentials. These live in ~/.t3/credentials, outside any
+# repo; this only guards against a stray copy landing in the tree.
+*.p8
+*.cer
+*.p12
+*.mobileprovision
+AuthKey_*

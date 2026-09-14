@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
+import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
@@ -42,23 +43,22 @@ export const mintEnvironmentVoiceRealtimeSession = Effect.fn(
 )(function* (input: {
   readonly prepared: PreparedConnection;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
 }) {
-  // `/api/voice/realtime-session` is served by a hand-rolled handler rather
-  // than the typed environment HttpApi, so the request is issued directly
-  // instead of through the client the helper hands back. Voice already
-  // requires a cookie or bearer connection (see `mintVoiceSession`), so the
-  // DPoP re-authorization path that would rewrite `httpBaseUrl` does not
-  // apply here and the prepared base URL stays correct.
-  const requestUrl = environmentEndpointUrl(
-    input.prepared.httpBaseUrl,
-    VOICE_REALTIME_SESSION_PATH,
-  );
-
+  // Re-derived per attempt: the shared helper can change the base URL when it
+  // refreshes a rejected relay credential.
+  let requestUrl = environmentEndpointUrl(input.prepared.httpBaseUrl, VOICE_REALTIME_SESSION_PATH);
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
     signer: input.signer,
+    ...(input.remoteAuthorization === undefined
+      ? {}
+      : { remoteAuthorization: input.remoteAuthorization }),
     method: "POST",
-    url: () => requestUrl,
+    url: (httpBaseUrl) => {
+      requestUrl = environmentEndpointUrl(httpBaseUrl, VOICE_REALTIME_SESSION_PATH);
+      return requestUrl;
+    },
     timeoutMs: MINT_TIMEOUT_MS,
     request: ({ headers }) =>
       Effect.gen(function* () {
@@ -71,41 +71,40 @@ export const mintEnvironmentVoiceRealtimeSession = Effect.fn(
             ...(headers.dpop === undefined ? {} : { dpop: headers.dpop }),
           },
         });
-
+        // The shared helper fixes its own error channel, so the mint failure is
+        // carried out as a value and converted once the request settles.
         if (response.status < 200 || response.status >= 300) {
-          const errorBody = yield* response.json.pipe(Effect.orElseSucceed(() => undefined));
-          const decoded = decodeErrorResponse(errorBody);
-          return yield* Option.isSome(decoded)
-            ? new VoiceRealtimeSessionMintError({
+          const rawBody = yield* response.json.pipe(Effect.orElseSucceed(() => undefined));
+          const decoded = decodeErrorResponse(rawBody);
+          return Option.isSome(decoded)
+            ? {
+                ok: false as const,
                 code: decoded.value.error,
                 message: decoded.value.message,
-              })
-            : new VoiceRealtimeSessionMintError({
-                code: "unavailable",
+              }
+            : {
+                ok: false as const,
+                code: "unavailable" as const,
                 message: `Voice session request failed with status ${response.status}.`,
-              });
+              };
         }
-
-        return yield* HttpClientResponse.schemaBodyJson(VoiceRealtimeSessionResponse)(
+        const session = yield* HttpClientResponse.schemaBodyJson(VoiceRealtimeSessionResponse)(
           response,
-        ).pipe(
-          Effect.mapError(
-            () =>
-              new VoiceRealtimeSessionMintError({
-                code: "unavailable",
-                message: "The environment returned an unexpected voice session response.",
-              }),
-          ),
         );
+        return { ok: true as const, value: session };
       }),
   }).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof VoiceRealtimeSessionMintError
-        ? cause
-        : new VoiceRealtimeSessionMintError({
-            code: "unavailable",
-            message: `Could not reach the environment to start a voice session: ${String(cause)}`,
-          }),
+    Effect.mapError(
+      (cause) =>
+        new VoiceRealtimeSessionMintError({
+          code: "unavailable",
+          message: `Could not reach the environment to start a voice session: ${String(cause)}`,
+        }),
+    ),
+    Effect.flatMap((result) =>
+      result.ok
+        ? Effect.succeed(result.value)
+        : new VoiceRealtimeSessionMintError({ code: result.code, message: result.message }),
     ),
   );
 });

@@ -63,6 +63,28 @@ const TOKEN_REJECTION_REASONS = new Set([
   "DeviceTokenNotForTopic",
 ]);
 
+/**
+ * Rebuilds PEM line structure when it was lost in transit.
+ *
+ * A .p8 is multi-line, but pasting one into a single-line control strips the
+ * newlines, and OpenSSL then refuses the key with an error that surfaces much
+ * later as an opaque APNs 403. Re-wrapping the base64 body costs nothing and
+ * turns that into a working key.
+ */
+export const normalizePrivateKeyPem = (value: string): string => {
+  const trimmed = value.trim();
+  if (trimmed.includes("\n")) {
+    return trimmed;
+  }
+  const match = /^-----BEGIN ([A-Z ]+)-----\s*(.*?)\s*-----END \1-----$/.exec(trimmed);
+  if (!match) {
+    return trimmed;
+  }
+  const [, label, body] = match;
+  const wrapped = (body ?? "").replace(/\s+/g, "").match(/.{1,64}/g) ?? [];
+  return [`-----BEGIN ${label}-----`, ...wrapped, `-----END ${label}-----`].join("\n");
+};
+
 export const signProviderToken = (credentials: ApnsCredentials, issuedAtMs: number): string => {
   const header = base64url(JSON.stringify({ alg: "ES256", kid: credentials.keyId, typ: "JWT" }));
   const payload = base64url(
@@ -71,7 +93,7 @@ export const signProviderToken = (credentials: ApnsCredentials, issuedAtMs: numb
   const signer = NodeCrypto.createSign("SHA256");
   signer.update(`${header}.${payload}`);
   const signature = signer
-    .sign({ key: credentials.privateKey, dsaEncoding: "ieee-p1363" })
+    .sign({ key: normalizePrivateKeyPem(credentials.privateKey), dsaEncoding: "ieee-p1363" })
     .toString("base64url");
   return `${header}.${payload}.${signature}`;
 };
