@@ -2592,11 +2592,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const appIdOverride = process.env.T3CODE_DESKTOP_APP_ID?.trim();
   const productNameOverride = process.env.T3CODE_DESKTOP_PRODUCT_NAME?.trim();
   const homeDirOverride = process.env.T3CODE_DESKTOP_HOME?.trim();
+  // A rebranded build (Roost) names its artifacts and its Info.plist strings
+  // after itself, so a release of it cannot be mistaken for stock T3 Code.
+  const brandName = productNameOverride || "T3 Code";
+  const artifactPrefix = productNameOverride
+    ? productNameOverride.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "")
+    : "T3-Code";
 
   const buildConfig: Record<string, unknown> = {
     appId: appIdOverride || DESKTOP_APP_ID,
     productName: productNameOverride || resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: `${artifactPrefix}-\${version}-\${arch}.\${ext}`,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2640,7 +2646,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       protocols: [
         {
-          name: "T3 Code",
+          name: brandName,
           schemes: ["t3code", "t3code-dev"],
         },
       ],
@@ -2648,8 +2654,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // The voice oracle captures microphone audio; without this usage
       // description macOS kills the app on the first getUserMedia call.
       extendInfo: {
-        NSMicrophoneUsageDescription:
-          "T3 Code uses the microphone for voice conversations with the oracle.",
+        NSMicrophoneUsageDescription: `${brandName} uses the microphone for voice conversations with the oracle.`,
         ...(homeDirOverride ? { LSEnvironment: { T3CODE_HOME: homeDirOverride } } : {}),
       },
       ...(macPasskeySigning
@@ -3465,7 +3470,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
 
   const appVersion = options.version ?? serverPackageJson.version;
-  const iconAssets = resolveDesktopBuildIconAssets(appVersion);
+  const macIconOverride = process.env.T3CODE_DESKTOP_MAC_ICON_PNG?.trim();
+  const iconAssets = {
+    ...resolveDesktopBuildIconAssets(appVersion),
+    ...(macIconOverride ? { macIconPng: macIconOverride } : {}),
+  };
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
