@@ -404,3 +404,21 @@ Checklist:
 - Build fails with signing error:
   - Retry with secrets removed to confirm unsigned path still works.
   - Re-check certificate/profile names and tenant/client credentials.
+
+## Roost
+
+Roost is our own build of this fork for macOS arm64, published on this
+repo's releases; its updater and Ruru's installer both read them. One
+script does the whole cut:
+
+```bash
+scripts/release-roost.sh patch            # or minor, or an explicit x.y.z
+scripts/release-roost.sh 0.0.40 --dry-run # build and verify, publish nothing
+```
+
+It bumps the desktop, server and web versions, builds with the Roost name
+and icon and the fork as the update repository, verifies the zip, dmg,
+blockmaps and `latest-mac.yml`, commits and tags `v<version>`, pushes
+`main` and the tag to the `fork` remote, and creates the GitHub release
+with those assets. Needs a clean tree on `main`, `gh` logged in, and a
+Rust toolchain with the `aarch64-apple-darwin` target.
