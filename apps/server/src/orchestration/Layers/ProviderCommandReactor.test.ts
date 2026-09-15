@@ -456,7 +456,7 @@ describe("ProviderCommandReactor", () => {
         : Layer.succeed(
             ClaudeAccountRouter,
             ClaudeAccountRouter.of({
-              listCandidates: Effect.succeed([]),
+              listCandidates: () => Effect.succeed([]),
               resolve: () => Effect.succeed(input.accountRoute!),
             }),
           );
@@ -895,9 +895,19 @@ describe("ProviderCommandReactor", () => {
         _tag: "Switch",
         from: ProviderInstanceId.make("codex"),
         to: ProviderInstanceId.make("codex-b"),
-        fromSessionPercent: 91,
-        toSessionPercent: 4,
-        toWeeklyPercent: 12,
+        reason: "blocked",
+        fromStanding: {
+          instanceId: ProviderInstanceId.make("codex"),
+          pressurePercent: 91,
+          resetsAt: undefined,
+          blockedBy: "session",
+        },
+        toStanding: {
+          instanceId: ProviderInstanceId.make("codex-b"),
+          pressurePercent: 4,
+          resetsAt: undefined,
+          blockedBy: undefined,
+        },
       },
     });
 
@@ -930,8 +940,8 @@ describe("ProviderCommandReactor", () => {
       accountRoute: {
         _tag: "Stay",
         instanceId: ProviderInstanceId.make("codex"),
-        reason: "underThreshold",
-        sessionPercent: 12,
+        reason: "preferred",
+        standing: undefined,
       },
     });
 

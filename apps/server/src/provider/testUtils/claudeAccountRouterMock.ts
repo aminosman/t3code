@@ -13,13 +13,13 @@ import { ClaudeAccountRouter } from "../Layers/ClaudeAccountRouter.ts";
 export const ClaudeAccountRouterNoopLayer = Layer.succeed(
   ClaudeAccountRouter,
   ClaudeAccountRouter.of({
-    listCandidates: Effect.succeed([]),
+    listCandidates: () => Effect.succeed([]),
     resolve: (instanceId) =>
       Effect.succeed({
         _tag: "Stay" as const,
         instanceId,
         reason: "ungrouped" as const,
-        sessionPercent: undefined,
+        standing: undefined,
       }),
   }),
 );

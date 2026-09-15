@@ -1,75 +1,95 @@
 /**
  * Account rotation policy for Claude instances that share an `accountGroup`.
  *
- * Two Max subscriptions do not raise the ceiling on their own: alternating on
- * a timer keeps both 5-hour windows open and filling in parallel, so they
- * exhaust together and every switch re-pays prompt-cache cost on the account
- * being switched to. Draining one account to a threshold and then handing over
- * is strictly better — the sibling's window is untouched when it is needed,
- * the drained one recovers while it is idle, and switches happen roughly once
- * per session window instead of continuously.
+ * The model the user picked decides which windows matter: the session and
+ * overall weekly windows always apply, and a model-scoped weekly (Claude
+ * reports one for Fable today) applies when it names that model's family.
+ * An account is out for a model when any of those windows is at the switch
+ * threshold or reported critical/blocked.
  *
- * The policy is pure so the decision can be unit-tested against window shapes
- * that are painful to reproduce live; `ClaudeAccountRouter` supplies the
- * candidates.
+ * Among accounts that still have budget for the model, the one whose binding
+ * window resets soonest is drained first: budget that is about to reset is
+ * lost if unused, while the other account's keeps. Once that window resets it
+ * moves a week out, the other account becomes the soonest, and the rotation
+ * alternates on its own.
  *
- * An elapsed window counts as empty. That is what makes the rotation work
- * without polling idle accounts: the last snapshot taken before switching away
- * carries `resetsAt`, and once that passes the account is known to be free
- * again without asking.
+ * An elapsed window counts as empty, so an account that was drained and left
+ * idle is known to be fresh again without probing it.
+ *
+ * Pure, so the decision can be tested against window shapes that are painful
+ * to reproduce live; `ClaudeAccountRouter` supplies the candidates.
  *
  * @module provider/Layers/claudeAccountRouting
  */
-import type { ProviderInstanceId, ServerProviderUsageLimits } from "@t3tools/contracts";
+import type { ProviderInstanceId } from "@t3tools/contracts";
 
 /** Applied when `switchAtPercent` is empty. Leaves room to finish a turn. */
 export const DEFAULT_SWITCH_AT_PERCENT = 85;
 
-/**
- * A sibling this close to its weekly cap is not worth switching to: the
- * weekly window recovers over days, so spending it to dodge a 5-hour window
- * trades a cheap wait for an expensive one.
- */
-export const WEEKLY_EXHAUSTED_PERCENT = 98;
+export type ClaudeUsageSeverity = "normal" | "warning" | "critical" | "blocked";
+
+export interface ClaudeUsageWindow {
+  readonly kind: "session" | "weekly" | "weeklyScoped";
+  /** Lower-cased model family a `weeklyScoped` window applies to, e.g. `fable`. */
+  readonly model?: string | undefined;
+  readonly usedPercent: number;
+  readonly severity?: ClaudeUsageSeverity | undefined;
+  readonly resetsAt?: string | undefined;
+}
 
 export interface ClaudeAccountCandidate {
   readonly instanceId: ProviderInstanceId;
   readonly accountGroup: string;
   readonly switchAtPercent: number;
   readonly enabled: boolean;
-  readonly usageLimits: ServerProviderUsageLimits | undefined;
+  /** `undefined` when nothing could be read; an empty array means "no limits". */
+  readonly windows: ReadonlyArray<ClaudeUsageWindow> | undefined;
 }
 
 export type ClaudeStayReason =
   /** No group configured, so this instance is not in rotation. */
   | "ungrouped"
-  /** No usable window data; never reroute on a guess. */
+  /** No usable window data for the requested instance; never reroute on a guess. */
   | "noUsageData"
-  /** Still below the hand-over threshold. */
-  | "underThreshold"
-  /** Over threshold, but the group has no other member. */
-  | "soleMember";
+  /** The requested instance is the one to drain right now. */
+  | "preferred";
+
+export type ClaudeSwitchReason =
+  /** The requested instance is out for this model. */
+  | "blocked"
+  /** Both have budget; the sibling's window resets sooner, so it is drained first. */
+  | "resetsSooner";
+
+export interface ClaudeAccountStanding {
+  readonly instanceId: ProviderInstanceId;
+  /** Highest effective percent among the windows that bind this model. */
+  readonly pressurePercent: number;
+  /** When the model's binding weekly window resets, if known and still ahead. */
+  readonly resetsAt: string | undefined;
+  /** Which window put the account out, when it is out. */
+  readonly blockedBy: ClaudeUsageWindow["kind"] | undefined;
+}
 
 export type ClaudeRoutingDecision =
   | {
       readonly _tag: "Stay";
       readonly instanceId: ProviderInstanceId;
       readonly reason: ClaudeStayReason;
-      readonly sessionPercent: number | undefined;
+      readonly standing: ClaudeAccountStanding | undefined;
     }
   | {
       readonly _tag: "Switch";
       readonly from: ProviderInstanceId;
       readonly to: ProviderInstanceId;
-      readonly fromSessionPercent: number;
-      readonly toSessionPercent: number;
-      readonly toWeeklyPercent: number;
+      readonly reason: ClaudeSwitchReason;
+      readonly fromStanding: ClaudeAccountStanding;
+      readonly toStanding: ClaudeAccountStanding;
     }
   | {
       readonly _tag: "Exhausted";
       readonly instanceId: ProviderInstanceId;
-      readonly sessionPercent: number;
-      /** Earliest moment any group member frees up, when one is known. */
+      readonly standing: ClaudeAccountStanding;
+      /** Earliest moment any group member frees up for this model, when known. */
       readonly retryAt: string | undefined;
     };
 
@@ -83,91 +103,108 @@ export function parseSwitchAtPercent(raw: string): number {
     : DEFAULT_SWITCH_AT_PERCENT;
 }
 
+/**
+ * `claude-fable-5-1[1m]` → `fable`, `claude-opus-5` → `opus`. Claude names
+ * scoped windows by the model's display name, which matches the family token.
+ */
+export function modelFamily(model: string | undefined): string | undefined {
+  if (!model) return undefined;
+  const match = /^claude-([a-z]+)/i.exec(model.trim());
+  return match?.[1]?.toLowerCase();
+}
+
 function millis(iso: string | undefined): number | undefined {
   if (!iso) return undefined;
   const value = Date.parse(iso);
   return Number.isFinite(value) ? value : undefined;
 }
 
-/** A window whose reset has passed is spent, whatever percentage it reports. */
-function effectivePercent(
-  window: { readonly usedPercent: number; readonly resetsAt?: string | undefined },
-  nowMs: number,
-): number {
+function elapsed(window: ClaudeUsageWindow, nowMs: number): boolean {
   const resetsAtMs = millis(window.resetsAt);
-  if (resetsAtMs !== undefined && resetsAtMs <= nowMs) return 0;
-  return window.usedPercent;
+  return resetsAtMs !== undefined && resetsAtMs <= nowMs;
 }
 
-function usableWindows(limits: ServerProviderUsageLimits | undefined) {
-  if (!limits || limits.unavailable || limits.windows.length === 0) return undefined;
-  return limits.windows;
+/** A window whose reset has passed is spent, whatever it last reported. */
+function effectivePercent(window: ClaudeUsageWindow, nowMs: number): number {
+  return elapsed(window, nowMs) ? 0 : window.usedPercent;
 }
 
-export function sessionPercent(
-  limits: ServerProviderUsageLimits | undefined,
+/** The windows that can stop a turn on this model. */
+function bindingWindows(
+  windows: ReadonlyArray<ClaudeUsageWindow>,
+  family: string | undefined,
+): ReadonlyArray<ClaudeUsageWindow> {
+  return windows.filter(
+    (window) => window.kind !== "weeklyScoped" || (family !== undefined && window.model === family),
+  );
+}
+
+export function accountStanding(
+  candidate: ClaudeAccountCandidate,
+  family: string | undefined,
   nowMs: number,
-): number | undefined {
-  const windows = usableWindows(limits);
-  if (!windows) return undefined;
-  const session = windows.filter((window) => window.kind === "session");
-  if (session.length === 0) return undefined;
-  return Math.max(...session.map((window) => effectivePercent(window, nowMs)));
+): ClaudeAccountStanding | undefined {
+  if (candidate.windows === undefined) return undefined;
+  const binding = bindingWindows(candidate.windows, family);
+
+  let pressurePercent = 0;
+  let blockedBy: ClaudeUsageWindow["kind"] | undefined;
+  for (const window of binding) {
+    if (elapsed(window, nowMs)) continue;
+    const percent = effectivePercent(window, nowMs);
+    pressurePercent = Math.max(pressurePercent, percent);
+    const hard = window.severity === "critical" || window.severity === "blocked";
+    if ((hard || percent >= candidate.switchAtPercent) && blockedBy === undefined) {
+      blockedBy = window.kind;
+    }
+  }
+
+  // The model's own weekly decides when this account is worth draining; the
+  // overall weekly stands in when the model has no scoped window.
+  const weekly =
+    binding.find((window) => window.kind === "weeklyScoped") ??
+    binding.find((window) => window.kind === "weekly");
+  const resetsAt = weekly && !elapsed(weekly, nowMs) ? weekly.resetsAt : undefined;
+
+  return { instanceId: candidate.instanceId, pressurePercent, resetsAt, blockedBy };
 }
 
 /**
- * The binding weekly constraint. Claude reports an account-wide weekly plus
- * model-scoped weeklies; the highest is the one that will stop a turn.
+ * Soonest reset first; an unknown reset means a fresh window with a week
+ * ahead, so it sorts last. Ties go to the fuller account (drain it out), then
+ * to instance id so the choice is deterministic.
  */
-export function weeklyPercent(
-  limits: ServerProviderUsageLimits | undefined,
-  nowMs: number,
-): number {
-  const windows = usableWindows(limits);
-  if (!windows) return 0;
-  const weekly = windows.filter((window) => window.kind === "weekly");
-  if (weekly.length === 0) return 0;
-  return Math.max(...weekly.map((window) => effectivePercent(window, nowMs)));
+function drainFirst(left: ClaudeAccountStanding, right: ClaudeAccountStanding): number {
+  const l = millis(left.resetsAt) ?? Number.POSITIVE_INFINITY;
+  const r = millis(right.resetsAt) ?? Number.POSITIVE_INFINITY;
+  return (
+    l - r ||
+    right.pressurePercent - left.pressurePercent ||
+    left.instanceId.localeCompare(right.instanceId)
+  );
 }
 
-/** Soonest session reset in the group, for telling the user when to retry. */
-function earliestSessionReset(
-  candidates: ReadonlyArray<ClaudeAccountCandidate>,
+function earliestReset(
+  standings: ReadonlyArray<ClaudeAccountStanding>,
   nowMs: number,
 ): string | undefined {
   let best: { readonly at: number; readonly iso: string } | undefined;
-  for (const candidate of candidates) {
-    for (const window of usableWindows(candidate.usageLimits) ?? []) {
-      if (window.kind !== "session" || !window.resetsAt) continue;
-      const at = millis(window.resetsAt);
-      if (at === undefined || at <= nowMs) continue;
-      if (!best || at < best.at) best = { at, iso: window.resetsAt };
-    }
+  for (const standing of standings) {
+    const at = millis(standing.resetsAt);
+    if (at === undefined || at <= nowMs) continue;
+    if (!best || at < best.at) best = { at, iso: standing.resetsAt! };
   }
   return best?.iso;
 }
 
-/**
- * Rank by weekly first: the accounts' weekly windows drift out of alignment,
- * so the sibling with the freshest 5-hour window is often the one whose weekly
- * budget is nearly spent. Session percent breaks weekly ties, and instance id
- * makes the choice deterministic when both are equal.
- */
-function preferFreshest(
-  left: { readonly weekly: number; readonly session: number; readonly id: string },
-  right: { readonly weekly: number; readonly session: number; readonly id: string },
-): number {
-  return (
-    left.weekly - right.weekly || left.session - right.session || left.id.localeCompare(right.id)
-  );
-}
-
 export function selectClaudeAccount(input: {
   readonly requestedInstanceId: ProviderInstanceId;
+  readonly requestedModel: string | undefined;
   readonly candidates: ReadonlyArray<ClaudeAccountCandidate>;
   readonly nowMs: number;
 }): ClaudeRoutingDecision {
   const { requestedInstanceId, candidates, nowMs } = input;
+  const family = modelFamily(input.requestedModel);
   const requested = candidates.find((candidate) => candidate.instanceId === requestedInstanceId);
 
   const group = requested?.accountGroup.trim() ?? "";
@@ -176,78 +213,66 @@ export function selectClaudeAccount(input: {
       _tag: "Stay",
       instanceId: requestedInstanceId,
       reason: "ungrouped",
-      sessionPercent: undefined,
+      standing: undefined,
     };
   }
 
-  const current = sessionPercent(requested.usageLimits, nowMs);
-  if (current === undefined) {
+  const requestedStanding = accountStanding(requested, family, nowMs);
+  if (requestedStanding === undefined) {
     return {
       _tag: "Stay",
       instanceId: requestedInstanceId,
       reason: "noUsageData",
-      sessionPercent: undefined,
-    };
-  }
-  if (current < requested.switchAtPercent) {
-    return {
-      _tag: "Stay",
-      instanceId: requestedInstanceId,
-      reason: "underThreshold",
-      sessionPercent: current,
+      standing: undefined,
     };
   }
 
-  const siblings = candidates.filter(
-    (candidate) =>
-      candidate.instanceId !== requestedInstanceId &&
-      candidate.enabled &&
-      candidate.accountGroup.trim() === group,
+  const members = candidates.filter(
+    (candidate) => candidate.enabled && candidate.accountGroup.trim() === group,
   );
-  if (siblings.length === 0) {
-    return {
-      _tag: "Stay",
-      instanceId: requestedInstanceId,
-      reason: "soleMember",
-      sessionPercent: current,
-    };
+  const standings = new Map<ProviderInstanceId, ClaudeAccountStanding>();
+  for (const member of members) {
+    // A sibling that has never reported is assumed fresh: it has either never
+    // run or never been read, and the alternative is refusing to hand over.
+    const standing =
+      accountStanding(member, family, nowMs) ??
+      ({
+        instanceId: member.instanceId,
+        pressurePercent: 0,
+        resetsAt: undefined,
+        blockedBy: undefined,
+      } satisfies ClaudeAccountStanding);
+    standings.set(member.instanceId, standing);
   }
+  standings.set(requestedInstanceId, requestedStanding);
 
-  const eligible = siblings
-    .map((candidate) => ({
-      candidate,
-      // A sibling with no usage data yet is assumed fresh: it has either never
-      // run or never reported, and the alternative is refusing to hand over.
-      session: sessionPercent(candidate.usageLimits, nowMs) ?? 0,
-      weekly: weeklyPercent(candidate.usageLimits, nowMs),
-    }))
-    .filter(
-      (entry) =>
-        entry.session < entry.candidate.switchAtPercent && entry.weekly < WEEKLY_EXHAUSTED_PERCENT,
-    )
-    .toSorted((left, right) =>
-      preferFreshest(
-        { weekly: left.weekly, session: left.session, id: left.candidate.instanceId },
-        { weekly: right.weekly, session: right.session, id: right.candidate.instanceId },
-      ),
-    );
+  const eligible = [...standings.values()]
+    .filter((standing) => standing.blockedBy === undefined)
+    .toSorted(drainFirst);
 
   const winner = eligible[0];
   if (!winner) {
     return {
       _tag: "Exhausted",
       instanceId: requestedInstanceId,
-      sessionPercent: current,
-      retryAt: earliestSessionReset([requested, ...siblings], nowMs),
+      standing: requestedStanding,
+      retryAt: earliestReset([...standings.values()], nowMs),
     };
   }
-
+  if (winner.instanceId === requestedInstanceId) {
+    return {
+      _tag: "Stay",
+      instanceId: requestedInstanceId,
+      reason: "preferred",
+      standing: requestedStanding,
+    };
+  }
   return {
     _tag: "Switch",
     from: requestedInstanceId,
-    to: winner.candidate.instanceId,
-    fromSessionPercent: current,
-    toSessionPercent: winner.session,
-    toWeeklyPercent: winner.weekly,
+    to: winner.instanceId,
+    reason: requestedStanding.blockedBy === undefined ? "resetsSooner" : "blocked",
+    fromStanding: requestedStanding,
+    toStanding: winner,
   };
 }

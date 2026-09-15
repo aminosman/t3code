@@ -73,6 +73,7 @@ import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationRe
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ClaudeAccountRouterLive } from "./provider/Layers/ClaudeAccountRouter.ts";
+import { ClaudeUsageReaderLive } from "./provider/Layers/claudeUsageReader.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -291,15 +292,17 @@ const ReactorLayerLive = Layer.empty.pipe(
   // The command reactor resolves account rotation before starting or
   // restarting a thread's provider session; the router reads the instance
   // registry and settings, which the outer runtime layer supplies.
-  Layer.provideMerge(ProviderCommandReactorLive.pipe(Layer.provide(ClaudeAccountRouterLive))),
+  Layer.provideMerge(
+    ProviderCommandReactorLive.pipe(
+      Layer.provide(ClaudeAccountRouterLive.pipe(Layer.provide(ClaudeUsageReaderLive))),
+    ),
+  ),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
   Layer.provideMerge(ThreadPullRequestReactor.layer),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
-  Layer.provideMerge(
-    PushNotifier.layer.pipe(Layer.provide(ApnsClient.layer)),
-  ),
+  Layer.provideMerge(PushNotifier.layer.pipe(Layer.provide(ApnsClient.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 

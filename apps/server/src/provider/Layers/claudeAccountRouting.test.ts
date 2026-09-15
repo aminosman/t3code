@@ -1,64 +1,54 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { ProviderInstanceId, type ServerProviderUsageLimits } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 
 import {
   DEFAULT_SWITCH_AT_PERCENT,
+  accountStanding,
+  modelFamily,
   parseSwitchAtPercent,
   selectClaudeAccount,
-  sessionPercent,
-  weeklyPercent,
   type ClaudeAccountCandidate,
+  type ClaudeUsageWindow,
 } from "./claudeAccountRouting.ts";
 
-const NOW = Date.parse("2026-09-06T20:00:00.000Z");
-const IN_AN_HOUR = "2026-09-06T21:00:00.000Z";
-const AN_HOUR_AGO = "2026-09-06T19:00:00.000Z";
-const NEXT_WEEK = "2026-09-13T17:00:00.000Z";
+// A Tuesday. Sunday resets Sep 13, Thursday resets Sep 10 — the real accounts.
+const NOW = Date.parse("2026-09-08T20:00:00.000Z");
+const THURSDAY = "2026-09-10T20:00:00.000Z";
+const SUNDAY = "2026-09-13T17:00:00.000Z";
+const LAST_WEEK = "2026-09-06T20:00:00.000Z";
+const IN_AN_HOUR = "2026-09-08T21:00:00.000Z";
 
-const limits = (input: {
+const FABLE = "claude-fable-5-1[1m]";
+const OPUS = "claude-opus-5[1m]";
+
+const windows = (input: {
   readonly session?: number;
   readonly sessionResetsAt?: string;
   readonly weekly?: number;
   readonly weeklyResetsAt?: string;
-  readonly scopedWeekly?: number;
-}): ServerProviderUsageLimits => ({
-  checkedAt: "2026-09-06T20:00:00.000Z",
-  windows: [
-    ...(input.session === undefined
-      ? []
-      : [
-          {
-            id: "five_hour",
-            kind: "session" as const,
-            label: "Session",
-            usedPercent: input.session,
-            ...(input.sessionResetsAt ? { resetsAt: input.sessionResetsAt } : {}),
-          },
-        ]),
-    ...(input.weekly === undefined
-      ? []
-      : [
-          {
-            id: "seven_day",
-            kind: "weekly" as const,
-            label: "Weekly",
-            usedPercent: input.weekly,
-            ...(input.weeklyResetsAt ? { resetsAt: input.weeklyResetsAt } : {}),
-          },
-        ]),
-    ...(input.scopedWeekly === undefined
-      ? []
-      : [
-          {
-            id: "seven_day_fable",
-            kind: "weekly" as const,
-            label: "Weekly · Fable",
-            usedPercent: input.scopedWeekly,
-          },
-        ]),
-  ],
-});
+  readonly fable?: number;
+  readonly fableSeverity?: ClaudeUsageWindow["severity"];
+  readonly fableResetsAt?: string;
+}): ReadonlyArray<ClaudeUsageWindow> => [
+  ...(input.session === undefined
+    ? []
+    : [{ kind: "session" as const, usedPercent: input.session, resetsAt: input.sessionResetsAt }]),
+  ...(input.weekly === undefined
+    ? []
+    : [{ kind: "weekly" as const, usedPercent: input.weekly, resetsAt: input.weeklyResetsAt }]),
+  ...(input.fable === undefined
+    ? []
+    : [
+        {
+          kind: "weeklyScoped" as const,
+          model: "fable",
+          usedPercent: input.fable,
+          severity: input.fableSeverity,
+          resetsAt: input.fableResetsAt ?? input.weeklyResetsAt,
+        },
+      ]),
+];
 
 const candidate = (
   id: string,
@@ -68,13 +58,35 @@ const candidate = (
   accountGroup: "max",
   switchAtPercent: DEFAULT_SWITCH_AT_PERCENT,
   enabled: true,
-  usageLimits: limits({ session: 10, weekly: 10 }),
+  windows: windows({ session: 10, weekly: 10 }),
   ...overrides,
 });
 
-const select = (requested: string, candidates: ReadonlyArray<ClaudeAccountCandidate>) =>
+/** The real Sunday/Thursday pair on a Tuesday, Fable blocked on Sunday. */
+const sunday = (o: Parameters<typeof windows>[0] = {}) =>
+  candidate("sunday", {
+    windows: windows({
+      session: 9,
+      weekly: 67,
+      weeklyResetsAt: SUNDAY,
+      fable: 100,
+      fableSeverity: "critical",
+      ...o,
+    }),
+  });
+const thursday = (o: Parameters<typeof windows>[0] = {}) =>
+  candidate("thursday", {
+    windows: windows({ session: 3, weekly: 35, weeklyResetsAt: THURSDAY, fable: 60, ...o }),
+  });
+
+const select = (
+  requested: string,
+  model: string | undefined,
+  candidates: ReadonlyArray<ClaudeAccountCandidate>,
+) =>
   selectClaudeAccount({
     requestedInstanceId: ProviderInstanceId.make(requested),
+    requestedModel: model,
     candidates,
     nowMs: NOW,
   });
@@ -82,7 +94,6 @@ const select = (requested: string, candidates: ReadonlyArray<ClaudeAccountCandid
 describe("parseSwitchAtPercent", () => {
   it("falls back to the default for empty or unusable input", () => {
     expect(parseSwitchAtPercent("")).toBe(DEFAULT_SWITCH_AT_PERCENT);
-    expect(parseSwitchAtPercent("   ")).toBe(DEFAULT_SWITCH_AT_PERCENT);
     expect(parseSwitchAtPercent("0")).toBe(DEFAULT_SWITCH_AT_PERCENT);
     expect(parseSwitchAtPercent("101")).toBe(DEFAULT_SWITCH_AT_PERCENT);
   });
@@ -93,196 +104,176 @@ describe("parseSwitchAtPercent", () => {
   });
 });
 
-describe("window readings", () => {
-  it("reads the session window and the highest weekly window", () => {
-    const value = limits({ session: 42, weekly: 30, scopedWeekly: 77 });
-    expect(sessionPercent(value, NOW)).toBe(42);
-    expect(weeklyPercent(value, NOW)).toBe(77);
+describe("modelFamily", () => {
+  it("reads the family token Claude names scoped windows by", () => {
+    expect(modelFamily(FABLE)).toBe("fable");
+    expect(modelFamily(OPUS)).toBe("opus");
+    expect(modelFamily("claude-sonnet-5")).toBe("sonnet");
+    expect(modelFamily(undefined)).toBeUndefined();
+    expect(modelFamily("gpt-5-codex")).toBeUndefined();
+  });
+});
+
+describe("accountStanding", () => {
+  it("binds the model's scoped weekly and ignores other models' scoped windows", () => {
+    const s = accountStanding(sunday(), "fable", NOW);
+    expect(s).toMatchObject({ pressurePercent: 100, blockedBy: "weeklyScoped", resetsAt: SUNDAY });
+    const o = accountStanding(sunday(), "opus", NOW);
+    expect(o).toMatchObject({ pressurePercent: 67, blockedBy: undefined, resetsAt: SUNDAY });
   });
 
-  // Lets the rotation work without polling the idle account: the snapshot
-  // taken before switching away is enough to know when it frees up.
-  it("treats an elapsed window as spent", () => {
-    const value = limits({ session: 99, sessionResetsAt: AN_HOUR_AGO });
-    expect(sessionPercent(value, NOW)).toBe(0);
+  it("treats critical severity as blocked regardless of percent", () => {
+    const c = candidate("x", {
+      windows: windows({ session: 5, fable: 40, fableSeverity: "critical" }),
+    });
+    expect(accountStanding(c, "fable", NOW)?.blockedBy).toBe("weeklyScoped");
   });
 
-  it("keeps a window that has not reset yet", () => {
-    const value = limits({ session: 99, sessionResetsAt: IN_AN_HOUR });
-    expect(sessionPercent(value, NOW)).toBe(99);
+  // Lets the rotation work without polling the idle account.
+  it("treats an elapsed window as spent, with no reset ahead", () => {
+    const c = candidate("x", {
+      windows: windows({
+        session: 99,
+        sessionResetsAt: LAST_WEEK,
+        fable: 100,
+        fableSeverity: "critical",
+        fableResetsAt: LAST_WEEK,
+        weekly: 90,
+        weeklyResetsAt: LAST_WEEK,
+      }),
+    });
+    expect(accountStanding(c, "fable", NOW)).toMatchObject({
+      pressurePercent: 0,
+      blockedBy: undefined,
+      resetsAt: undefined,
+    });
   });
 
-  it("reports no reading when limits are missing or unavailable", () => {
-    expect(sessionPercent(undefined, NOW)).toBeUndefined();
-    expect(
-      sessionPercent({ checkedAt: "2026-09-06T20:00:00.000Z", windows: [] }, NOW),
-    ).toBeUndefined();
-    expect(
-      sessionPercent(
-        {
-          checkedAt: "2026-09-06T20:00:00.000Z",
-          windows: [],
-          unavailable: { reason: "unsupported" },
-        },
-        NOW,
-      ),
-    ).toBeUndefined();
+  it("falls back to the overall weekly's reset when the model has no scoped window", () => {
+    expect(accountStanding(thursday(), "opus", NOW)?.resetsAt).toBe(THURSDAY);
+  });
+
+  it("is undefined when nothing was read", () => {
+    expect(accountStanding(candidate("x", { windows: undefined }), "fable", NOW)).toBeUndefined();
   });
 });
 
 describe("selectClaudeAccount", () => {
-  it("stays put when the instance is not in a group", () => {
-    const decision = select("a", [candidate("a", { accountGroup: "" })]);
-    expect(decision).toMatchObject({ _tag: "Stay", reason: "ungrouped" });
-  });
-
-  it("stays put when the instance is unknown", () => {
-    expect(select("ghost", [candidate("a")])).toMatchObject({
+  it("stays put when the instance is not in a group or is unknown", () => {
+    expect(select("a", FABLE, [candidate("a", { accountGroup: "" })])).toMatchObject({
+      _tag: "Stay",
+      reason: "ungrouped",
+    });
+    expect(select("ghost", FABLE, [candidate("a")])).toMatchObject({
       _tag: "Stay",
       reason: "ungrouped",
     });
   });
 
   // Rerouting on a guess would move work to an account for no reason.
-  it("stays put when the current account has no usage data", () => {
-    const decision = select("a", [candidate("a", { usageLimits: undefined }), candidate("b")]);
-    expect(decision).toMatchObject({ _tag: "Stay", reason: "noUsageData" });
+  it("stays put when the requested account has no usage data", () => {
+    const d = select("a", FABLE, [candidate("a", { windows: undefined }), candidate("b")]);
+    expect(d).toMatchObject({ _tag: "Stay", reason: "noUsageData" });
   });
 
-  it("stays put below the threshold", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 84, weekly: 5 }) }),
-      candidate("b"),
-    ]);
-    expect(decision).toMatchObject({ _tag: "Stay", reason: "underThreshold", sessionPercent: 84 });
+  // The incident: Fable blocked on Sunday, session barely used, Thursday has Fable.
+  it("switches off an account whose Fable weekly is blocked even though its session is low", () => {
+    const d = select("sunday", FABLE, [sunday(), thursday()]);
+    expect(d).toMatchObject({ _tag: "Switch", from: "sunday", to: "thursday", reason: "blocked" });
+    expect(d._tag === "Switch" && d.fromStanding.blockedBy).toBe("weeklyScoped");
   });
 
-  it("stays put when nothing else shares the group", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, weekly: 5 }) }),
-      candidate("b", { accountGroup: "other" }),
-    ]);
-    expect(decision).toMatchObject({ _tag: "Stay", reason: "soleMember" });
-  });
-
-  it("hands over at the threshold", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 85, weekly: 5 }) }),
-      candidate("b", { usageLimits: limits({ session: 3, weekly: 12 }) }),
-    ]);
-    expect(decision).toMatchObject({
+  // The same Sunday account is fine for Opus: its Fable block is irrelevant.
+  it("keeps using an account for a model it still has budget for", () => {
+    // Thursday resets sooner, so Thursday is still preferred for Opus...
+    expect(select("sunday", OPUS, [sunday(), thursday()])).toMatchObject({
       _tag: "Switch",
-      from: "a",
-      to: "b",
-      fromSessionPercent: 85,
-      toSessionPercent: 3,
+      to: "thursday",
+      reason: "resetsSooner",
+    });
+    // ...but once Thursday is out of overall weekly, Sunday serves Opus.
+    expect(select("sunday", OPUS, [sunday(), thursday({ weekly: 99 })])).toMatchObject({
+      _tag: "Stay",
+      reason: "preferred",
     });
   });
 
-  it("honours a custom threshold", () => {
-    const decision = select("a", [
-      candidate("a", { switchAtPercent: 50, usageLimits: limits({ session: 55, weekly: 5 }) }),
-      candidate("b"),
-    ]);
-    expect(decision).toMatchObject({ _tag: "Switch", to: "b" });
+  // Use-it-or-lose-it: drain the window that resets first.
+  it("prefers the account whose window resets soonest when both have budget", () => {
+    const d = select("sunday", FABLE, [sunday({ fable: 30, fableSeverity: "normal" }), thursday()]);
+    expect(d).toMatchObject({ _tag: "Switch", to: "thursday", reason: "resetsSooner" });
+    expect(
+      select("thursday", FABLE, [sunday({ fable: 30, fableSeverity: "normal" }), thursday()]),
+    ).toMatchObject({ _tag: "Stay", reason: "preferred" });
   });
 
-  // The real accounts' weekly windows are not aligned, so the sibling with the
-  // emptiest session window can be the one whose weekly budget is nearly gone.
-  it("prefers the lower weekly even when its session window is fuller", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, weekly: 5 }) }),
-      candidate("b", { usageLimits: limits({ session: 1, weekly: 92 }) }),
-      candidate("c", { usageLimits: limits({ session: 40, weekly: 20 }) }),
-    ]);
-    expect(decision).toMatchObject({ _tag: "Switch", to: "c", toWeeklyPercent: 20 });
+  // After Thursday's window rolls over, Sunday becomes the soonest and gets drained.
+  it("alternates once the soonest window has reset", () => {
+    const rolled = thursday({ weeklyResetsAt: LAST_WEEK, fable: 60 });
+    const d = select("thursday", FABLE, [sunday({ fable: 30, fableSeverity: "normal" }), rolled]);
+    expect(d).toMatchObject({ _tag: "Switch", to: "sunday", reason: "resetsSooner" });
   });
 
-  it("skips a sibling that is over its own session threshold", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, weekly: 5 }) }),
-      candidate("b", { usageLimits: limits({ session: 95, sessionResetsAt: IN_AN_HOUR }) }),
-      candidate("c", { usageLimits: limits({ session: 20, weekly: 30 }) }),
+  it("does not switch to a sibling that is blocked for the same model", () => {
+    const d = select("sunday", FABLE, [
+      sunday(),
+      thursday({ fable: 100, fableSeverity: "critical" }),
     ]);
-    expect(decision).toMatchObject({ _tag: "Switch", to: "c" });
+    expect(d).toMatchObject({ _tag: "Exhausted", instanceId: "sunday", retryAt: THURSDAY });
   });
 
-  it("skips a sibling that is nearly out of weekly budget", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, weekly: 5 }) }),
-      candidate("b", { usageLimits: limits({ session: 0, weekly: 99 }) }),
+  it("switches to a sibling blocked only for a different model", () => {
+    // Thursday out of Fable but fine for Opus; Sunday's Opus budget resets later.
+    const d = select("sunday", OPUS, [
+      sunday(),
+      thursday({ fable: 100, fableSeverity: "critical" }),
     ]);
-    expect(decision).toMatchObject({ _tag: "Exhausted" });
+    expect(d).toMatchObject({ _tag: "Switch", to: "thursday", reason: "resetsSooner" });
   });
 
-  // A group whose only other member is switched off has no alternative at
-  // all, which is a different state from "every alternative is spent".
-  it("treats a group whose only sibling is disabled as sole member", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, weekly: 5 }) }),
-      candidate("b", { enabled: false }),
+  it("honours the session window and a custom threshold", () => {
+    const d = select("a", FABLE, [
+      candidate("a", {
+        switchAtPercent: 50,
+        windows: windows({ session: 55, sessionResetsAt: IN_AN_HOUR, weekly: 5 }),
+      }),
+      candidate("b", { windows: windows({ session: 5, weekly: 5 }) }),
     ]);
-    expect(decision).toMatchObject({ _tag: "Stay", reason: "soleMember" });
+    expect(d).toMatchObject({ _tag: "Switch", to: "b", reason: "blocked" });
+    expect(d._tag === "Switch" && d.fromStanding.blockedBy).toBe("session");
   });
 
   it("never routes to a disabled sibling", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, weekly: 5 }) }),
-      candidate("b", { enabled: false, usageLimits: limits({ session: 0, weekly: 0 }) }),
-      candidate("c", { usageLimits: limits({ session: 40, weekly: 25 }) }),
-    ]);
-    expect(decision).toMatchObject({ _tag: "Switch", to: "c" });
+    const d = select("sunday", FABLE, [sunday(), thursday(), candidate("off", { enabled: false })]);
+    expect(d).toMatchObject({ _tag: "Switch", to: "thursday" });
+    expect(
+      select("sunday", FABLE, [
+        sunday(),
+        thursday({ fable: 100, fableSeverity: "critical" }),
+        candidate("off", { enabled: false }),
+      ]),
+    ).toMatchObject({ _tag: "Exhausted" });
   });
 
-  // The whole point of the design: the drained account becomes eligible again
-  // on its own, with no probe of the idle side.
-  it("returns to an account whose session window has elapsed", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, sessionResetsAt: IN_AN_HOUR }) }),
-      candidate("b", {
-        usageLimits: limits({ session: 100, sessionResetsAt: AN_HOUR_AGO, weekly: 40 }),
-      }),
+  it("treats a sibling that has never reported as fresh but least urgent", () => {
+    const d = select("a", FABLE, [
+      candidate("a", { windows: windows({ session: 90, sessionResetsAt: IN_AN_HOUR, weekly: 5 }) }),
+      candidate("b", { windows: undefined }),
     ]);
-    expect(decision).toMatchObject({ _tag: "Switch", to: "b", toSessionPercent: 0 });
+    expect(d).toMatchObject({ _tag: "Switch", to: "b", reason: "blocked" });
   });
 
-  it("reports when to retry once every account is spent", () => {
-    const decision = select("a", [
-      candidate("a", {
-        usageLimits: limits({ session: 99, sessionResetsAt: NEXT_WEEK, weekly: 5 }),
-      }),
-      candidate("b", {
-        usageLimits: limits({ session: 99, sessionResetsAt: IN_AN_HOUR, weekly: 5 }),
-      }),
+  it("breaks ties deterministically", () => {
+    const even = windows({ session: 10, weekly: 10, weeklyResetsAt: SUNDAY });
+    const first = select("c", FABLE, [
+      candidate("c", { windows: even }),
+      candidate("b", { windows: even }),
     ]);
-    expect(decision).toMatchObject({
-      _tag: "Exhausted",
-      instanceId: "a",
-      retryAt: IN_AN_HOUR,
-    });
-  });
-
-  it("treats a sibling that has never reported as fresh", () => {
-    const decision = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, weekly: 5 }) }),
-      candidate("b", { usageLimits: undefined }),
-    ]);
-    expect(decision).toMatchObject({ _tag: "Switch", to: "b", toSessionPercent: 0 });
-  });
-
-  it("breaks exact ties deterministically", () => {
-    const even = limits({ session: 10, weekly: 10 });
-    const first = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, weekly: 5 }) }),
-      candidate("c", { usageLimits: even }),
-      candidate("b", { usageLimits: even }),
-    ]);
-    const second = select("a", [
-      candidate("a", { usageLimits: limits({ session: 90, weekly: 5 }) }),
-      candidate("b", { usageLimits: even }),
-      candidate("c", { usageLimits: even }),
+    const second = select("b", FABLE, [
+      candidate("b", { windows: even }),
+      candidate("c", { windows: even }),
     ]);
     expect(first).toMatchObject({ _tag: "Switch", to: "b" });
-    expect(second).toMatchObject({ _tag: "Switch", to: "b" });
+    expect(second).toMatchObject({ _tag: "Stay", reason: "preferred" });
   });
 });

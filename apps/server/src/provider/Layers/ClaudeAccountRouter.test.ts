@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Stream from "effect/Stream";
 
 import {
@@ -15,7 +16,13 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ClaudeAccountRouter, ClaudeAccountRouterLive } from "./ClaudeAccountRouter.ts";
+import type { ClaudeUsageWindow } from "./claudeAccountRouting.ts";
+import {
+  ClaudeAccountRouter,
+  ClaudeAccountRouterLive,
+  snapshotUsageToWindows,
+} from "./ClaudeAccountRouter.ts";
+import { ClaudeUsageReader } from "./claudeUsageReader.ts";
 
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const CODEX = ProviderDriverKind.make("codex");
@@ -47,7 +54,14 @@ const fakeInstance = (input: {
   }) as unknown as ProviderInstance;
 
 const settingsWith = (
-  instances: Record<string, { readonly accountGroup?: string; readonly switchAtPercent?: string }>,
+  instances: Record<
+    string,
+    {
+      readonly accountGroup?: string;
+      readonly switchAtPercent?: string;
+      readonly shadowHomePath?: string;
+    }
+  >,
 ): ServerSettings =>
   ({
     ...DEFAULT_SERVER_SETTINGS,
@@ -62,10 +76,20 @@ const settingsWith = (
 const harness = (input: {
   readonly settings: ServerSettings;
   readonly instances: ReadonlyArray<ProviderInstance>;
+  /** Direct reads keyed by the shadow home the instance resolves to. */
+  readonly direct?: Record<string, ReadonlyArray<ClaudeUsageWindow>>;
 }) =>
   Layer.provide(
     ClaudeAccountRouterLive,
     Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(
+        ClaudeUsageReader,
+        ClaudeUsageReader.of({
+          read: (configDir) =>
+            Effect.succeed(configDir === undefined ? undefined : input.direct?.[configDir]),
+        }),
+      ),
       Layer.succeed(
         ServerSettingsService,
         ServerSettingsService.of({
@@ -94,7 +118,7 @@ describe("ClaudeAccountRouter", () => {
   it.effect("pairs grouped Claude instances with their usage windows", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      const candidates = yield* router.listCandidates;
+      const candidates = yield* router.listCandidates(undefined);
 
       expect(candidates).toHaveLength(2);
       expect(candidates.map((candidate) => candidate.instanceId)).toEqual(["a", "b"]);
@@ -119,7 +143,7 @@ describe("ClaudeAccountRouter", () => {
   it.effect("ignores ungrouped instances and other drivers", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      expect(yield* router.listCandidates).toHaveLength(0);
+      expect(yield* router.listCandidates(undefined)).toHaveLength(0);
     }).pipe(
       Effect.provide(
         harness({
@@ -133,7 +157,7 @@ describe("ClaudeAccountRouter", () => {
   it.effect("routes the next turn to the freshest sibling", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      const decision = yield* router.resolve(ProviderInstanceId.make("a"));
+      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-opus-5");
 
       expect(decision).toMatchObject({ _tag: "Switch", from: "a", to: "b" });
     }).pipe(
@@ -152,9 +176,9 @@ describe("ClaudeAccountRouter", () => {
   it.effect("stays put while the current account is under threshold", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      const decision = yield* router.resolve(ProviderInstanceId.make("a"));
+      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-opus-5");
 
-      expect(decision).toMatchObject({ _tag: "Stay", reason: "underThreshold" });
+      expect(decision).toMatchObject({ _tag: "Stay", reason: "preferred" });
     }).pipe(
       Effect.provide(
         harness({
@@ -172,7 +196,7 @@ describe("ClaudeAccountRouter", () => {
   it.effect("stays put when settings cannot be read", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      const decision = yield* router.resolve(ProviderInstanceId.make("a"));
+      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-opus-5");
 
       expect(decision).toMatchObject({ _tag: "Stay", instanceId: "a" });
     }).pipe(
@@ -180,6 +204,11 @@ describe("ClaudeAccountRouter", () => {
         Layer.provide(
           ClaudeAccountRouterLive,
           Layer.mergeAll(
+            NodeServices.layer,
+            Layer.succeed(
+              ClaudeUsageReader,
+              ClaudeUsageReader.of({ read: () => Effect.succeed(undefined) }),
+            ),
             Layer.succeed(
               ServerSettingsService,
               ServerSettingsService.of({
@@ -206,4 +235,66 @@ describe("ClaudeAccountRouter", () => {
       ),
     ),
   );
+
+  it.effect("prefers a direct usage read over the probe's snapshot", () =>
+    Effect.gen(function* () {
+      const router = yield* ClaudeAccountRouter;
+      // Snapshot says both are fine; the direct read says a's Fable is gone.
+      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-fable-5-1[1m]");
+      expect(decision).toMatchObject({ _tag: "Switch", from: "a", to: "b", reason: "blocked" });
+    }).pipe(
+      Effect.provide(
+        harness({
+          settings: settingsWith({
+            a: { accountGroup: "max", shadowHomePath: "/tmp/shadow-a" },
+            b: { accountGroup: "max", shadowHomePath: "/tmp/shadow-b" },
+          }),
+          instances: [
+            fakeInstance({ id: "a", usageLimits: sessionLimits(5, 5) }),
+            fakeInstance({ id: "b", usageLimits: sessionLimits(5, 5) }),
+          ],
+          direct: {
+            "/tmp/shadow-a": [
+              { kind: "session", usedPercent: 5 },
+              { kind: "weeklyScoped", model: "fable", usedPercent: 100, severity: "critical" },
+            ],
+            "/tmp/shadow-b": [
+              { kind: "session", usedPercent: 5 },
+              { kind: "weeklyScoped", model: "fable", usedPercent: 40 },
+            ],
+          },
+        }),
+      ),
+    ),
+  );
+});
+
+describe("snapshotUsageToWindows", () => {
+  it("maps the probe's windows, reading the model off a scoped id", () => {
+    expect(
+      snapshotUsageToWindows({
+        checkedAt: "2026-09-06T20:00:00.000Z",
+        windows: [
+          { id: "five_hour", kind: "session", label: "Session", usedPercent: 12 },
+          { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 40 },
+          { id: "seven_day_fable", kind: "weekly", label: "Weekly · Fable", usedPercent: 77 },
+        ],
+      }),
+    ).toEqual([
+      { kind: "session", usedPercent: 12, resetsAt: undefined },
+      { kind: "weekly", usedPercent: 40, resetsAt: undefined },
+      { kind: "weeklyScoped", model: "fable", usedPercent: 77, resetsAt: undefined },
+    ]);
+  });
+
+  it("is undefined for missing or unavailable limits", () => {
+    expect(snapshotUsageToWindows(undefined)).toBeUndefined();
+    expect(
+      snapshotUsageToWindows({
+        checkedAt: "x",
+        windows: [],
+        unavailable: { reason: "unsupported" },
+      }),
+    ).toBeUndefined();
+  });
 });

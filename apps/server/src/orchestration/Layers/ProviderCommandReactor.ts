@@ -628,26 +628,47 @@ const make = Effect.gen(function* () {
     // that carries the resume cursor -- is the path a manual instance switch
     // already takes, so rotation reuses it rather than growing a second one.
     // No-ops unless the instance opts in with an `accountGroup`.
-    const accountRoute = yield* accountRouter.resolve(desiredModelSelection.instanceId);
+    const accountRoute = yield* accountRouter.resolve(
+      desiredModelSelection.instanceId,
+      desiredModelSelection.model,
+    );
+    // Every outcome is logged: a rotation that silently stays put is
+    // indistinguishable from one that is broken.
     if (accountRoute._tag === "Switch") {
       yield* Effect.logInfo("provider command reactor rotating provider account", {
         threadId,
+        model: desiredModelSelection.model,
+        reason: accountRoute.reason,
         from: accountRoute.from,
         to: accountRoute.to,
-        fromSessionPercent: accountRoute.fromSessionPercent,
-        toSessionPercent: accountRoute.toSessionPercent,
-        toWeeklyPercent: accountRoute.toWeeklyPercent,
+        fromPressure: accountRoute.fromStanding.pressurePercent,
+        fromBlockedBy: accountRoute.fromStanding.blockedBy,
+        fromResetsAt: accountRoute.fromStanding.resetsAt,
+        toPressure: accountRoute.toStanding.pressurePercent,
+        toResetsAt: accountRoute.toStanding.resetsAt,
       });
       requestedModelSelection = { ...desiredModelSelection, instanceId: accountRoute.to };
       desiredModelSelection = requestedModelSelection;
     } else if (accountRoute._tag === "Exhausted") {
-      // Every account in the group is spent. Let the turn run and fail on the
-      // provider's own limit error, which carries the real reset time.
+      // Every account in the group is spent for this model. Let the turn run
+      // and fail on the provider's own limit error, which carries the real
+      // reset time.
       yield* Effect.logInfo("provider command reactor found no fresh account", {
         threadId,
+        model: desiredModelSelection.model,
         instanceId: accountRoute.instanceId,
-        sessionPercent: accountRoute.sessionPercent,
+        pressure: accountRoute.standing.pressurePercent,
+        blockedBy: accountRoute.standing.blockedBy,
         retryAt: accountRoute.retryAt,
+      });
+    } else if (accountRoute.reason !== "ungrouped") {
+      yield* Effect.logInfo("provider command reactor keeping provider account", {
+        threadId,
+        model: desiredModelSelection.model,
+        instanceId: accountRoute.instanceId,
+        reason: accountRoute.reason,
+        pressure: accountRoute.standing?.pressurePercent,
+        resetsAt: accountRoute.standing?.resetsAt,
       });
     }
     const desiredInstanceId = desiredModelSelection.instanceId;
