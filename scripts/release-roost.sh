@@ -1,8 +1,18 @@
 #!/bin/zsh
-# Cut a Roost release: bump the version, build the macOS arm64 app with
-# its auto-update manifest, verify the artifacts, commit and tag, push,
-# and publish the GitHub release that Roost's updater and Ruru's installer
-# both read (aminosman/t3code, assets Roost-<version>-arm64.*).
+# Cut a Roost release: bump the version, build the macOS arm64 app, verify
+# the artifacts, commit and tag, push, publish the GitHub release, and
+# sign the zip into Tui's update feed — which is what actually delivers it
+# to anyone (aminosman/t3code, assets Roost-<version>-arm64.*).
+#
+# Roost does NOT update itself. Its inherited electron-updater hands off to
+# Squirrel.Mac on macOS, which validates a download against the running
+# bundle's designated requirement; Roost is ad-hoc signed, so that
+# requirement is its cdhash and moves with every build, and the install
+# always fails. The build is therefore cut with no update repository, which
+# leaves that updater dormant ("no update feed is configured"), and Tui —
+# which installed Roost and runs as a login agent anyway — carries the
+# update: one Ed25519-signed appcast, an item per product, swapped the next
+# time Roost is not running. See ~/Projects/tui/docs/auto-update.md.
 #
 #   scripts/release-roost.sh <version|patch|minor> [--notes "text"] [--dry-run]
 #
@@ -73,18 +83,22 @@ restore() { git checkout -q -- $PKGS 2>/dev/null || true; }
 OUT="release/roost-$VERSION"
 rm -rf "$OUT"
 say "building Roost $VERSION for macOS arm64 → $OUT"
+# No T3CODE_DESKTOP_UPDATE_REPOSITORY: with no publish config the build
+# carries no app-update.yml, and Roost's own updater stands down instead of
+# failing an install every hour.
 T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR="${T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR:-true}" \
 T3CODE_DESKTOP_PRODUCT_NAME=Roost \
 T3CODE_DESKTOP_MAC_ICON_PNG=assets/roost/roost-macos-1024.png \
-T3CODE_DESKTOP_UPDATE_REPOSITORY="$REPO" \
   node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --output-dir "$OUT"
 
 # --- verify ----------------------------------------------------------------
-ASSETS=("$OUT/Roost-$VERSION-arm64.zip" "$OUT/Roost-$VERSION-arm64.zip.blockmap"
-        "$OUT/Roost-$VERSION-arm64.dmg" "$OUT/Roost-$VERSION-arm64.dmg.blockmap" "$OUT/latest-mac.yml")
+# The zip is what Tui's updater downloads; the dmg is for a first install
+# by hand. Blockmaps are published when the build makes them.
+ASSETS=("$OUT/Roost-$VERSION-arm64.zip" "$OUT/Roost-$VERSION-arm64.dmg")
 for a in $ASSETS; do [ -s "$a" ] || die "missing artifact: $a"; done
-grep -q "^version: $VERSION$" "$OUT/latest-mac.yml" || die "latest-mac.yml is not for $VERSION"
-grep -q "Roost-$VERSION-arm64.zip" "$OUT/latest-mac.yml" || die "latest-mac.yml does not name the zip"
+for extra in "$OUT/Roost-$VERSION-arm64.zip.blockmap" "$OUT/Roost-$VERSION-arm64.dmg.blockmap"; do
+  [ -s "$extra" ] && ASSETS+=("$extra")
+done
 TMP="$(mktemp -d)"; unzip -q "$OUT/Roost-$VERSION-arm64.zip" -d "$TMP"
 [ -d "$TMP/Roost.app" ] || die "the zip does not hold Roost.app"
 BUILT="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$TMP/Roost.app/Contents/Info.plist")"
@@ -109,7 +123,32 @@ if [ -z "$NOTES" ]; then
   if [ -n "$LAST" ]; then
     NOTES+="$(git log --no-merges --format='- %s' "$LAST..HEAD~1" | grep -v '^- release:' | head -30)"$'\n\n'
   fi
-  NOTES+="macOS arm64, ad-hoc signed. Same bundle id and \`~/.t3\` home as T3 Code. Auto-updates from this repo's releases."
+  NOTES+="macOS arm64, ad-hoc signed. Same bundle id and \`~/.t3\` home as T3 Code. Tui installs this for you: it reads the shared update feed hourly and swaps Roost the next time it is not running."
 fi
 gh release create "$TAG" -R "$REPO" --title "Roost $VERSION" --notes "$NOTES" $ASSETS
 say "released: https://github.com/$REPO/releases/tag/$TAG"
+
+# --- into Tui's feed -------------------------------------------------------
+# The release above is only a place to download from. What delivers it is
+# the appcast: the zip signed with the update key, as one `roost` item
+# beside Tui's own. The zip goes up first, always — a feed naming an asset
+# that is not there yet fails verification on every machine that reads it
+# in between, which is why this is the last step.
+TUI_DIR="${TUI_DIR:-$HOME/Projects/tui}"
+FEED_DIR="${TUI_FEED_DIR:-$HOME/Projects/tui-releases}"
+if [ -d "$TUI_DIR" ] && [ -d "$FEED_DIR/.git" ]; then
+  say "signing Roost $VERSION into the update feed"
+  swift run --package-path "$TUI_DIR" -c release tui release \
+    --channel roost --zip "$OUT/Roost-$VERSION-arm64.zip" --version "$VERSION" \
+    --url "https://github.com/$REPO/releases/download/$TAG/Roost-$VERSION-arm64.zip" \
+    --out "$FEED_DIR" | tail -4
+  git -C "$FEED_DIR" add appcast.xml feed.json
+  git -C "$FEED_DIR" commit -q -m "Roost $VERSION"
+  git -C "$FEED_DIR" push -q
+  say "feed updated: every Tui takes this within the hour"
+else
+  die "no tui checkout at $TUI_DIR or no feed checkout at $FEED_DIR — the release is published but NOT in the feed, so nobody will be given it. Sign it in by hand:
+  swift run --package-path <tui> -c release tui release --channel roost \\
+    --zip $OUT/Roost-$VERSION-arm64.zip --version $VERSION \\
+    --url https://github.com/$REPO/releases/download/$TAG/Roost-$VERSION-arm64.zip --out <feed>"
+fi

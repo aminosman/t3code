@@ -417,8 +417,25 @@ scripts/release-roost.sh 0.0.40 --dry-run # build and verify, publish nothing
 ```
 
 It bumps the desktop, server and web versions, builds with the Roost name
-and icon and the fork as the update repository, verifies the zip, dmg,
-blockmaps and `latest-mac.yml`, commits and tags `v<version>`, pushes
-`main` and the tag to the `fork` remote, and creates the GitHub release
-with those assets. Needs a clean tree on `main`, `gh` logged in, and a
-Rust toolchain with the `aarch64-apple-darwin` target.
+and icon, verifies the zip and dmg, commits and tags `v<version>`, pushes
+`main` and the tag to the `fork` remote, creates the GitHub release with
+those assets, and then signs the zip into Tui's update feed. Needs a clean
+tree on `main`, `gh` logged in, a Rust toolchain with the
+`aarch64-apple-darwin` target, and checkouts of `~/Projects/tui` and the
+feed repo (`TUI_DIR`, `TUI_FEED_DIR` override them).
+
+**Roost does not update itself.** The build carries no update repository,
+so the inherited electron-updater stays dormant ("no update feed is
+configured"). It could not work anyway: on macOS it hands off to
+Squirrel.Mac, which validates a download against the running bundle's
+designated requirement, and Roost is ad-hoc signed — that requirement is
+its cdhash and changes in every build. Delivery is Tui's job instead. Tui
+installed Roost, runs as a login agent, and reads one Ed25519-signed
+appcast hourly that carries an item per product; it downloads and verifies
+a new Roost and swaps it the next time Roost is not running, because a
+running Roost is hosting agents. The scheme, the key and the safety
+properties are documented in `~/Projects/tui/docs/auto-update.md`.
+
+A release that is published but not signed into the feed reaches nobody —
+the script says so loudly if it cannot find the checkouts, and prints the
+command to do it by hand.

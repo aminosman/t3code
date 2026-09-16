@@ -37,7 +37,7 @@
     "dist:desktop:artifact": "node scripts/build-desktop-artifact.ts",
     "dist:desktop:dmg": "node scripts/build-desktop-artifact.ts --platform mac --target dmg",
     "dist:desktop:dmg:arm64": "node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64",
-    "dist:roost:mac:arm64": "T3CODE_DESKTOP_PRODUCT_NAME=Roost T3CODE_DESKTOP_MAC_ICON_PNG=assets/roost/roost-macos-1024.png T3CODE_DESKTOP_UPDATE_REPOSITORY=aminosman/t3code node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64",
+    "dist:roost:mac:arm64": "T3CODE_DESKTOP_PRODUCT_NAME=Roost T3CODE_DESKTOP_MAC_ICON_PNG=assets/roost/roost-macos-1024.png node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64",
     "dist:desktop:dmg:x64": "node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch x64",
     "dist:desktop:linux": "node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64",
     "dist:desktop:win": "node scripts/build-desktop-artifact.ts --platform win --target nsis",
