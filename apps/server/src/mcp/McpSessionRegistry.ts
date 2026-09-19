@@ -132,9 +132,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         // kea is granted only when it is actually running: the capability
         // is minted per provider session, so a thread started while kea was
         // down simply does not hold it, and `kea_ask` says so rather than
-        // hanging on a socket that is not there.
+        // hanging on a socket that is not there. `threads` (the cross-thread
+        // read/create/archive tools) needs nothing outside the server and is
+        // always granted.
         capabilities: new Set<McpInvocationContext.McpCapability>(
-          KeaBridge.available() ? ["preview", "kea"] : ["preview"],
+          KeaBridge.available() ? ["preview", "kea", "threads"] : ["preview", "threads"],
         ),
         issuedAt,
       };

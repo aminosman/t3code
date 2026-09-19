@@ -7,7 +7,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview" | "kea";
+export type McpCapability = "preview" | "kea" | "threads";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
