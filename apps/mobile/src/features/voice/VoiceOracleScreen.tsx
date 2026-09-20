@@ -242,8 +242,8 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     const wasRunningTurn = previous.turnId === latestTurnId && previous.state === "running";
     if (!wasRunningTurn) return;
 
-    const lastAssistantText = viewRef.current.messages
-      .toReversed()
+    const lastAssistantText = [...viewRef.current.messages]
+      .reverse()
       .find((message) => message.role === "assistant" && message.text.trim().length > 0)?.text;
     const outcome =
       latestTurnState === "completed"

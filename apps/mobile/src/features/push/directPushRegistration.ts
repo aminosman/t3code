@@ -40,7 +40,8 @@ export async function buildDirectPushRegistration(): Promise<PushDeviceRegistrat
   }
   const permission = await Notifications.getPermissionsAsync();
   const granted =
-    permission.granted || permission.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL
+    permission.granted ||
+    permission.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL
       ? true
       : (await Notifications.requestPermissionsAsync()).granted;
   if (!granted) {

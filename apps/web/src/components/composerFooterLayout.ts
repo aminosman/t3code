@@ -28,11 +28,12 @@ export function shouldUseRestingComposerLayout(input: {
   isMobileViewport: boolean;
   isScrollCollapsed: boolean;
   hasExpandedChrome: boolean;
+  hasMultilinePrompt: boolean;
   /** Whether the timeline has more content than fits above the composer. */
   timelineOverflows: boolean;
 }): boolean {
-  // Passive draft content is deliberately absent here. Resting only clamps
-  // the prompt row and overlays its actions; non-image attachment and context
+  // Multiline drafts stay readable. Resting only clamps a single prompt
+  // line and overlays its actions; non-image attachment and context
   // rows keep their natural height above it while image previews move inline.
   // Banners and the tasks badge dock above the surface, so they are absent
   // too. Whether the context strip can host the relocated controls is
@@ -53,6 +54,7 @@ export function shouldUseRestingComposerLayout(input: {
     !input.isMobileViewport &&
     input.timelineOverflows &&
     input.isScrollCollapsed &&
+    !input.hasMultilinePrompt &&
     !input.hasExpandedChrome
   );
 }
@@ -188,4 +190,21 @@ export function resolveRestingComposerControlsLayout(
       ? minimumWidth <= hostWidth - RESTING_CONTROLS_SLACK_PX
       : minimumWidth <= hostWidth;
   return { hiddenCount, visible };
+}
+
+export function resolveScrollToEndClearance(input: {
+  overlayHeight: number;
+  mainSurfaceTop: number;
+  button: { left: number; right: number };
+  attachments: ReadonlyArray<{ top: number; left: number; right: number }>;
+}): number {
+  let contentTop = input.mainSurfaceTop;
+  let top = contentTop;
+  for (const attachment of input.attachments) {
+    contentTop = Math.min(contentTop, attachment.top);
+    if (attachment.left < input.button.right && attachment.right > input.button.left) {
+      top = Math.min(top, attachment.top);
+    }
+  }
+  return Math.ceil(input.overlayHeight - (top - contentTop));
 }

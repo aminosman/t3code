@@ -16,7 +16,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-export class KeaUnavailableError extends Schema.TaggedErrorClass<KeaUnavailableError>()(
+export class KeaUnavailableError extends Schema.TaggedError<KeaUnavailableError>()(
   "KeaUnavailableError",
   { reason: Schema.String },
 ) {

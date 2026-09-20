@@ -39,7 +39,7 @@ export interface ApnsNotification {
   readonly collapseId?: string;
 }
 
-export class ApnsDeliveryError extends Schema.TaggedErrorClass<ApnsDeliveryError>()(
+export class ApnsDeliveryError extends Schema.TaggedError<ApnsDeliveryError>()(
   "ApnsDeliveryError",
   {
     status: Schema.Number,
@@ -53,8 +53,7 @@ export class ApnsDeliveryError extends Schema.TaggedErrorClass<ApnsDeliveryError
   }
 }
 
-const base64url = (input: string | Buffer) =>
-  Buffer.from(input).toString("base64url");
+const base64url = (input: string | Buffer) => Buffer.from(input).toString("base64url");
 
 /** Tokens APNs reports as permanently invalid, so the registry can prune. */
 const TOKEN_REJECTION_REASONS = new Set([
@@ -206,9 +205,7 @@ export const make = Effect.sync(() => {
                 "apns-topic": credentials.bundleId,
                 "apns-push-type": "alert",
                 "apns-priority": "10",
-                ...(notification.collapseId
-                  ? { "apns-collapse-id": notification.collapseId }
-                  : {}),
+                ...(notification.collapseId ? { "apns-collapse-id": notification.collapseId } : {}),
                 "content-type": "application/json",
               },
               body: payload,

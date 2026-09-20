@@ -41,9 +41,8 @@ export const make = ElectronMediaAccess.of({
         // headless/scripted launch contexts do this). Re-read the status
         // instead of assuming a denial, so a suppressed prompt does not
         // block the renderer's own getUserMedia prompt path.
-        Effect.map(
-          (granted): DesktopMicrophoneAccess =>
-            granted ? "granted" : Electron.systemPreferences.getMediaAccessStatus("microphone"),
+        Effect.map((granted): DesktopMicrophoneAccess =>
+          granted ? "granted" : Electron.systemPreferences.getMediaAccessStatus("microphone"),
         ),
         // A rejected TCC call means the OS refused to answer, not that the
         // user declined; report the status rather than inventing a denial.

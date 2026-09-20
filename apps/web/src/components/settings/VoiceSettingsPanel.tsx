@@ -162,7 +162,6 @@ function MicrophoneAccessControl() {
   );
 }
 
-
 function PushAuthKeyControl({
   push,
   onUpdate,

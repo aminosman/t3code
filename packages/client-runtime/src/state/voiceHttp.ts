@@ -51,6 +51,10 @@ export const mintEnvironmentVoiceRealtimeSession = Effect.fn(
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
     signer: input.signer,
+    // These are Roost's own routes, outside the contract's HttpApi groups, so
+    // the typed group client the helper builds goes unused; the raw client
+    // below posts to the path directly.
+    group: "metadata",
     ...(input.remoteAuthorization === undefined
       ? {}
       : { remoteAuthorization: input.remoteAuthorization }),

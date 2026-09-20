@@ -19,7 +19,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-export class ThreadToolError extends Schema.TaggedErrorClass<ThreadToolError>()("ThreadToolError", {
+export class ThreadToolError extends Schema.TaggedError<ThreadToolError>()("ThreadToolError", {
   reason: Schema.String,
 }) {
   override get message(): string {

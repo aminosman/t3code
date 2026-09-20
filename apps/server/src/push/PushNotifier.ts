@@ -17,10 +17,7 @@ import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import {
-  eventThreadId,
-  shouldPublishAgentAwarenessEvent,
-} from "../relay/AgentAwarenessRelay.ts";
+import { eventThreadId, shouldPublishAgentAwarenessEvent } from "../relay/AgentAwarenessRelay.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";

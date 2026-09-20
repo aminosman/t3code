@@ -101,12 +101,14 @@ export function buildOracleInstructions(view: VoiceOracleThreadView): string {
  */
 export function buildResumeContext(view: VoiceOracleThreadView): string {
   const activity = describeAgentActivity(view);
-  const lastAgentMessage = view.messages
-    .toReversed()
-    .find((message) => message.role === "assistant" && message.text.trim().length > 0)?.text;
-  const lastUserMessage = view.messages
-    .toReversed()
-    .find((message) => message.role === "user" && message.text.trim().length > 0)?.text;
+  // Hermes has no Array#toReversed, so copy before reversing.
+  const newestFirst = [...view.messages].reverse();
+  const lastAgentMessage = newestFirst.find(
+    (message) => message.role === "assistant" && message.text.trim().length > 0,
+  )?.text;
+  const lastUserMessage = newestFirst.find(
+    (message) => message.role === "user" && message.text.trim().length > 0,
+  )?.text;
 
   return [
     "The user just opened voice mode on this thread. You are picking the conversation back up — you may have been away while the agent worked.",

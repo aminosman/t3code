@@ -58,13 +58,15 @@ export const make = Effect.gen(function* () {
   const textEncoder = new TextEncoder();
 
   const readAll = Effect.gen(function* () {
-    const stored = yield* secrets.get(REGISTRY_SECRET_NAME).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("push: failed to read device registry", { cause }).pipe(
-          Effect.as(Option.none<Uint8Array>()),
+    const stored = yield* secrets
+      .get(REGISTRY_SECRET_NAME)
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("push: failed to read device registry", { cause }).pipe(
+            Effect.as(Option.none<Uint8Array>()),
+          ),
         ),
-      ),
-    );
+      );
     if (Option.isNone(stored)) {
       return [] as ReadonlyArray<RegisteredPushDevice>;
     }

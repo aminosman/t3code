@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as KeaBridge from "./KeaBridge.ts";
@@ -15,6 +16,7 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly capabilities: ReadonlySet<McpInvocationContext.McpCapability>;
 }
 
 export interface McpIssuedCredential {
@@ -69,7 +71,7 @@ export interface McpSessionRegistryOptions {
  *
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
- * the only thing guarding the preview toolkit on a remote-reachable server.
+ * the only thing guarding the `t3-code` toolkits on a remote-reachable server.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
@@ -78,16 +80,12 @@ const bytesToHex = (bytes: Uint8Array): string =>
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
 
-const getHttpMcpEndpointHost = (hostname: string): string => {
-  const normalized = hostname.toLowerCase();
-  const endpointHostname =
-    normalized === "0.0.0.0" || normalized === "::" || normalized === "[::]"
-      ? "127.0.0.1"
-      : hostname;
-  return endpointHostname.includes(":") && !endpointHostname.startsWith("[")
-    ? `[${endpointHostname}]`
-    : endpointHostname;
-};
+// A wildcard bind is reachable on loopback, which is where the provider
+// subprocesses run; anything else is announced as the address it bound.
+const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
+  NetAddress.isUnspecified(address)
+    ? "127.0.0.1"
+    : NetAddress.formatUrlHostString(NetAddress.formatIp(address));
 
 const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
@@ -99,10 +97,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
-  const endpoint =
-    httpServer.address._tag === "TcpAddress"
-      ? `http://${getHttpMcpEndpointHost(httpServer.address.hostname)}:${httpServer.address.port}/mcp`
-      : "http://127.0.0.1/mcp";
+  const endpoint = NetAddress.isInetAddress(httpServer.address)
+    ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
+    : "http://127.0.0.1/mcp";
 
   const hashToken = (token: string) =>
     crypto
@@ -134,10 +131,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         // down simply does not hold it, and `kea_ask` says so rather than
         // hanging on a socket that is not there. `threads` (the cross-thread
         // read/create/archive tools) needs nothing outside the server and is
-        // always granted.
-        capabilities: new Set<McpInvocationContext.McpCapability>(
-          KeaBridge.available() ? ["preview", "kea", "threads"] : ["preview", "threads"],
-        ),
+        // always granted. The rest come from the thread's agent-access settings.
+        capabilities: new Set<McpInvocationContext.McpCapability>([
+          "pull-requests",
+          "threads",
+          ...(KeaBridge.available() ? (["kea"] as const) : []),
+          ...request.capabilities,
+        ]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -153,6 +153,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerInstanceId: scope.providerInstanceId,
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
+          capabilities: scope.capabilities,
         },
       };
     },

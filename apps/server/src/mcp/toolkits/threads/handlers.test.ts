@@ -73,6 +73,7 @@ const shell = (
   createdAt: updatedAt,
   updatedAt,
   archivedAt,
+  pullRequests: [],
   settledOverride: null,
   settledAt: null,
   session: null,
@@ -128,6 +129,8 @@ const siblingDetail: OrchestrationThread = {
 
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
+  clientCapabilities: {},
+  clientInfo: { name: "mcp-test", version: "1.0.0" },
   protocolVersion: "2025-06-18",
   initializePayload: {
     protocolVersion: "2025-06-18",
