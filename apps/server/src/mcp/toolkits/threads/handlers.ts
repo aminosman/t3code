@@ -104,13 +104,16 @@ const makeHandlers = Effect.gen(function* () {
     });
 
   return {
-    t3_project_list: Effect.fn("ThreadsToolkit.t3_project_list")(function* () {
+    t3_project_list: Effect.fn("ThreadsToolkit.t3_project_list")(function* (input: {
+      readonly includeArchived?: boolean | undefined;
+    }) {
       const caller = yield* requireCaller;
       const shell = yield* query
         .getShellSnapshot()
         .pipe(Effect.mapError(failWith("could not list projects")));
       const counts = new Map<ProjectId, number>();
       for (const thread of shell.threads) {
+        if (thread.archivedAt !== null && !input.includeArchived) continue;
         counts.set(thread.projectId, (counts.get(thread.projectId) ?? 0) + 1);
       }
       return {

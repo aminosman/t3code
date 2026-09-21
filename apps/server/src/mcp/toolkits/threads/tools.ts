@@ -59,7 +59,15 @@ export const MessageSummary = Schema.Struct({
   streaming: Schema.Boolean,
 });
 
-export const ProjectListInput = Schema.Struct({});
+// An empty struct no longer serializes as an object schema (Effect rc.115
+// emits `not: {type: null}`), and the MCP server refuses to register a tool
+// whose input schema has no `type` — which took the whole server down at
+// startup. One optional key keeps it an object, as device_list does.
+export const ProjectListInput = Schema.Struct({
+  includeArchived: Schema.optional(Schema.Boolean).annotate({
+    description: "Count archived threads too. Default false.",
+  }),
+});
 
 export const ProjectListOutput = Schema.Struct({
   projects: Schema.Array(ProjectSummary),
