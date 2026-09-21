@@ -7,6 +7,10 @@
  * is held to (no archiving twice, no creating in a deleted project) holds for
  * an agent too. `thread.delete` is never dispatched from here.
  *
+ * Search, and any read the snapshot cannot serve (a window around one message,
+ * an archived thread), go through `ThreadSearch`, which reads the projection
+ * tables directly.
+ *
  * The calling thread comes off the invocation scope and is the default
  * project for listing and creating. It is also the one thread that cannot be
  * archived from here: it is running this very call.
@@ -27,10 +31,24 @@ import * as Option from "effect/Option";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadSearch, type ThreadMessagesOutput } from "../../../threadSearch/ThreadSearch.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { type ThreadSummary, ThreadsToolkit, ThreadToolError } from "./tools.ts";
 
 const DEFAULT_TURN_LIMIT = 10;
+const DEFAULT_MAX_CHARS = 6000;
+
+/**
+ * A long message keeps its start and its end: the start says what was asked
+ * or attempted, the end says how it came out, and the middle is where the
+ * tool output and the working-out live.
+ */
+const clip = (text: string, maxChars: number): string => {
+  if (text.length <= maxChars) return text;
+  const head = Math.ceil(maxChars * 0.6);
+  const tail = maxChars - head;
+  return `${text.slice(0, head)}\n…[${text.length - maxChars} characters cut]…\n${text.slice(text.length - tail)}`;
+};
 
 const describeCause = (cause: unknown): string => {
   if (cause instanceof Error) return cause.message;
@@ -66,6 +84,7 @@ const byMostRecent = (a: { updatedAt: string }, b: { updatedAt: string }) =>
 const makeHandlers = Effect.gen(function* () {
   const query = yield* ProjectionSnapshotQuery;
   const engine = yield* OrchestrationEngineService;
+  const threadSearch = yield* ThreadSearch;
   const crypto = yield* Crypto.Crypto;
 
   const requireScope = Effect.gen(function* () {
@@ -103,7 +122,54 @@ const makeHandlers = Effect.gen(function* () {
       return project.value satisfies OrchestrationProjectShell;
     });
 
+  const fromRows = (rows: ThreadMessagesOutput, callerThreadId: ThreadId, maxChars: number) => ({
+    thread: {
+      id: ThreadId.make(rows.thread.id),
+      projectId: rows.thread.projectId as ProjectId,
+      title: rows.thread.title,
+      branch: rows.thread.branch,
+      // The turn state lives in the snapshot; a window read does not need it.
+      turnState: null,
+      updatedAt: rows.thread.updatedAt,
+      archivedAt: rows.thread.archivedAt,
+      current: rows.thread.id === callerThreadId,
+    },
+    messages: rows.messages.map((message) => ({ ...message, text: clip(message.text, maxChars) })),
+    beforeCursor: null,
+    hasOlder: rows.hasOlder,
+    hasNewer: rows.hasNewer,
+  });
+
   return {
+    t3_thread_search: Effect.fn("ThreadsToolkit.t3_thread_search")(function* (input: {
+      readonly query: string;
+      readonly projectId?: ProjectId | undefined;
+      readonly role?: "user" | "assistant" | undefined;
+      readonly since?: string | undefined;
+      readonly includeCurrent?: boolean | undefined;
+      readonly limit?: number | undefined;
+    }) {
+      const scope = yield* requireScope;
+      const found = yield* threadSearch
+        .search({
+          query: input.query,
+          projectId: input.projectId,
+          role: input.role,
+          since: input.since,
+          limit: input.limit,
+          excludeThreadId: input.includeCurrent ? undefined : scope.threadId,
+        })
+        .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+      return {
+        terms: found.terms,
+        results: found.results.map((result) => ({
+          ...result,
+          threadId: ThreadId.make(result.threadId),
+          projectId: result.projectId as ProjectId,
+        })),
+      };
+    }),
+
     t3_project_list: Effect.fn("ThreadsToolkit.t3_project_list")(function* (input: {
       readonly includeArchived?: boolean | undefined;
     }) {
@@ -151,10 +217,30 @@ const makeHandlers = Effect.gen(function* () {
 
     t3_thread_read: Effect.fn("ThreadsToolkit.t3_thread_read")(function* (input: {
       readonly threadId: ThreadId;
+      readonly aroundMessageId?: string | undefined;
+      readonly before?: number | undefined;
+      readonly after?: number | undefined;
+      readonly maxCharsPerMessage?: number | undefined;
       readonly turnLimit?: number | undefined;
       readonly beforeCursor?: string | undefined;
     }) {
       const caller = yield* requireCaller;
+      const maxChars = input.maxCharsPerMessage ?? DEFAULT_MAX_CHARS;
+      const readRows = threadSearch
+        .readMessages({
+          threadId: input.threadId,
+          aroundMessageId: input.aroundMessageId,
+          before: input.before,
+          after: input.after,
+        })
+        .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+      if (input.aroundMessageId !== undefined) {
+        const rows = yield* readRows;
+        if (rows === null) {
+          return yield* new ThreadToolError({ reason: `no thread with id ${input.threadId}` });
+        }
+        return fromRows(rows, caller.id, maxChars);
+      }
       const snapshot = yield* query
         .getThreadDetailSnapshot(input.threadId, {
           turnLimit: input.turnLimit ?? DEFAULT_TURN_LIMIT,
@@ -162,9 +248,12 @@ const makeHandlers = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(failWith("could not read the thread")));
       if (Option.isNone(snapshot)) {
-        return yield* new ThreadToolError({
-          reason: `no active thread with id ${input.threadId} (archived threads cannot be read)`,
-        });
+        // Archived: not in the snapshot, still in the projection.
+        const rows = yield* readRows;
+        if (rows === null) {
+          return yield* new ThreadToolError({ reason: `no thread with id ${input.threadId}` });
+        }
+        return fromRows(rows, caller.id, maxChars);
       }
       const thread = snapshot.value.thread;
       return {
@@ -172,13 +261,15 @@ const makeHandlers = Effect.gen(function* () {
         messages: thread.messages.map((message) => ({
           id: message.id,
           role: message.role,
-          text: message.text,
+          text: clip(message.text, maxChars),
           createdAt: message.createdAt,
           streaming: message.streaming,
         })),
         beforeCursor: snapshot.value.page?.hasMore
           ? (snapshot.value.page.beforeCursor ?? null)
           : null,
+        hasOlder: snapshot.value.page?.hasMore ?? false,
+        hasNewer: false,
       };
     }),
 

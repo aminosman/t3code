@@ -21,6 +21,7 @@ import { McpSchema, McpServer } from "effect/unstable/ai";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadSearch, type ThreadSearchInput } from "../../../threadSearch/ThreadSearch.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -152,6 +153,7 @@ const invocation = (capabilities: ReadonlySet<McpInvocationContext.McpCapability
 
 const makeHarness = Effect.gen(function* () {
   const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
+  const searched = yield* Ref.make<ReadonlyArray<ThreadSearchInput>>([]);
   const layer = McpHttpServer.ThreadsToolkitRegistrationLive.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provide(
@@ -201,9 +203,66 @@ const makeHarness = Effect.gen(function* () {
         latestSequence: Effect.succeed(0),
       }),
     ),
+    Layer.provide(
+      Layer.mock(ThreadSearch)({
+        search: (input) =>
+          Ref.update(searched, (inputs) => [...inputs, input]).pipe(
+            Effect.as({
+              terms: ['"login"'],
+              results: [
+                {
+                  threadId: archivedThreadId,
+                  projectId: homeProjectId,
+                  projectTitle: "home",
+                  title: "old",
+                  updatedAt: "2026-09-19T09:00:00.000Z",
+                  archivedAt: "2026-09-19T09:30:00.000Z",
+                  score: 4.2,
+                  matchedTerms: 1,
+                  hitCount: 1,
+                  hits: [
+                    {
+                      messageId: "old-2",
+                      role: "user",
+                      createdAt: "2026-09-19T09:01:00.000Z",
+                      snippet: "the «login» loops",
+                    },
+                  ],
+                },
+              ],
+            }),
+          ),
+        readMessages: (input) =>
+          Effect.succeed(
+            input.threadId === archivedThreadId
+              ? {
+                  thread: {
+                    id: archivedThreadId,
+                    projectId: homeProjectId,
+                    title: "old",
+                    branch: null,
+                    updatedAt: "2026-09-19T09:00:00.000Z",
+                    archivedAt: "2026-09-19T09:30:00.000Z",
+                  },
+                  messages: [
+                    {
+                      id: "old-2",
+                      role: "user",
+                      text: `the login loops ${"x".repeat(200)} and that is the end`,
+                      createdAt: "2026-09-19T09:01:00.000Z",
+                      streaming: false,
+                    },
+                  ],
+                  hasOlder: input.aroundMessageId !== undefined,
+                  hasNewer: false,
+                }
+              : null,
+          ),
+      }),
+    ),
     Layer.provide(NodeServices.layer),
   );
-  return { dispatched, layer };
+  return { dispatched, searched, layer };
 });
 
 const call = (
@@ -298,10 +357,66 @@ it.effect("reads a thread's messages with a paging cursor", () =>
       beforeCursor: "cursor-3",
     });
 
-    const missing = yield* call("t3_thread_read", { threadId: archivedThreadId }).pipe(
+    const missing = yield* call("t3_thread_read", { threadId: "thread-nowhere" }).pipe(
       Effect.provide(layer),
     );
     expect(missing.isError).toBe(true);
+  }),
+);
+
+it.effect("searches every project, leaving the calling thread out unless asked", () =>
+  Effect.gen(function* () {
+    const { searched, layer } = yield* makeHarness;
+    const result = yield* call("t3_thread_search", { query: "why does the login loop" }).pipe(
+      Effect.provide(layer),
+    );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      terms: ['"login"'],
+      results: [
+        {
+          threadId: archivedThreadId,
+          projectTitle: "home",
+          hits: [{ messageId: "old-2", snippet: "the «login» loops" }],
+        },
+      ],
+    });
+    yield* call("t3_thread_search", { query: "login", includeCurrent: true, role: "user" }).pipe(
+      Effect.provide(layer),
+    );
+    const inputs = yield* Ref.get(searched);
+    expect(inputs[0]).toMatchObject({ excludeThreadId: callerThreadId, projectId: undefined });
+    expect(inputs[1]).toMatchObject({ excludeThreadId: undefined, role: "user" });
+  }),
+);
+
+it.effect("reads around a search hit, archived threads included, and clips long messages", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* makeHarness;
+    const around = yield* call("t3_thread_read", {
+      threadId: archivedThreadId,
+      aroundMessageId: "old-2",
+      maxCharsPerMessage: 60,
+    }).pipe(Effect.provide(layer));
+    expect(around.isError).toBe(false);
+    const content = around.structuredContent as {
+      thread: { id: string; archivedAt: string | null };
+      messages: Array<{ id: string; text: string }>;
+      hasOlder: boolean;
+    };
+    expect(content.thread).toMatchObject({ id: archivedThreadId });
+    expect(content.thread.archivedAt).not.toBeNull();
+    expect(content.hasOlder).toBe(true);
+    expect(content.messages[0]?.text.startsWith("the login loops")).toBe(true);
+    expect(content.messages[0]?.text.endsWith("that is the end")).toBe(true);
+    expect(content.messages[0]?.text).toContain("characters cut");
+
+    // No anchor: an archived thread is not in the snapshot, and still reads.
+    const latest = yield* call("t3_thread_read", { threadId: archivedThreadId }).pipe(
+      Effect.provide(layer),
+    );
+    expect(latest.isError).toBe(false);
+    expect(latest.structuredContent).toMatchObject({ hasOlder: false, beforeCursor: null });
   }),
 );
 
