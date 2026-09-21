@@ -17,6 +17,7 @@ import type { OrchestrationEvent } from "@t3tools/contracts";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as Embedder from "./Embedder.ts";
 import * as HistorySearch from "./HistorySearch.ts";
 
 const meetingsDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "roost-meetings-"));
@@ -49,7 +50,42 @@ writeMeeting("2026.08.12-1634", {
 // Still recording: audio only, nothing to read yet.
 writeMeeting("2026.09.22-0900", { "meta.json": "{}" });
 
-const HistorySearchTest = HistorySearch.layerWith({ meetingsDir });
+// Word search is tested without a model, as it runs on a Mac that has none.
+const HistorySearchTest = HistorySearch.layerWith({ meetingsDir }).pipe(
+  Layer.provide(Embedder.layerNone),
+);
+
+// A stand-in for the model: words that mean the same thing share an axis, and
+// every other word gets a faint axis of its own. Enough to be a space in which
+// "invoice" is near "billing" and far from "release".
+const CONCEPTS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["billing", "invoice", "invoices", "charges", "payment", "owe", "customers"],
+  ["release", "ship", "shipping", "publish", "deploy", "build"],
+  ["texted", "imessage", "message", "sent", "send", "permission"],
+];
+const fakeVector = (text: string): Float32Array => {
+  const vector = Array.from({ length: Embedder.DIMENSIONS }, () => 0);
+  for (const word of text.toLowerCase().match(/[a-z]+/gu) ?? []) {
+    const concept = CONCEPTS.findIndex((words) => words.includes(word));
+    if (concept >= 0) {
+      vector[concept] = (vector[concept] ?? 0) + 1;
+    } else {
+      let hash = 7;
+      for (const char of word) hash = (hash * 31 + char.charCodeAt(0)) % 240;
+      vector[8 + hash] = (vector[8 + hash] ?? 0) + 0.15;
+    }
+  }
+  return Embedder.normalize(vector);
+};
+const FakeEmbedder = Layer.succeed(
+  Embedder.Embedder,
+  Embedder.Embedder.of({
+    status: Effect.succeed({ available: true, model: "fake", reason: null }),
+    embedDocuments: (texts) => Effect.succeed(texts.map(fakeVector)),
+    embedQuery: (text) => Effect.succeed(fakeVector(text)),
+  }),
+);
+
 const layer = it.layer(
   HistorySearchTest.pipe(
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -404,3 +440,96 @@ it.effect("builds the index at launch and folds in new messages as thread events
     }).pipe(Effect.provide(live));
   }),
 );
+
+it.effect("finds by meaning what shares no word with the question, and says which way", () =>
+  Effect.gen(function* () {
+    const search = yield* HistorySearch.HistorySearch;
+    yield* addProject("p-ops", "ops");
+    yield* addThread("t-billing", "p-ops", "Spreadsheet");
+    yield* addThread("t-release", "p-ops", "Cut");
+    yield* addMessage(
+      "b1",
+      "t-billing",
+      "user",
+      "look into the billing from today, the spreadsheet of charges is in the root",
+      "2026-09-10T10:00:00.000Z",
+    );
+    yield* addMessage(
+      "r1",
+      "t-release",
+      "user",
+      "publish the release and deploy the new build tonight",
+      "2026-09-10T11:00:00.000Z",
+    );
+    // A one-line aside from an agent is indexed for words, not worth a vector.
+    yield* addMessage("r2", "t-release", "assistant", "on it", "2026-09-10T11:01:00.000Z");
+
+    const ask = () =>
+      search.search({ query: "invoice customers what they owe", sources: ["threads"] });
+    const indexed = yield* search.refresh;
+    assert.strictEqual(indexed.embedded, 0);
+    const before = yield* ask();
+    assert.isFalse(before.meaning.active);
+    assert.lengthOf(before.results, 0);
+
+    // The embedder trails the index in the background.
+    yield* TestClock.adjust("21 seconds");
+    const state = yield* search.refresh;
+    assert.strictEqual(state.toEmbed, 0);
+    // Two user messages, and the fixture meetings: two sets of notes and one transcript passage.
+    assert.strictEqual(state.embedded, 2 + 3);
+
+    const found = yield* ask();
+    assert.isTrue(found.meaning.active);
+    assert.isNull(found.meaning.reason);
+    assert.deepStrictEqual(
+      found.results.map((result) => result.id),
+      ["t-billing"],
+    );
+    assert.strictEqual(found.results[0]?.matchedBy, "meaning");
+    assert.strictEqual(found.results[0]?.hits[0]?.matchedBy, "meaning");
+    assert.strictEqual(found.results[0]?.hits[0]?.messageId, "b1");
+    assert.include(found.results[0]?.hits[0]?.snippet ?? "", "spreadsheet of charges");
+
+    // Found both ways outranks found one way.
+    const both = yield* search.search({ query: "billing charges owed", sources: ["threads"] });
+    assert.strictEqual(both.results[0]?.matchedBy, "both");
+    assert.strictEqual(both.results[0]?.score, 100);
+
+    // A deleted message takes its vector with it.
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`DELETE FROM projection_thread_messages WHERE message_id = 'b1'`;
+    yield* TestClock.adjust("6 seconds");
+    assert.lengthOf((yield* ask()).results, 0);
+    const vectors = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS "count" FROM roost_history_vectors
+    `;
+    assert.strictEqual(vectors[0]?.count, 1 + 3);
+  }).pipe(
+    Effect.provide(
+      HistorySearch.layerWith({ meetingsDir }).pipe(
+        Layer.provide(FakeEmbedder),
+        Layer.provideMerge(SqlitePersistenceMemory),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it("keeps a vector's direction through a byte per dimension", () => {
+  const a = fakeVector("billing invoice charges for the customers");
+  const b = fakeVector("what customers owe in payment");
+  const c = fakeVector("publish the release build");
+  const cosine = (x: Float32Array, bytes: Uint8Array) => {
+    const y = new Int8Array(bytes.buffer);
+    let dot = 0;
+    let norm = 0;
+    for (let index = 0; index < x.length; index++) {
+      dot += x[index]! * y[index]!;
+      norm += y[index]! * y[index]!;
+    }
+    return dot / Math.sqrt(norm);
+  };
+  assert.isAbove(cosine(a, Embedder.quantize(b)), 0.9);
+  assert.isBelow(cosine(a, Embedder.quantize(c)), 0.2);
+});

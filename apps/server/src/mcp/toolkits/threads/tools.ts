@@ -100,9 +100,11 @@ export const HistorySearchInput = Schema.Struct({
       "What you are looking for, in plain words: the feature, the bug, the file, the error " +
       "text, the decision, the thing someone said. A sentence is fine — filler words are " +
       "dropped, words are stemmed (sending = send = sends), any of the words may match, and " +
-      "what holds more of them ranks higher. Because any word may match, add the likely " +
-      "synonyms: 'billing invoice charges payment'. Misspelled and mis-transcribed words are " +
-      "widened to the near-spellings the index knows. Identifiers and paths work as written " +
+      "what holds more of them ranks higher. It is also matched by meaning, so describe the " +
+      "thing the way you would to a person: 'the assistant texted someone without permission' " +
+      "finds the thread where the user said it sent a message it should only have drafted. " +
+      "Misspelled and mis-transcribed words are widened to the near-spellings the index " +
+      "knows. Identifiers and paths work as written " +
       '(kea_ask, Updater.swift). Put an exact phrase in "double quotes".',
   }),
   sources: Schema.optional(Schema.Array(Schema.Literals(["threads", "meetings"]))).annotate({
@@ -130,6 +132,11 @@ export const HistorySearchInput = Schema.Struct({
 });
 
 export const HistorySearchHit = Schema.Struct({
+  matchedBy: Schema.Literals(["words", "meaning"]).annotate({
+    description:
+      "words: the snippet shows the match in «…». meaning: no shared words were needed; the " +
+      "snippet is how the passage opens, so read around it to see why it matched.",
+  }),
   messageId: Schema.NullOr(Schema.String).annotate({
     description:
       "Thread hits: pass to t3_thread_read as aroundMessageId to read the exchange around it. " +
@@ -159,7 +166,10 @@ export const HistorySearchResult = Schema.Struct({
     description: "A thread's last update; a meeting's start.",
   }),
   archivedAt: Schema.NullOr(IsoDateTime),
-  score: Schema.Number,
+  score: Schema.Number.annotate({
+    description: "Out of 100, which is first by words and first by meaning.",
+  }),
+  matchedBy: Schema.Literals(["words", "meaning", "both"]),
   matchedTerms: Schema.Number.annotate({
     description: "How many of the query's terms appear somewhere in it.",
   }),
@@ -172,6 +182,17 @@ export const HistorySearchOutput = Schema.Struct({
     description:
       "How the query was read; '~' shows what a word was widened to. Reword and search again " +
       "if they miss.",
+  }),
+  meaning: Schema.Struct({
+    active: Schema.Boolean,
+    embedded: Schema.Number,
+    pending: Schema.Number,
+    reason: Schema.NullOr(Schema.String),
+  }).annotate({
+    description:
+      "Whether this search was also matched by meaning. When active is false, or pending is " +
+      "large, it was (partly) by words alone: add synonyms to the query — 'billing invoice " +
+      "charges payment' — because any word may match.",
   }),
   results: Schema.Array(HistorySearchResult).annotate({ description: "Best first." }),
 });
@@ -428,8 +449,10 @@ export const HistorySearchTool = Tool.make("t3_history_search", {
     "auto-generated and often say nothing about the work inside, so do not hunt through " +
     "t3_thread_list.\n\n" +
     "Loose on purpose: words are stemmed, any of them may match, more of them ranks higher, " +
-    "and misspellings are widened. It does not match by meaning, so name the thing the way " +
-    "the user would and add synonyms. It costs a few KB however large the history is. Then " +
+    "misspellings are widened, and passages are also matched by meaning by a model on this " +
+    "Mac, so a plain description works even when it shares no words with what was said. " +
+    "The result's `meaning` says whether that was active; when it was not, add synonyms. " +
+    "It costs a few KB however large the history is. Then " +
     "read only what earned it: t3_thread_read with a hit's messageId as aroundMessageId, or " +
     "t3_meeting_read with a hit's at as around. If the first wording misses, search again " +
     "with other words, a file name, or the error text.",

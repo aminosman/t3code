@@ -72,6 +72,7 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as Embedder from "./historySearch/Embedder.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -617,7 +618,13 @@ export const makeRoutesLayer = Layer.mergeAll(
     // The full-text index behind t3_history_search (threads and meetings): built
     // at launch, then kept current by following thread events and the meetings
     // folder. SqlClient and the engine come from below.
-    Layer.provide(HistorySearch.followLayer.pipe(Layer.provideMerge(HistorySearch.layer))),
+    Layer.provide(
+      HistorySearch.followLayer.pipe(
+        Layer.provideMerge(HistorySearch.layer),
+        // Matching by meaning: an embedding model on this Mac, through Ollama.
+        Layer.provide(Embedder.layerOllama),
+      ),
+    ),
   ),
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients

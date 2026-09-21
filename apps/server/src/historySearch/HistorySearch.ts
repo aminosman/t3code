@@ -18,9 +18,16 @@
  *   - a word the index barely knows is widened to the words it does know that
  *     are spelled nearly the same. Transcripts are full of these — a name the
  *     recogniser heard three ways — and so is typing.
- * When even that finds little, the words are retried as prefixes. What it does
- * not do is match by meaning: "invoice" will not find "billing". The caller is
- * a language model and is told to put the likely synonyms in the question.
+ * When even that finds little, the words are retried as prefixes.
+ *
+ * And it matches by meaning, when it can: "invoice" finds the thread that only
+ * ever said "billing". Every passage worth it is embedded by a model running on
+ * this Mac (see Embedder), the question is embedded the same way, and the
+ * nearest passages are ranked beside the word matches — the two lists are
+ * fused by rank, so a thread found both ways comes first and one found either
+ * way still comes. Embedding is slow where indexing is not (tens of passages a
+ * second), so it trails behind in the background, newest first; until it has
+ * caught up, and whenever there is no model, search is by words and says so.
  *
  * The index is kept by catching up, not by triggers. Assistant messages are
  * upserted once per streamed delta; a trigger would re-tokenise a growing
@@ -56,6 +63,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import * as Embedder from "./Embedder.ts";
 import * as Meetings from "./Meetings.ts";
 
 export class HistorySearchError extends Schema.TaggedError<HistorySearchError>()(
@@ -83,7 +91,17 @@ export interface HistorySearchInput {
   readonly limit?: number | undefined;
 }
 
+export interface MeaningStatus {
+  /** True when this search was also matched by meaning. */
+  readonly active: boolean;
+  readonly embedded: number;
+  /** Passages still waiting to be embedded; they are found by words only. */
+  readonly pending: number;
+  readonly reason: string | null;
+}
+
 export interface HistorySearchHit {
+  readonly matchedBy: "words" | "meaning";
   /** Thread hits: the message. Null for a title, and for meetings. */
   readonly messageId: string | null;
   /** Meeting hits: where in the recording, as m:ss. Null for notes and slides. */
@@ -105,6 +123,7 @@ export interface HistorySearchResult {
   readonly date: string | null;
   readonly archivedAt: string | null;
   readonly score: number;
+  readonly matchedBy: "words" | "meaning" | "both";
   readonly matchedTerms: number;
   readonly hitCount: number;
   readonly hits: ReadonlyArray<HistorySearchHit>;
@@ -113,6 +132,7 @@ export interface HistorySearchResult {
 export interface HistorySearchOutput {
   /** How the question was read; a widened word shows what it was widened to. */
   readonly terms: ReadonlyArray<string>;
+  readonly meaning: MeaningStatus;
   readonly results: ReadonlyArray<HistorySearchResult>;
 }
 
@@ -179,6 +199,8 @@ export interface HistoryIndexState {
   readonly messages: number;
   readonly threads: number;
   readonly meetings: number;
+  readonly embedded: number;
+  readonly toEmbed: number;
 }
 
 export interface HistorySearchShape {
@@ -212,7 +234,9 @@ const STOPWORDS = new Set(
     "a an the of to in on for and or is are was were be been being it its this that these those " +
     "with how what when where why who whom which did do does done we i you he she they our my " +
     "your me us at by from as have has had not no can could should would will about into there " +
-    "their them then than so if but also just any some all own get got make made use used"
+    "their them then than so if but also just any some all own get got make made use used " +
+    "without within someone something anything everything keep keeps getting never always " +
+    "itself still really very much many more most other another"
   ).split(" "),
 );
 
@@ -295,6 +319,36 @@ const USER_WEIGHT = 1.5;
 const TITLE_WEIGHT = 3;
 /** Notes are a meeting's own account of what mattered in it. */
 const NOTES_WEIGHT = 2;
+/** Passages embedded per request to the model, and the pause when none wait. */
+const EMBED_BATCH = 32;
+const EMBED_IDLE = "20 seconds";
+/** What is embedded of a long passage: where it starts and where it lands. */
+const EMBED_HEAD = 1200;
+const EMBED_TAIL = 800;
+/** An agent's one-line "let me check" is not worth a vector. */
+const EMBED_MIN_ASSISTANT_CHARS = 200;
+const MEANING_POOL = 80;
+// Measured on the live index (embeddinggemma, 256 dimensions, one byte each):
+// passages that answer the question score 0.5-0.6, and the best a question
+// about nothing here ("how to bake sourdough bread") reaches is 0.30.
+/** Below this a passage is merely about the same world, not the same thing. */
+const MIN_COSINE = 0.38;
+/** ...and it must be within reach of the best one found. */
+const NEAR_BEST = 0.8;
+/** Reciprocal-rank fusion: small, so the head of each list counts most. */
+const FUSION_K = 20;
+
+const forEmbedding = (text: string) =>
+  text.length <= EMBED_HEAD + EMBED_TAIL
+    ? text
+    : `${text.slice(0, EMBED_HEAD)}\n…\n${text.slice(text.length - EMBED_TAIL)}`;
+
+interface VectorMatrix {
+  readonly stamp: string;
+  readonly ids: ReadonlyArray<number>;
+  readonly data: Int8Array;
+  readonly norms: Float32Array;
+}
 
 const describeCause = (cause: unknown): string =>
   typeof cause === "object" && cause !== null && "message" in cause
@@ -319,7 +373,9 @@ const make = (options: HistorySearchOptions) =>
     const sql = yield* SqlClient.SqlClient;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const embedder = yield* Embedder.Embedder;
     const lastSync = yield* Ref.make<number | null>(null);
+    const matrix = yield* Ref.make<VectorMatrix | null>(null);
     const meetingsDir = options.meetingsDir ?? (yield* Meetings.configuredDir);
 
     const ensureSchema = Effect.gen(function* () {
@@ -351,9 +407,31 @@ const make = (options: HistorySearchOptions) =>
           doc_key TEXT NOT NULL,
           version TEXT NOT NULL,
           indexed INTEGER NOT NULL DEFAULT 0,
+          embedded INTEGER NOT NULL DEFAULT 0,
           UNIQUE (kind, doc_key)
         )
       `;
+      // embedded: 0 waiting, 1 has a vector, 2 not worth one.
+      yield* sql`
+        CREATE INDEX IF NOT EXISTS idx_roost_history_docs_embedded
+        ON roost_history_docs (embedded, id)
+      `;
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS roost_history_vectors (
+          doc_id INTEGER PRIMARY KEY,
+          model TEXT NOT NULL,
+          vector BLOB NOT NULL
+        )
+      `;
+      // A different model measures a different space: start over in it.
+      const { model } = yield* embedder.status;
+      if (model !== "none") {
+        yield* sql`DELETE FROM roost_history_vectors WHERE model <> ${model}`;
+        yield* sql`
+          UPDATE roost_history_docs SET embedded = 0
+          WHERE embedded = 1 AND id NOT IN (SELECT doc_id FROM roost_history_vectors)
+        `;
+      }
       yield* sql`
         CREATE TABLE IF NOT EXISTS roost_history_meetings (
           meeting_id TEXT PRIMARY KEY,
@@ -372,6 +450,10 @@ const make = (options: HistorySearchOptions) =>
       yield* sql`
         DELETE FROM roost_history_search
         WHERE rowid IN (SELECT id FROM roost_history_docs WHERE indexed = -1)
+      `;
+      yield* sql`
+        DELETE FROM roost_history_vectors
+        WHERE doc_id IN (SELECT id FROM roost_history_docs WHERE indexed = -1)
       `;
       yield* sql`DELETE FROM roost_history_docs WHERE indexed = -1`;
     });
@@ -504,6 +586,135 @@ const make = (options: HistorySearchOptions) =>
       yield* catchUpNow;
     });
 
+    const embeddingCounts = sql<{ readonly embedded: number; readonly pending: number }>`
+      SELECT
+        COALESCE(SUM(embedded = 1), 0) AS "embedded",
+        COALESCE(SUM(embedded = 0), 0) AS "pending"
+      FROM roost_history_docs
+    `.pipe(Effect.map((rows) => rows[0] ?? { embedded: 0, pending: 0 }));
+
+    /**
+     * Embed the newest passages still waiting; returns how many it settled.
+     * Newest first, so what was said today is findable by meaning today and
+     * last year's threads fill in behind it.
+     */
+    const embedSome = Effect.gen(function* () {
+      if ((yield* Ref.get(lastSync)) === null) return 0;
+      const status = yield* embedder.status;
+      if (!status.available) return 0;
+      const waiting = yield* sql<{
+        readonly id: number;
+        readonly text: string;
+        readonly role: string;
+      }>`
+        SELECT d.id AS "id", s.text AS "text", s.role AS "role"
+        FROM roost_history_docs d
+        JOIN roost_history_search s ON s.rowid = d.id
+        WHERE d.embedded = 0 AND d.indexed = 1
+        ORDER BY d.id DESC
+        LIMIT ${EMBED_BATCH}
+      `;
+      if (waiting.length === 0) return 0;
+      const worth = waiting.filter(
+        (doc) =>
+          doc.role !== "title" &&
+          (doc.role !== "assistant" || doc.text.length >= EMBED_MIN_ASSISTANT_CHARS),
+      );
+      const vectors =
+        worth.length === 0
+          ? []
+          : yield* embedder.embedDocuments(worth.map((doc) => forEmbedding(doc.text)));
+      if (vectors === null) return 0;
+      const skipped = waiting.filter((doc) => !worth.includes(doc)).map((doc) => doc.id);
+      // Under the catch-up lock: both write on the one connection, and a
+      // statement slipped inside the other's transaction shares its fate.
+      yield* catchUpLock.withPermits(1)(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            for (const [index, doc] of worth.entries()) {
+              yield* sql`
+                INSERT OR REPLACE INTO roost_history_vectors (doc_id, model, vector)
+                VALUES (${doc.id}, ${status.model}, ${Embedder.quantize(vectors[index]!)})
+              `;
+            }
+            if (worth.length > 0) {
+              yield* sql`
+                UPDATE roost_history_docs SET embedded = 1
+                WHERE ${sql.in(
+                  "id",
+                  worth.map((doc) => doc.id),
+                )}
+              `;
+            }
+            if (skipped.length > 0) {
+              yield* sql`
+                UPDATE roost_history_docs SET embedded = 2 WHERE ${sql.in("id", skipped)}
+              `;
+            }
+          }),
+        ),
+      );
+      return waiting.length;
+    });
+
+    yield* embedSome.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("history search: embedding stalled").pipe(
+          Effect.annotateLogs({ cause: String(cause) }),
+          Effect.as(0),
+        ),
+      ),
+      // Work while there is work, a breath between batches so the model is
+      // not held against whatever else wants it; rest when there is none.
+      Effect.flatMap((settled) => Effect.sleep(settled > 0 ? "50 millis" : EMBED_IDLE)),
+      Effect.forever,
+      Effect.forkScoped,
+    );
+
+    /** Every vector, in memory: a few MB, and a search reads all of it. */
+    const loadMatrix = Effect.gen(function* () {
+      const stamps = yield* sql<{ readonly count: number; readonly last: number }>`
+        SELECT COUNT(*) AS "count", COALESCE(MAX(doc_id), 0) AS "last"
+        FROM roost_history_vectors
+      `;
+      const stamp = `${stamps[0]?.count ?? 0}:${stamps[0]?.last ?? 0}`;
+      const held = yield* Ref.get(matrix);
+      if (held !== null && held.stamp === stamp) return held;
+      const rows = yield* sql<{ readonly id: number; readonly vector: Uint8Array }>`
+        SELECT doc_id AS "id", vector AS "vector" FROM roost_history_vectors
+      `;
+      const usable = rows.filter((row) => row.vector.length === Embedder.DIMENSIONS);
+      const data = new Int8Array(usable.length * Embedder.DIMENSIONS);
+      const norms = new Float32Array(usable.length);
+      for (const [index, row] of usable.entries()) {
+        const bytes = new Int8Array(row.vector.buffer, row.vector.byteOffset, row.vector.length);
+        data.set(bytes, index * Embedder.DIMENSIONS);
+        let norm = 0;
+        for (const value of bytes) norm += value * value;
+        norms[index] = Math.sqrt(norm) || 1;
+      }
+      const next = { stamp, ids: usable.map((row) => row.id), data, norms };
+      yield* Ref.set(matrix, next);
+      return next;
+    });
+
+    /** The passages nearest the question, best first, with their cosine. */
+    const nearest = (query: Float32Array, held: VectorMatrix) => {
+      const scored: Array<{ readonly id: number; readonly cosine: number }> = [];
+      for (let row = 0; row < held.ids.length; row++) {
+        let dot = 0;
+        const offset = row * Embedder.DIMENSIONS;
+        for (let index = 0; index < Embedder.DIMENSIONS; index++) {
+          dot += query[index]! * held.data[offset + index]!;
+        }
+        const cosine = dot / held.norms[row]!;
+        if (cosine >= MIN_COSINE) scored.push({ id: held.ids[row]!, cosine });
+      }
+      scored.sort((a, b) => b.cosine - a.cosine);
+      const floor = (scored[0]?.cosine ?? 0) * NEAR_BEST;
+      return scored.filter((entry) => entry.cosine >= floor).slice(0, MEANING_POOL);
+    };
+
     const refresh: HistorySearchShape["refresh"] = Effect.gen(function* () {
       yield* catchUpNow;
       const counts = yield* sql<{ readonly kind: string; readonly count: number }>`
@@ -512,7 +723,14 @@ const make = (options: HistorySearchOptions) =>
         SELECT 'meetings', COUNT(*) FROM roost_history_meetings
       `;
       const count = (kind: string) => counts.find((row) => row.kind === kind)?.count ?? 0;
-      return { messages: count("message"), threads: count("title"), meetings: count("meetings") };
+      const embedding = yield* embeddingCounts;
+      return {
+        messages: count("message"),
+        threads: count("title"),
+        meetings: count("meetings"),
+        embedded: embedding.embedded,
+        toEmbed: embedding.pending,
+      };
     }).pipe(Effect.mapError(failWith("could not build the history search index")));
 
     // Every launch: make the index whole before anyone asks. In the background,
@@ -612,6 +830,8 @@ const make = (options: HistorySearchOptions) =>
           readonly at: string | null;
           readonly rank: number;
           readonly snippet: string;
+          /** Set when the passage was found by meaning. */
+          readonly cosine?: number;
         };
         // Any of the words, best first: a description of an incident rarely
         // shares every word with the thread that fixed it.
@@ -667,7 +887,65 @@ const make = (options: HistorySearchOptions) =>
           );
           hits = yield* hitsFor(groups);
         }
-        if (hits.length === 0) return { terms: labels, results: [] };
+
+        // By meaning, beside by words: the same filters, a different way in.
+        const embedderStatus = yield* embedder.status;
+        const counts = yield* embeddingCounts;
+        let meaningHits: ReadonlyArray<Hit> = [];
+        let meaningActive = false;
+        if (embedderStatus.available && counts.embedded > 0) {
+          const queryVector = yield* embedder.embedQuery(input.query);
+          if (queryVector !== null) {
+            meaningActive = true;
+            const near = nearest(queryVector, yield* loadMatrix);
+            if (near.length > 0) {
+              const cosineOf = new Map(near.map((entry) => [entry.id, entry.cosine]));
+              const rows = yield* sql<Hit & { readonly docId: number }>`
+                SELECT
+                  s.rowid AS "docId",
+                  s.source AS "source",
+                  s.container_id AS "containerId",
+                  s.ref AS "ref",
+                  s.role AS "role",
+                  s.at AS "at",
+                  0 AS "rank",
+                  substr(s.text, 1, 240) AS "snippet"
+                FROM roost_history_search s
+                LEFT JOIN projection_threads t
+                  ON s.source = 'thread' AND t.thread_id = s.container_id
+                LEFT JOIN roost_history_meetings g
+                  ON s.source = 'meeting' AND g.meeting_id = s.container_id
+                WHERE ${sql.in(
+                  "s.rowid",
+                  near.map((entry) => entry.id),
+                )}
+                  AND (
+                    (s.source = 'thread' AND t.thread_id IS NOT NULL AND t.deleted_at IS NULL)
+                    OR (s.source = 'meeting' AND g.meeting_id IS NOT NULL)
+                  )
+                  AND ${sourceFilter} AND ${projectFilter} AND ${roleFilter}
+                  AND ${sinceFilter} AND ${excludeFilter}
+              `;
+              meaningHits = rows
+                .map((row) => ({ ...row, cosine: cosineOf.get(row.docId) ?? 0 }))
+                .sort((a, b) => b.cosine - a.cosine);
+            }
+          }
+        }
+        const meaning: MeaningStatus = {
+          active: meaningActive,
+          embedded: counts.embedded,
+          pending: counts.pending,
+          reason: meaningActive
+            ? counts.pending > 0
+              ? `${counts.pending} passages are still being embedded and are found by words only`
+              : null
+            : (embedderStatus.reason ??
+              (counts.embedded === 0 ? "nothing is embedded yet" : "the model did not answer")),
+        };
+        if (hits.length === 0 && meaningHits.length === 0) {
+          return { terms: labels, meaning, results: [] };
+        }
 
         // How many of the words each thread or meeting holds anywhere in it.
         // The words of a request are usually spread over several messages, so
@@ -700,14 +978,57 @@ const make = (options: HistorySearchOptions) =>
           entry.hits.push(hit);
           byContainer.set(key, entry);
         }
-        const ranked = [...byContainer.entries()]
+        const byWords = [...byContainer.entries()]
+          .map(([key, entry]) => ({
+            key,
+            hits: entry.hits,
+            score: entry.score * ((coverage.get(key) ?? 1) / groups.length) ** 2,
+          }))
+          .sort((a, b) => b.score - a.score);
+
+        const nearContainers = new Map<string, { score: number; hits: Array<Hit> }>();
+        for (const hit of meaningHits) {
+          const key = `${hit.source}:${hit.containerId}`;
+          const entry = nearContainers.get(key) ?? { score: 0, hits: [] };
+          entry.score += (hit.cosine ?? 0) / (1 + entry.hits.length);
+          entry.hits.push(hit);
+          nearContainers.set(key, entry);
+        }
+        const byMeaning = [...nearContainers.entries()]
+          .map(([key, entry]) => ({ key, hits: entry.hits, score: entry.score }))
+          .sort((a, b) => b.score - a.score);
+
+        // Fused by rank, not by score: bm25 and cosine do not share a scale,
+        // but "third best by words and best by meaning" means the same in both.
+        const fused = new Map<string, { score: number; words: Array<Hit>; meaning: Array<Hit> }>();
+        for (const [list, side] of [
+          [byWords, "words"],
+          [byMeaning, "meaning"],
+        ] as const) {
+          for (const [rank, entry] of list.entries()) {
+            const held = fused.get(entry.key) ?? { score: 0, words: [], meaning: [] };
+            held.score += 1 / (FUSION_K + rank + 1);
+            held[side] = entry.hits;
+            fused.set(entry.key, held);
+          }
+        }
+        const ranked = [...fused.entries()]
           .map(([key, entry]) => {
-            const matchedTerms = coverage.get(key) ?? 1;
+            const seen = new Set(entry.words.map((hit) => hit.ref));
             return {
               key,
-              matchedTerms,
-              hits: entry.hits,
-              score: entry.score * (matchedTerms / groups.length) ** 2,
+              matchedTerms: coverage.get(key) ?? 0,
+              matchedBy:
+                entry.words.length > 0 && entry.meaning.length > 0
+                  ? ("both" as const)
+                  : entry.words.length > 0
+                    ? ("words" as const)
+                    : ("meaning" as const),
+              // Word hits first: their snippets show the match. Then what only
+              // meaning found, which is the passage's opening lines.
+              hits: [...entry.words, ...entry.meaning.filter((hit) => !seen.has(hit.ref))],
+              hitCount: entry.words.length + entry.meaning.length,
+              score: entry.score,
             };
           })
           .sort((a, b) => b.score - a.score)
@@ -747,13 +1068,17 @@ const make = (options: HistorySearchOptions) =>
 
         return {
           terms: labels,
+          meaning,
           results: ranked.flatMap((entry): ReadonlyArray<HistorySearchResult> => {
             const first = entry.hits[0]!;
             const common = {
-              score: Math.round(entry.score * 10) / 10,
+              // Out of 100, which is first by words and first by meaning.
+              score: Math.round((entry.score / (2 / (FUSION_K + 1))) * 100),
+              matchedBy: entry.matchedBy,
               matchedTerms: entry.matchedTerms,
-              hitCount: entry.hits.length,
+              hitCount: entry.hitCount,
               hits: entry.hits.slice(0, HITS_PER_RESULT).map((hit) => ({
+                matchedBy: hit.cosine === undefined ? ("words" as const) : ("meaning" as const),
                 messageId: hit.source === "thread" ? hit.ref : null,
                 at: hit.source === "meeting" ? hit.ref : null,
                 role: hit.role,

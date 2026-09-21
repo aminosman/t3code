@@ -303,6 +303,7 @@ const makeHarness = Effect.gen(function* () {
           Ref.update(searched, (inputs) => [...inputs, input]).pipe(
             Effect.as({
               terms: ['"login"'],
+              meaning: { active: true, embedded: 10, pending: 0, reason: null },
               results: [
                 {
                   kind: "thread" as const,
@@ -312,11 +313,13 @@ const makeHarness = Effect.gen(function* () {
                   projectTitle: "home",
                   date: "2026-09-19T09:00:00.000Z",
                   archivedAt: "2026-09-19T09:30:00.000Z",
-                  score: 4.2,
+                  score: 100,
+                  matchedBy: "both" as const,
                   matchedTerms: 1,
                   hitCount: 1,
                   hits: [
                     {
+                      matchedBy: "words" as const,
                       messageId: "old-2",
                       at: null,
                       role: "user",
@@ -333,11 +336,13 @@ const makeHarness = Effect.gen(function* () {
                   projectTitle: null,
                   date: "2026-09-21T17:30:30Z",
                   archivedAt: null,
-                  score: 3.1,
-                  matchedTerms: 1,
+                  score: 48,
+                  matchedBy: "meaning" as const,
+                  matchedTerms: 0,
                   hitCount: 1,
                   hits: [
                     {
+                      matchedBy: "meaning" as const,
                       messageId: null,
                       at: "12:37",
                       role: "transcript",
@@ -548,9 +553,11 @@ it.effect("searches threads and meetings, leaving the calling thread out unless 
     expect(result.isError).toBe(false);
     expect(result.structuredContent).toMatchObject({
       terms: ['"login"'],
+      meaning: { active: true, pending: 0 },
       results: [
         {
           kind: "thread",
+          matchedBy: "both",
           id: archivedThreadId,
           projectTitle: "home",
           hits: [{ messageId: "old-2", snippet: "the «login» loops" }],
