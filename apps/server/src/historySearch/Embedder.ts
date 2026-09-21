@@ -29,8 +29,13 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
-/** Kept dimensions. The model is trained so a prefix of its vector still works. */
-export const DIMENSIONS = 256;
+/**
+ * Kept dimensions: all of embeddinggemma's. The model is trained so that a
+ * prefix of its vector still works, and 256 was tried first; on the live index
+ * it blurred near-misses into hits (a right answer ranked 4th at 768 sat past
+ * 40th at 256). At a byte a dimension the whole history is still under 20 MB.
+ */
+export const DIMENSIONS = 768;
 
 export interface EmbedderStatus {
   readonly available: boolean;

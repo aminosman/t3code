@@ -319,6 +319,9 @@ const USER_WEIGHT = 1.5;
 const TITLE_WEIGHT = 3;
 /** Notes are a meeting's own account of what mattered in it. */
 const NOTES_WEIGHT = 2;
+/** A passage holding every term of the question, or all but one. */
+const ALL_TOGETHER = 3;
+const MOST_TOGETHER = 1.8;
 /** Passages embedded per request to the model, and the pause when none wait. */
 const EMBED_BATCH = 32;
 const EMBED_IDLE = "20 seconds";
@@ -337,6 +340,10 @@ const MIN_COSINE = 0.38;
 const NEAR_BEST = 0.8;
 /** Reciprocal-rank fusion: small, so the head of each list counts most. */
 const FUSION_K = 20;
+
+/** Vectors are comparable only within one model at one width. */
+const vectorSpace = (model: string) =>
+  model === "none" ? model : `${model}@${Embedder.DIMENSIONS}`;
 
 const forEmbedding = (text: string) =>
   text.length <= EMBED_HEAD + EMBED_TAIL
@@ -424,7 +431,7 @@ const make = (options: HistorySearchOptions) =>
         )
       `;
       // A different model measures a different space: start over in it.
-      const { model } = yield* embedder.status;
+      const model = vectorSpace((yield* embedder.status).model);
       if (model !== "none") {
         yield* sql`DELETE FROM roost_history_vectors WHERE model <> ${model}`;
         yield* sql`
@@ -634,7 +641,7 @@ const make = (options: HistorySearchOptions) =>
             for (const [index, doc] of worth.entries()) {
               yield* sql`
                 INSERT OR REPLACE INTO roost_history_vectors (doc_id, model, vector)
-                VALUES (${doc.id}, ${status.model}, ${Embedder.quantize(vectors[index]!)})
+                VALUES (${doc.id}, ${vectorSpace(status.model)}, ${Embedder.quantize(vectors[index]!)})
               `;
             }
             if (worth.length > 0) {
@@ -823,6 +830,7 @@ const make = (options: HistorySearchOptions) =>
             : sql`NOT (s.source = 'thread' AND s.container_id = ${input.excludeThreadId})`;
 
         type Hit = {
+          readonly docId: number;
           readonly source: string;
           readonly containerId: string;
           readonly ref: string | null;
@@ -837,6 +845,7 @@ const make = (options: HistorySearchOptions) =>
         // shares every word with the thread that fixed it.
         const hitsFor = (groups: ReadonlyArray<string>) => sql<Hit>`
           SELECT
+            s.rowid AS "docId",
             s.source AS "source",
             s.container_id AS "containerId",
             s.ref AS "ref",
@@ -900,7 +909,7 @@ const make = (options: HistorySearchOptions) =>
             const near = nearest(queryVector, yield* loadMatrix);
             if (near.length > 0) {
               const cosineOf = new Map(near.map((entry) => [entry.id, entry.cosine]));
-              const rows = yield* sql<Hit & { readonly docId: number }>`
+              const rows = yield* sql<Hit>`
                 SELECT
                   s.rowid AS "docId",
                   s.source AS "source",
@@ -960,8 +969,33 @@ const make = (options: HistorySearchOptions) =>
           for (const row of rows) coverage.set(row.key, (coverage.get(row.key) ?? 0) + 1);
         }
 
+        // Words that land in the same passage are about the same thing; words
+        // scattered over a long thread are often three unrelated remarks. A
+        // passage holding every term, or all but one, counts for more.
+        const together = new Map<number, number>();
+        if (groups.length >= 2) {
+          const tiers: Array<readonly [ReadonlyArray<string>, number]> = [[groups, ALL_TOGETHER]];
+          if (groups.length >= 3) {
+            for (const left of groups) {
+              tiers.push([groups.filter((group) => group !== left), MOST_TOGETHER]);
+            }
+          }
+          for (const [subset, weight] of tiers) {
+            const rows = yield* sql<{ readonly docId: number }>`
+              SELECT rowid AS "docId" FROM roost_history_search
+              WHERE roost_history_search MATCH ${subset.join(" AND ")}
+              LIMIT 2000
+            `;
+            for (const row of rows) {
+              together.set(row.docId, Math.max(together.get(row.docId) ?? 1, weight));
+            }
+          }
+        }
+
         const byContainer = new Map<string, { score: number; hits: Array<Hit> }>();
-        for (const hit of hits) {
+        for (const hit of [...hits].sort(
+          (a, b) => a.rank * (together.get(a.docId) ?? 1) - b.rank * (together.get(b.docId) ?? 1),
+        )) {
           const key = `${hit.source}:${hit.containerId}`;
           const entry = byContainer.get(key) ?? { score: 0, hits: [] };
           const weight =
@@ -974,7 +1008,8 @@ const make = (options: HistorySearchOptions) =>
                   : 1;
           // bm25 is negative, better is lower. Later hits in the same place
           // count for less, so a long thread does not win on length alone.
-          entry.score += (-hit.rank * weight) / (1 + entry.hits.length);
+          entry.score +=
+            (-hit.rank * weight * (together.get(hit.docId) ?? 1)) / (1 + entry.hits.length);
           entry.hits.push(hit);
           byContainer.set(key, entry);
         }
