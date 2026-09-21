@@ -1,3 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off - the meetings fixture is a real
+// folder on disk, written once before any layer is built.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,9 +17,45 @@ import type { OrchestrationEvent } from "@t3tools/contracts";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as ThreadSearch from "./ThreadSearch.ts";
+import * as HistorySearch from "./HistorySearch.ts";
 
-const layer = it.layer(ThreadSearch.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)));
+const meetingsDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "roost-meetings-"));
+const writeMeeting = (id: string, files: Record<string, string>) => {
+  NodeFS.mkdirSync(NodePath.join(meetingsDir, id), { recursive: true });
+  for (const [name, text] of Object.entries(files)) {
+    NodeFS.writeFileSync(NodePath.join(meetingsDir, id, name), text);
+  }
+};
+writeMeeting("2026.09.21-1330", {
+  "summary.md":
+    "# Meeting Notes\n\nSOC 2 compliance planning and whether Plaid can carry the financial data.\n\n" +
+    "## Decisions\n- Follow up on Plaid by Friday.\n\n<sub>generated locally by ollama:qwen3:8b</sub>\n",
+  "transcript.md":
+    "# 2026.09.21-1330\n\nengine: parakeet\n\n" +
+    "**[8:51] Speaker 8dd4:** Rethinking sock two for this family law thing.\n\n" +
+    "**[9:40] Speaker 8dd4:** It is a certification for how you receive, store, and send data.\n\n" +
+    "**[12:37] Speaker a8cb:** What if they say we cannot use it until the audit is done.\n\n" +
+    "**[31:02] me:** Wisprflow launched meeting notes, that is straight up our lane.\n",
+  "meta.json": JSON.stringify({
+    started: "2026-09-21T17:30:30Z",
+    duration_seconds: 3137,
+    context: { app: "org.mozilla.firefox", title: "Meet - Ficra Team Sync" },
+  }),
+  "project.json": JSON.stringify({ people: ["Whisperflow"], projectId: "p-tui", name: "tui" }),
+});
+writeMeeting("2026.08.12-1634", {
+  "summary.md": "# Bookkeeping sync\n\nQuickBooks reporting and the chart of accounts.\n",
+});
+// Still recording: audio only, nothing to read yet.
+writeMeeting("2026.09.22-0900", { "meta.json": "{}" });
+
+const HistorySearchTest = HistorySearch.layerWith({ meetingsDir });
+const layer = it.layer(
+  HistorySearchTest.pipe(
+    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provide(NodeServices.layer),
+  ),
+);
 
 const addProject = (id: string, title: string) =>
   Effect.gen(function* () {
@@ -54,18 +97,20 @@ const addMessage = (
   });
 
 it("reads a sentence as quoted terms, dropping filler and splitting identifiers", () => {
-  assert.deepStrictEqual(ThreadSearch.queryTerms('how did we fix kea_ask in "the bridge" OR x'), [
-    '"fix"',
-    '"kea ask"',
-    '"the bridge"',
-  ]);
-  assert.deepStrictEqual(ThreadSearch.queryTerms("the of and"), []);
+  assert.deepStrictEqual(
+    HistorySearch.queryTerms('how did we fix kea_ask in "the bridge" OR x').map((term) => term.fts),
+    ['"fix"', '"kea ask"', '"the bridge"'],
+  );
+  assert.strictEqual(HistorySearch.editDistance("whisperflow", "wisprflow", 2), 2);
+  assert.strictEqual(HistorySearch.editDistance("recieve", "receive", 1), 1);
+  assert.isAbove(HistorySearch.editDistance("stripe", "plaid", 2), 2);
+  assert.deepStrictEqual(HistorySearch.queryTerms("the of and"), []);
 });
 
-layer("ThreadSearch", (it) => {
+layer("HistorySearch", (it) => {
   it.effect("finds threads by stemmed words across projects and ranks coverage first", () =>
     Effect.gen(function* () {
-      const search = yield* ThreadSearch.ThreadSearch;
+      const search = yield* HistorySearch.HistorySearch;
       yield* addProject("p-tui", "tui");
       yield* addProject("p-web", "web");
       yield* addThread("t-imessage", "p-tui", "Simple Tasks");
@@ -102,11 +147,18 @@ layer("ThreadSearch", (it) => {
 
       const found = yield* search.search({
         query: "hands sending iMessages on its own",
+        sources: ["threads"],
         excludeThreadId: "t-caller",
       });
-      assert.deepStrictEqual(found.terms, ['"hands"', '"sending"', '"imessages"']);
+      // Two threads is thin, so each word also stood for what starts with it.
+      assert.deepStrictEqual(found.terms, [
+        '"hands" ~ hands*',
+        '"sending" ~ sending*',
+        '"imessages" ~ imessages*',
+      ]);
+      assert.isTrue(found.results.every((result) => result.kind === "thread"));
       assert.deepStrictEqual(
-        found.results.map((result) => result.threadId),
+        found.results.map((result) => result.id),
         ["t-imessage", "t-noise"],
       );
       const best = found.results[0]!;
@@ -119,7 +171,7 @@ layer("ThreadSearch", (it) => {
       // Identifiers are phrases of their parts; a project filter narrows.
       const byFile = yield* search.search({ query: "HandsLoop.swift", projectId: "p-tui" });
       assert.deepStrictEqual(
-        byFile.results.map((result) => result.threadId),
+        byFile.results.map((result) => result.id),
         ["t-imessage"],
       );
       const usersOnly = yield* search.search({ query: "newsletter sending", role: "user" });
@@ -133,7 +185,7 @@ layer("ThreadSearch", (it) => {
 
   it.effect("catches up with finished, edited and deleted messages, and with titles", () =>
     Effect.gen(function* () {
-      const search = yield* ThreadSearch.ThreadSearch;
+      const search = yield* HistorySearch.HistorySearch;
       const sql = yield* SqlClient.SqlClient;
       yield* addProject("p-sync", "sync");
       yield* addThread("t-sync", "p-sync", "Untitled");
@@ -141,7 +193,7 @@ layer("ThreadSearch", (it) => {
       const ids = (query: string) =>
         search
           .search({ query, projectId: "p-sync" })
-          .pipe(Effect.map((found) => found.results.map((result) => result.threadId)));
+          .pipe(Effect.map((found) => found.results.map((result) => result.id)));
 
       // Still streaming: not indexed yet.
       assert.deepStrictEqual(yield* ids("zeppelin"), []);
@@ -163,9 +215,117 @@ layer("ThreadSearch", (it) => {
     }),
   );
 
+  it.effect("finds meetings beside threads, by notes and by the minute it was said", () =>
+    Effect.gen(function* () {
+      const search = yield* HistorySearch.HistorySearch;
+      yield* addProject("p-soc", "compliance");
+      yield* addThread("t-soc", "p-soc", "Audit prep");
+      yield* addMessage(
+        "c1",
+        "t-soc",
+        "user",
+        "list the external systems we need for the SOC 2 audit",
+        "2026-09-20T10:00:00.000Z",
+      );
+
+      yield* TestClock.adjust("6 seconds");
+      const both = yield* search.search({ query: "SOC 2 compliance planning audit" });
+      assert.deepStrictEqual(both.results.map((result) => `${result.kind}:${result.id}`).sort(), [
+        "meeting:2026.09.21-1330",
+        "thread:t-soc",
+      ]);
+      const meeting = both.results.find((result) => result.kind === "meeting")!;
+      assert.strictEqual(meeting.title, "Meet - Ficra Team Sync");
+      assert.strictEqual(meeting.date, "2026-09-21T17:30:30Z");
+      assert.strictEqual(meeting.projectId, "p-tui");
+      assert.strictEqual(meeting.hits[0]?.role, "notes");
+      assert.notInclude(meeting.hits[0]?.snippet ?? "", "generated locally");
+
+      // Said, not written down: the hit carries the minute to read around.
+      const said = yield* search.search({
+        query: "certification receive store",
+        sources: ["meetings"],
+      });
+      assert.strictEqual(said.results[0]?.hits[0]?.role, "transcript");
+      assert.strictEqual(said.results[0]?.hits[0]?.at, "8:51");
+
+      // Filed under a project; a role is a thread's, so it leaves meetings out.
+      const filed = yield* search.search({ query: "plaid", projectId: "p-tui" });
+      assert.deepStrictEqual(
+        filed.results.map((result) => result.id),
+        ["2026.09.21-1330"],
+      );
+      const usersOnly = yield* search.search({ query: "plaid audit", role: "user" });
+      assert.isTrue(usersOnly.results.every((result) => result.kind === "thread"));
+
+      // A heading of its own is a better title than a folder name.
+      const books = yield* search.search({ query: "quickbooks" });
+      assert.strictEqual(books.results[0]?.title, "Bookkeeping sync");
+    }),
+  );
+
+  it.effect("widens a word the index barely knows, and falls back to prefixes", () =>
+    Effect.gen(function* () {
+      const search = yield* HistorySearch.HistorySearch;
+      // The recogniser wrote "Wisprflow"; the person asking spells it properly.
+      const heard = yield* search.search({ query: "whisperflow", sources: ["meetings"] });
+      assert.deepStrictEqual(
+        heard.results.map((result) => result.id),
+        ["2026.09.21-1330"],
+      );
+      assert.include(heard.terms[0] ?? "", "~ wisprflow");
+      assert.include(heard.results[0]?.hits[0]?.snippet ?? "", "«Wisprflow»");
+
+      // Half a word still lands.
+      const half = yield* search.search({ query: "certif", sources: ["meetings"] });
+      assert.deepStrictEqual(
+        half.results.map((result) => result.id),
+        ["2026.09.21-1330"],
+      );
+      assert.include(half.terms[0] ?? "", "certif*");
+    }),
+  );
+
+  it.effect("lists meetings and reads one: its notes, or the minutes around a moment", () =>
+    Effect.gen(function* () {
+      const search = yield* HistorySearch.HistorySearch;
+      const listed = yield* search.listMeetings({});
+      // The one still recording has nothing to read and is not listed.
+      assert.deepStrictEqual(
+        listed.map((meeting) => meeting.id),
+        ["2026.09.21-1330", "2026.08.12-1634"],
+      );
+      assert.deepStrictEqual(listed[0]?.people, ["Whisperflow"]);
+      assert.strictEqual(listed[0]?.durationMinutes, 52);
+      assert.lengthOf(yield* search.listMeetings({ since: "2026-09-01" }), 1);
+
+      const notes = yield* search.readMeeting({ meetingId: "2026.09.21-1330" });
+      assert.include(notes?.notes ?? "", "Follow up on Plaid by Friday");
+      assert.notInclude(notes?.notes ?? "", "generated locally");
+      assert.lengthOf(notes?.lines ?? [], 0);
+      assert.isTrue(notes?.transcriptPath.endsWith("2026.09.21-1330/transcript.md"));
+
+      const around = yield* search.readMeeting({
+        meetingId: "2026.09.21-1330",
+        around: "9:40",
+        minutes: 1,
+      });
+      assert.isNull(around?.notes ?? null);
+      assert.deepStrictEqual(
+        around?.lines.map((line) => line.at),
+        ["8:51", "9:40"],
+      );
+      assert.isFalse(around?.hasEarlier);
+      assert.isTrue(around?.hasLater);
+
+      assert.isNull(yield* search.readMeeting({ meetingId: "../../etc" }));
+      assert.isNull(yield* search.readMeeting({ meetingId: "2030.01.01-0000" }));
+    }),
+  );
+
   it.effect("reads a window around a message and the tail of an archived thread", () =>
     Effect.gen(function* () {
-      const search = yield* ThreadSearch.ThreadSearch;
+      const search = yield* HistorySearch.HistorySearch;
       yield* addProject("p-read", "read");
       yield* addThread("t-read", "p-read", "Long one", "2026-09-06T00:00:00.000Z");
       for (let index = 0; index < 9; index++) {
@@ -212,19 +372,20 @@ it.effect("builds the index at launch and folds in new messages as thread events
         yield* addMessage("l1", "t-live", "user", "gondola", "2026-09-07T10:00:00.000Z");
       }),
     );
-    const live = ThreadSearch.followLayer.pipe(
-      Layer.provideMerge(ThreadSearch.layer),
+    const live = HistorySearch.followLayer.pipe(
+      Layer.provideMerge(HistorySearchTest),
       Layer.provide(
         Layer.mock(OrchestrationEngineService)({ streamDomainEvents: Stream.fromQueue(events) }),
       ),
       Layer.provideMerge(seeded),
       Layer.provideMerge(persistence),
+      Layer.provide(NodeServices.layer),
     );
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const indexed = (word: string) =>
         sql<{ readonly count: number }>`
-          SELECT COUNT(*) AS "count" FROM roost_thread_search WHERE roost_thread_search MATCH ${word}
+          SELECT COUNT(*) AS "count" FROM roost_history_search WHERE roost_history_search MATCH ${word}
         `.pipe(Effect.map((rows) => rows[0]?.count ?? 0));
 
       // Nobody has searched: the launch build alone put it there.

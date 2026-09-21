@@ -21,7 +21,7 @@ import { McpSchema, McpServer } from "effect/unstable/ai";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ThreadSearch, type ThreadSearchInput } from "../../../threadSearch/ThreadSearch.ts";
+import { HistorySearch, type HistorySearchInput } from "../../../historySearch/HistorySearch.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -128,6 +128,16 @@ const siblingDetail: OrchestrationThread = {
   deletedAt: null,
 };
 
+const teamSync = {
+  id: "2026.09.21-1330",
+  title: "Team Sync",
+  startedAt: "2026-09-21T17:30:30Z",
+  durationMinutes: 52,
+  projectId: null,
+  projectTitle: null,
+  people: ["Whisperflow"],
+};
+
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   clientCapabilities: {},
@@ -153,7 +163,7 @@ const invocation = (capabilities: ReadonlySet<McpInvocationContext.McpCapability
 
 const makeHarness = Effect.gen(function* () {
   const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
-  const searched = yield* Ref.make<ReadonlyArray<ThreadSearchInput>>([]);
+  const searched = yield* Ref.make<ReadonlyArray<HistorySearchInput>>([]);
   const layer = McpHttpServer.ThreadsToolkitRegistrationLive.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provide(
@@ -204,18 +214,19 @@ const makeHarness = Effect.gen(function* () {
       }),
     ),
     Layer.provide(
-      Layer.mock(ThreadSearch)({
+      Layer.mock(HistorySearch)({
         search: (input) =>
           Ref.update(searched, (inputs) => [...inputs, input]).pipe(
             Effect.as({
               terms: ['"login"'],
               results: [
                 {
-                  threadId: archivedThreadId,
+                  kind: "thread" as const,
+                  id: archivedThreadId,
+                  title: "old",
                   projectId: homeProjectId,
                   projectTitle: "home",
-                  title: "old",
-                  updatedAt: "2026-09-19T09:00:00.000Z",
+                  date: "2026-09-19T09:00:00.000Z",
                   archivedAt: "2026-09-19T09:30:00.000Z",
                   score: 4.2,
                   matchedTerms: 1,
@@ -223,14 +234,61 @@ const makeHarness = Effect.gen(function* () {
                   hits: [
                     {
                       messageId: "old-2",
+                      at: null,
                       role: "user",
                       createdAt: "2026-09-19T09:01:00.000Z",
                       snippet: "the «login» loops",
                     },
                   ],
                 },
+                {
+                  kind: "meeting" as const,
+                  id: "2026.09.21-1330",
+                  title: "Team Sync",
+                  projectId: null,
+                  projectTitle: null,
+                  date: "2026-09-21T17:30:30Z",
+                  archivedAt: null,
+                  score: 3.1,
+                  matchedTerms: 1,
+                  hitCount: 1,
+                  hits: [
+                    {
+                      messageId: null,
+                      at: "12:37",
+                      role: "transcript",
+                      createdAt: "2026-09-21T17:30:30Z",
+                      snippet: "them: the «login» keeps looping",
+                    },
+                  ],
+                },
               ],
             }),
+          ),
+        listMeetings: () => Effect.succeed([teamSync]),
+        readMeeting: (input) =>
+          Effect.succeed(
+            input.meetingId === teamSync.id
+              ? {
+                  meeting: teamSync,
+                  notes: input.around === undefined ? "## Decisions\n- fix the login loop" : null,
+                  lines:
+                    input.around === undefined
+                      ? []
+                      : [
+                          {
+                            at: "12:37",
+                            seconds: 757,
+                            speaker: "them",
+                            text: "the login keeps looping",
+                          },
+                        ],
+                  hasEarlier: input.around !== undefined,
+                  hasLater: true,
+                  notesPath: "/m/summary.md",
+                  transcriptPath: "/m/transcript.md",
+                }
+              : null,
           ),
         readMessages: (input) =>
           Effect.succeed(
@@ -364,10 +422,10 @@ it.effect("reads a thread's messages with a paging cursor", () =>
   }),
 );
 
-it.effect("searches every project, leaving the calling thread out unless asked", () =>
+it.effect("searches threads and meetings, leaving the calling thread out unless asked", () =>
   Effect.gen(function* () {
     const { searched, layer } = yield* makeHarness;
-    const result = yield* call("t3_thread_search", { query: "why does the login loop" }).pipe(
+    const result = yield* call("t3_history_search", { query: "why does the login loop" }).pipe(
       Effect.provide(layer),
     );
     expect(result.isError).toBe(false);
@@ -375,18 +433,53 @@ it.effect("searches every project, leaving the calling thread out unless asked",
       terms: ['"login"'],
       results: [
         {
-          threadId: archivedThreadId,
+          kind: "thread",
+          id: archivedThreadId,
           projectTitle: "home",
           hits: [{ messageId: "old-2", snippet: "the «login» loops" }],
         },
+        { kind: "meeting", id: "2026.09.21-1330", hits: [{ at: "12:37", role: "transcript" }] },
       ],
     });
-    yield* call("t3_thread_search", { query: "login", includeCurrent: true, role: "user" }).pipe(
+    yield* call("t3_history_search", { query: "login", includeCurrent: true, role: "user" }).pipe(
       Effect.provide(layer),
     );
     const inputs = yield* Ref.get(searched);
     expect(inputs[0]).toMatchObject({ excludeThreadId: callerThreadId, projectId: undefined });
     expect(inputs[1]).toMatchObject({ excludeThreadId: undefined, role: "user" });
+  }),
+);
+
+it.effect("lists meetings and reads one by its notes or around a moment", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* makeHarness;
+    const listed = yield* call("t3_meeting_list", {}).pipe(Effect.provide(layer));
+    expect(listed.structuredContent).toMatchObject({ meetings: [{ id: teamSync.id }] });
+
+    const notes = yield* call("t3_meeting_read", { meetingId: teamSync.id }).pipe(
+      Effect.provide(layer),
+    );
+    expect(notes.structuredContent).toMatchObject({
+      meeting: { title: "Team Sync", durationMinutes: 52 },
+      notes: "## Decisions\n- fix the login loop",
+      lines: [],
+    });
+
+    const around = yield* call("t3_meeting_read", { meetingId: teamSync.id, around: "12:37" }).pipe(
+      Effect.provide(layer),
+    );
+    expect(around.structuredContent).toMatchObject({
+      notes: null,
+      lines: [{ at: "12:37", speaker: "them", text: "the login keeps looping" }],
+      hasEarlier: true,
+    });
+
+    const missing = yield* call("t3_meeting_read", { meetingId: "nowhere" }).pipe(
+      Effect.provide(layer),
+    );
+    expect(missing.isError).toBe(true);
+    const ungranted = yield* call("t3_meeting_list", {}, new Set()).pipe(Effect.provide(layer));
+    expect(ungranted.isError).toBe(true);
   }),
 );
 

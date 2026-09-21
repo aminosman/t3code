@@ -72,7 +72,7 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
-import * as ThreadSearch from "./threadSearch/ThreadSearch.ts";
+import * as HistorySearch from "./historySearch/HistorySearch.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -614,9 +614,10 @@ export const makeRoutesLayer = Layer.mergeAll(
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(McpSessionRegistry.layer),
-    // The full-text index behind t3_thread_search: built at launch, then kept
-    // current by following thread events. SqlClient and the engine come from below.
-    Layer.provide(ThreadSearch.followLayer.pipe(Layer.provideMerge(ThreadSearch.layer))),
+    // The full-text index behind t3_history_search (threads and meetings): built
+    // at launch, then kept current by following thread events and the meetings
+    // folder. SqlClient and the engine come from below.
+    Layer.provide(HistorySearch.followLayer.pipe(Layer.provideMerge(HistorySearch.layer))),
   ),
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients

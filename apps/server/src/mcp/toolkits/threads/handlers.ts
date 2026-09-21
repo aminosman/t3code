@@ -8,8 +8,8 @@
  * an agent too. `thread.delete` is never dispatched from here.
  *
  * Search, and any read the snapshot cannot serve (a window around one message,
- * an archived thread), go through `ThreadSearch`, which reads the projection
- * tables directly.
+ * an archived thread), go through `HistorySearch`, which reads the projection
+ * tables directly. Meetings are files on this Mac and are read there too.
  *
  * The calling thread comes off the invocation scope and is the default
  * project for listing and creating. It is also the one thread that cannot be
@@ -31,7 +31,7 @@ import * as Option from "effect/Option";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ThreadSearch, type ThreadMessagesOutput } from "../../../threadSearch/ThreadSearch.ts";
+import { HistorySearch, type ThreadMessagesOutput } from "../../../historySearch/HistorySearch.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { type ThreadSummary, ThreadsToolkit, ThreadToolError } from "./tools.ts";
 
@@ -84,7 +84,7 @@ const byMostRecent = (a: { updatedAt: string }, b: { updatedAt: string }) =>
 const makeHandlers = Effect.gen(function* () {
   const query = yield* ProjectionSnapshotQuery;
   const engine = yield* OrchestrationEngineService;
-  const threadSearch = yield* ThreadSearch;
+  const history = yield* HistorySearch;
   const crypto = yield* Crypto.Crypto;
 
   const requireScope = Effect.gen(function* () {
@@ -141,8 +141,9 @@ const makeHandlers = Effect.gen(function* () {
   });
 
   return {
-    t3_thread_search: Effect.fn("ThreadsToolkit.t3_thread_search")(function* (input: {
+    t3_history_search: Effect.fn("ThreadsToolkit.t3_history_search")(function* (input: {
       readonly query: string;
+      readonly sources?: ReadonlyArray<"threads" | "meetings"> | undefined;
       readonly projectId?: ProjectId | undefined;
       readonly role?: "user" | "assistant" | undefined;
       readonly since?: string | undefined;
@@ -150,9 +151,10 @@ const makeHandlers = Effect.gen(function* () {
       readonly limit?: number | undefined;
     }) {
       const scope = yield* requireScope;
-      const found = yield* threadSearch
+      return yield* history
         .search({
           query: input.query,
+          sources: input.sources,
           projectId: input.projectId,
           role: input.role,
           since: input.since,
@@ -160,13 +162,37 @@ const makeHandlers = Effect.gen(function* () {
           excludeThreadId: input.includeCurrent ? undefined : scope.threadId,
         })
         .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+    }),
+
+    t3_meeting_list: Effect.fn("ThreadsToolkit.t3_meeting_list")(function* (input: {
+      readonly since?: string | undefined;
+      readonly limit?: number | undefined;
+    }) {
+      yield* requireScope;
+      const meetings = yield* history
+        .listMeetings(input)
+        .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+      return { meetings };
+    }),
+
+    t3_meeting_read: Effect.fn("ThreadsToolkit.t3_meeting_read")(function* (input: {
+      readonly meetingId: string;
+      readonly around?: string | undefined;
+      readonly minutes?: number | undefined;
+    }) {
+      yield* requireScope;
+      const read = yield* history
+        .readMeeting(input)
+        .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+      if (read === null) {
+        return yield* new ThreadToolError({
+          reason: `no meeting with id ${input.meetingId}; t3_meeting_list shows the ones there are`,
+        });
+      }
       return {
-        terms: found.terms,
-        results: found.results.map((result) => ({
-          ...result,
-          threadId: ThreadId.make(result.threadId),
-          projectId: result.projectId as ProjectId,
-        })),
+        ...read,
+        notes: read.notes === null ? null : clip(read.notes, DEFAULT_MAX_CHARS * 2),
+        lines: read.lines.map((line) => ({ at: line.at, speaker: line.speaker, text: line.text })),
       };
     }),
 
@@ -226,7 +252,7 @@ const makeHandlers = Effect.gen(function* () {
     }) {
       const caller = yield* requireCaller;
       const maxChars = input.maxCharsPerMessage ?? DEFAULT_MAX_CHARS;
-      const readRows = threadSearch
+      const readRows = history
         .readMessages({
           threadId: input.threadId,
           aroundMessageId: input.aroundMessageId,

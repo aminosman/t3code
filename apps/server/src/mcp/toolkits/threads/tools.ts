@@ -3,8 +3,9 @@
  *
  * A thread is not alone: the same server holds every project the user works
  * in and every thread inside them. These tools let an agent look across that
- * boundary — search everything that was ever said, list the projects, list a
- * project's threads, read a thread's messages — and take two writes: create a
+ * boundary — search everything that was ever said, in threads and in recorded
+ * meetings, list the projects, list a project's threads, read a thread's
+ * messages, read a meeting — and take two writes: create a
  * thread and archive one. Search comes first on purpose: an agent that wants
  * to know how something was done before should ask for it by what it is, get
  * back the handful of threads that hold it, and read only those. There is
@@ -89,73 +90,152 @@ export const ThreadListOutput = Schema.Struct({
   threads: Schema.Array(ThreadSummary),
 });
 
-export const ThreadSearchInput = Schema.Struct({
+export const HistorySearchInput = Schema.Struct({
   query: Schema.String.check(Schema.isMinLength(1)).annotate({
     description:
       "What you are looking for, in plain words: the feature, the bug, the file, the error " +
-      "text, the decision. A sentence is fine — filler words are dropped, words are stemmed " +
-      "(sending = send = sends), any of the words may match and threads holding more of them " +
-      "rank higher. Identifiers and paths work as written (kea_ask, Updater.swift). Put an " +
-      'exact phrase in "double quotes".',
+      "text, the decision, the thing someone said. A sentence is fine — filler words are " +
+      "dropped, words are stemmed (sending = send = sends), any of the words may match, and " +
+      "what holds more of them ranks higher. Because any word may match, add the likely " +
+      "synonyms: 'billing invoice charges payment'. Misspelled and mis-transcribed words are " +
+      "widened to the near-spellings the index knows. Identifiers and paths work as written " +
+      '(kea_ask, Updater.swift). Put an exact phrase in "double quotes".',
+  }),
+  sources: Schema.optional(Schema.Array(Schema.Literals(["threads", "meetings"]))).annotate({
+    description: "Where to look. Omit for both, which is usually what you want.",
   }),
   projectId: Schema.optional(ProjectId).annotate({
     description:
-      "Search one project only. Omit to search every project, which is usually what you want.",
+      "One project only: its threads, and the meetings filed under it. Omit to search " +
+      "everything, which is usually what you want — many meetings are not filed at all.",
   }),
   role: Schema.optional(Schema.Literals(["user", "assistant"])).annotate({
     description:
-      "Only what the user wrote (what was asked for, corrections, decisions) or only what " +
-      "agents wrote (what was found and done). Omit for both.",
+      "Threads only: just what the user wrote (what was asked for, corrections, decisions) or " +
+      "just what agents wrote (what was found and done). Omit for both.",
   }),
   since: Schema.optional(IsoDateTime).annotate({
-    description: "ISO date or timestamp; only messages written at or after it.",
+    description: "ISO date or timestamp; only what was written or recorded at or after it.",
   }),
   includeCurrent: Schema.optional(Schema.Boolean).annotate({
     description: "Also return the thread making this call. Default false.",
   }),
   limit: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))).annotate({
-    description: "How many threads to return. Default 8, at most 25.",
+    description: "How many threads and meetings to return. Default 8, at most 25.",
   }),
 });
 
-export const ThreadSearchHit = Schema.Struct({
+export const HistorySearchHit = Schema.Struct({
   messageId: Schema.NullOr(Schema.String).annotate({
     description:
-      "Pass to t3_thread_read as aroundMessageId to read the exchange around it. Null when " +
-      "the match is the thread's title (role: title).",
+      "Thread hits: pass to t3_thread_read as aroundMessageId to read the exchange around it. " +
+      "Null for a title match and for meetings.",
   }),
-  role: Schema.String,
+  at: Schema.NullOr(Schema.String).annotate({
+    description:
+      "Meeting transcript hits: where in the recording (m:ss). Pass to t3_meeting_read as " +
+      "around to read the conversation there. Null for notes and slides.",
+  }),
+  role: Schema.String.annotate({
+    description: "user, assistant or title; for a meeting: notes, transcript or slides.",
+  }),
   createdAt: Schema.NullOr(IsoDateTime),
   snippet: Schema.String.annotate({ description: "The matching passage; matches sit in «…»." }),
 });
 
-export const ThreadSearchResult = Schema.Struct({
-  threadId: ThreadId,
-  projectId: ProjectId,
-  projectTitle: Schema.String,
+export const HistorySearchResult = Schema.Struct({
+  kind: Schema.Literals(["thread", "meeting"]),
+  id: Schema.String.annotate({
+    description: "A thread id (for t3_thread_read) or a meeting id (for t3_meeting_read).",
+  }),
   title: Schema.String,
-  updatedAt: IsoDateTime,
+  projectId: Schema.NullOr(Schema.String),
+  projectTitle: Schema.NullOr(Schema.String),
+  date: Schema.NullOr(IsoDateTime).annotate({
+    description: "A thread's last update; a meeting's start.",
+  }),
   archivedAt: Schema.NullOr(IsoDateTime),
   score: Schema.Number,
   matchedTerms: Schema.Number.annotate({
-    description: "How many of the query's terms appear somewhere in this thread.",
+    description: "How many of the query's terms appear somewhere in it.",
   }),
   hitCount: Schema.Number,
-  hits: Schema.Array(ThreadSearchHit).annotate({ description: "The best few, strongest first." }),
+  hits: Schema.Array(HistorySearchHit).annotate({ description: "The best few, strongest first." }),
 });
 
-export const ThreadSearchOutput = Schema.Struct({
+export const HistorySearchOutput = Schema.Struct({
   terms: Schema.Array(Schema.String).annotate({
-    description: "The terms the query was read as. Reword and search again if they miss.",
+    description:
+      "How the query was read; '~' shows what a word was widened to. Reword and search again " +
+      "if they miss.",
   }),
-  results: Schema.Array(ThreadSearchResult).annotate({ description: "Best thread first." }),
+  results: Schema.Array(HistorySearchResult).annotate({ description: "Best first." }),
+});
+
+export const MeetingSummary = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  startedAt: Schema.NullOr(IsoDateTime),
+  durationMinutes: Schema.NullOr(Schema.Number),
+  projectId: Schema.NullOr(Schema.String),
+  projectTitle: Schema.NullOr(Schema.String),
+  people: Schema.Array(Schema.String),
+});
+
+export const MeetingListInput = Schema.Struct({
+  since: Schema.optional(IsoDateTime).annotate({
+    description: "ISO date or timestamp; only meetings that started at or after it.",
+  }),
+  limit: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))).annotate({
+    description: "How many to return, newest first. Default 20.",
+  }),
+});
+
+export const MeetingListOutput = Schema.Struct({
+  meetings: Schema.Array(MeetingSummary),
+});
+
+export const MeetingReadInput = Schema.Struct({
+  meetingId: Schema.String.annotate({
+    description: "A meeting id from t3_history_search or t3_meeting_list, e.g. 2026.09.21-1330.",
+  }),
+  around: Schema.optional(Schema.String).annotate({
+    description:
+      "A time into the recording (m:ss), as a transcript hit gives it. Returns who said what " +
+      "around then. Omit for the meeting's notes: summary, decisions, action items.",
+  }),
+  minutes: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))).annotate({
+    description: "With around: minutes of transcript either side. Default 2, at most 30.",
+  }),
+});
+
+export const MeetingReadOutput = Schema.Struct({
+  meeting: MeetingSummary,
+  notes: Schema.NullOr(Schema.String).annotate({
+    description:
+      "The written notes, generated by a small local model from the transcript: a guide to " +
+      "what was discussed, not a record of it. Null when reading around a time.",
+  }),
+  lines: Schema.Array(
+    Schema.Struct({ at: Schema.String, speaker: Schema.String, text: Schema.String }),
+  ).annotate({
+    description:
+      "The transcript around the time asked for. 'me' is the user; speaker names and words " +
+      "are as the recogniser heard them and can be wrong.",
+  }),
+  hasEarlier: Schema.Boolean,
+  hasLater: Schema.Boolean,
+  notesPath: Schema.String,
+  transcriptPath: Schema.String.annotate({
+    description: "The whole transcript on disk, if a window is not enough.",
+  }),
 });
 
 export const ThreadReadInput = Schema.Struct({
   threadId: ThreadId,
   aroundMessageId: Schema.optional(Schema.String).annotate({
     description:
-      "A messageId from t3_thread_search. Returns that message with the few before and after " +
+      "A messageId from t3_history_search. Returns that message with the few before and after " +
       "it instead of the thread's latest turns. Works on archived threads.",
   }),
   before: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))).annotate({
@@ -220,26 +300,60 @@ export const ThreadArchiveOutput = Schema.Struct({
 const failure = ThreadToolError;
 const dependencies = [McpInvocationContext.McpInvocationContext];
 
-export const ThreadSearchTool = Tool.make("t3_thread_search", {
+export const HistorySearchTool = Tool.make("t3_history_search", {
   description:
-    "Search everything said in every thread on this server — all projects, archived threads " +
-    "included — and get back the threads that match, best first, each with the passages that " +
-    "matched. Use it BEFORE starting work that may have a history: to see whether this was " +
-    "already done or tried, how something like it was done before, what the user decided or " +
-    "corrected last time, and what else has been worked on around it. It is also the way to " +
-    "find a thread at all: thread titles are auto-generated and often say nothing about the " +
-    "work inside, so do not hunt through t3_thread_list.\n\n" +
-    "Full-text and linguistic, not exact: words are stemmed, any of them may match, threads " +
-    "holding more of them rank higher. It costs a few KB however large the history is. Then " +
-    "read only what earned it: t3_thread_read with the hit's messageId as aroundMessageId. " +
-    "If the first wording misses, search again with the user's likely words, a file name, or " +
-    "the error text.",
-  parameters: ThreadSearchInput,
-  success: ThreadSearchOutput,
+    "Search what has been said: every message in every thread on this server (all projects, " +
+    "archived threads included) and every meeting recorded on this Mac (notes, transcripts, " +
+    "slides). Returns the threads and meetings that match, best first, each with the passages " +
+    "that matched. Use it BEFORE starting work that may have a history: to see whether this " +
+    "was already done or tried, how something like it was done before, what the user decided " +
+    "or corrected last time, what was said about it on a call, and what else has been worked " +
+    "on around it. It is also the way to find a thread at all: thread titles are " +
+    "auto-generated and often say nothing about the work inside, so do not hunt through " +
+    "t3_thread_list.\n\n" +
+    "Loose on purpose: words are stemmed, any of them may match, more of them ranks higher, " +
+    "and misspellings are widened. It does not match by meaning, so name the thing the way " +
+    "the user would and add synonyms. It costs a few KB however large the history is. Then " +
+    "read only what earned it: t3_thread_read with a hit's messageId as aroundMessageId, or " +
+    "t3_meeting_read with a hit's at as around. If the first wording misses, search again " +
+    "with other words, a file name, or the error text.",
+  parameters: HistorySearchInput,
+  success: HistorySearchOutput,
   failure,
   dependencies,
 })
-  .annotate(Tool.Title, "Search threads")
+  .annotate(Tool.Title, "Search threads and meetings")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const MeetingListTool = Tool.make("t3_meeting_list", {
+  description:
+    "List the meetings recorded on this Mac, newest first: when, how long, who was named, and " +
+    "the project each was filed under, if any. To find a meeting by what was said in it, use " +
+    "t3_history_search instead.",
+  parameters: MeetingListInput,
+  success: MeetingListOutput,
+  failure,
+  dependencies,
+})
+  .annotate(Tool.Title, "List meetings")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const MeetingReadTool = Tool.make("t3_meeting_read", {
+  description:
+    "Read a meeting. Without around: its notes (summary, key points, decisions, action items). " +
+    "With around (the at of a transcript hit from t3_history_search): who said what in the " +
+    "minutes either side of that moment. The notes are a local model's summary and can be " +
+    "wrong; when it matters what was actually said, read the transcript around it.",
+  parameters: MeetingReadInput,
+  success: MeetingReadOutput,
+  failure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read a meeting")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -276,7 +390,7 @@ export const ThreadListTool = Tool.make("t3_thread_list", {
 export const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
     "Read a thread's messages in any project: the user's prompts and the agent's replies. " +
-    "With aroundMessageId (a hit from t3_thread_search) it returns that message and the few " +
+    "With aroundMessageId (a hit from t3_history_search) it returns that message and the few " +
     "around it, from active and archived threads alike. Without it, the most recent turns, " +
     "oldest first within the window; page back with beforeCursor. Long messages are cut to " +
     "maxCharsPerMessage.",
@@ -320,7 +434,9 @@ export const ThreadArchiveTool = Tool.make("t3_thread_archive", {
   .annotate(Tool.Idempotent, true);
 
 export const ThreadsToolkit = Toolkit.make(
-  ThreadSearchTool,
+  HistorySearchTool,
+  MeetingListTool,
+  MeetingReadTool,
   ProjectListTool,
   ThreadListTool,
   ThreadReadTool,
