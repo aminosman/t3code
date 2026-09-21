@@ -9,7 +9,6 @@ import { HttpServer } from "effect/unstable/http";
 import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as KeaBridge from "./KeaBridge.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 
@@ -126,16 +125,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        // kea is granted only when it is actually running: the capability
-        // is minted per provider session, so a thread started while kea was
-        // down simply does not hold it, and `kea_ask` says so rather than
-        // hanging on a socket that is not there. `threads` (the cross-thread
-        // read/create/archive tools) needs nothing outside the server and is
-        // always granted. The rest come from the thread's agent-access settings.
+        // `threads` (the cross-thread read/create/archive tools) needs nothing
+        // outside the server and is always granted. The rest come from the
+        // thread's agent-access settings.
         capabilities: new Set<McpInvocationContext.McpCapability>([
           "pull-requests",
           "threads",
-          ...(KeaBridge.available() ? (["kea"] as const) : []),
           ...request.capabilities,
         ]),
         issuedAt,

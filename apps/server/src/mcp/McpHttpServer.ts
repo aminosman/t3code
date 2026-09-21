@@ -20,8 +20,6 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
-import { KeaToolkitHandlersLive } from "./toolkits/kea/handlers.ts";
-import { KeaToolkit } from "./toolkits/kea/tools.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -608,11 +606,6 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
-/** The Mac the agent is running on, reachable through the user's kea. */
-const KeaToolkitRegistrationLive = McpServer.toolkit(KeaToolkit).pipe(
-  Layer.provide(KeaToolkitHandlersLive),
-);
-
 export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsToolkitHandlersLive),
 );
@@ -646,6 +639,5 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
-  KeaToolkitRegistrationLive,
   ThreadsToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

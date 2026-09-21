@@ -43,7 +43,6 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
-import * as KeaBridge from "../../mcp/KeaBridge.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -546,11 +545,6 @@ export function makeCursorAdapter(
             : cursorSettings;
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-          // kea, as an MCP server the agent spawns: the collection surface of the
-          // Mac this thread runs on, offered to every model. Absent when kea is down.
-          const keaMcp = mcpSession
-            ? KeaBridge.mcpServer(mcpSession.providerInstanceId)
-            : undefined;
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment || mcpSession?.agentDeviceEnvironment
@@ -580,9 +574,6 @@ export function makeCursorAdapter(
                         },
                       ],
                     },
-                    ...(keaMcp
-                      ? [{ name: "kea", command: keaMcp.command, args: [...keaMcp.args], env: [] }]
-                      : []),
                   ],
                 }
               : {}),

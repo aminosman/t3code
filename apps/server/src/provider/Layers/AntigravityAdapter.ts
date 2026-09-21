@@ -37,7 +37,6 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
-import * as KeaBridge from "../../mcp/KeaBridge.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import {
@@ -787,7 +786,6 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             stopOwned,
             Effect.gen(function* () {
               const mcp = McpProviderSession.readMcpProviderSession(input.threadId);
-              const keaMcp = mcp ? KeaBridge.mcpServer(mcp.providerInstanceId) : undefined;
               // The attachments dir grant lets the agent read pasted files at
               // the paths ProviderService injects into the turn text. It is a
               // leaf directory holding only uploads.
@@ -808,16 +806,6 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                         url: mcp.endpoint,
                         headers: [{ name: "Authorization", value: mcp.authorizationHeader }],
                       },
-                      ...(keaMcp
-                        ? [
-                            {
-                              name: "kea",
-                              command: keaMcp.command,
-                              args: [...keaMcp.args],
-                              env: [],
-                            },
-                          ]
-                        : []),
                     ]
                   : [],
                 ...makeNativeLoggers({
