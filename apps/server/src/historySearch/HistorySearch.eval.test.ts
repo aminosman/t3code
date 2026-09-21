@@ -39,12 +39,14 @@ const Cases = Schema.fromJsonString(
   }),
 );
 
+const decodeCases = Schema.decodeUnknownEffect(Cases);
+
 it.live.skipIf(database === undefined || casesFile === undefined)(
   "ranks the known answers of a real history",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const { cases } = yield* Schema.decodeUnknownEffect(Cases)(
+      const { cases } = yield* decodeCases(
         yield* fs.readFileString(casesFile!.replace(/^~/u, process.env.HOME ?? "~")),
       );
       const search = yield* HistorySearch.HistorySearch;

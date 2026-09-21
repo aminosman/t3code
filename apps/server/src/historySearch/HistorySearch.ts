@@ -331,13 +331,18 @@ const EMBED_TAIL = 800;
 /** An agent's one-line "let me check" is not worth a vector. */
 const EMBED_MIN_ASSISTANT_CHARS = 200;
 const MEANING_POOL = 80;
-// Measured on the live index (embeddinggemma, 256 dimensions, one byte each):
-// passages that answer the question score 0.5-0.6, and the best a question
-// about nothing here ("how to bake sourdough bread") reaches is 0.30.
+// Set against the evaluation (HistorySearch.eval.test.ts) on a live index,
+// embeddinggemma at 768 dimensions: passages that answer a question score
+// around 0.45 and a question about nothing here peaks near 0.30.
 /** Below this a passage is merely about the same world, not the same thing. */
-const MIN_COSINE = 0.38;
-/** ...and it must be within reach of the best one found. */
-const NEAR_BEST = 0.8;
+const MIN_COSINE = 0.3;
+/**
+ * ...and it must be nearly as close as the best one found. The band is tight
+ * on purpose: chat logs are full of passages loosely near any question, and
+ * letting them in (0.8) cost more right answers their first place than it
+ * found (MRR 0.57 against 0.73 at 0.9). Meaning speaks only when it is sure.
+ */
+const NEAR_BEST = 0.9;
 /** Reciprocal-rank fusion: small, so the head of each list counts most. */
 const FUSION_K = 20;
 
