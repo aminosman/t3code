@@ -7,20 +7,24 @@ import {
   type OrchestrationProject,
   type OrchestrationThread,
   type OrchestrationThreadShell,
+  type ServerProvider,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { HistorySearch, type HistorySearchInput } from "../../../historySearch/HistorySearch.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -31,6 +35,7 @@ const callerThreadId = ThreadId.make("thread-caller");
 const siblingThreadId = ThreadId.make("thread-sibling");
 const workThreadId = ThreadId.make("thread-work");
 const archivedThreadId = ThreadId.make("thread-archived");
+const doneThreadId = ThreadId.make("thread-done");
 
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" };
 
@@ -70,7 +75,16 @@ const shell = (
           completedAt: null,
           assistantMessageId: null,
         }
-      : null,
+      : id === doneThreadId
+        ? {
+            turnId: TurnId.make("turn-done"),
+            state: "completed",
+            requestedAt: updatedAt,
+            startedAt: updatedAt,
+            completedAt: updatedAt,
+            assistantMessageId: null,
+          }
+        : null,
   createdAt: updatedAt,
   updatedAt,
   archivedAt,
@@ -89,6 +103,60 @@ const activeThreads = [
   shell(callerThreadId, homeProjectId, "caller", "2026-09-19T10:01:00.000Z"),
   shell(siblingThreadId, homeProjectId, "sibling", "2026-09-19T10:05:00.000Z"),
   shell(workThreadId, workProjectId, "work thread", "2026-09-19T10:02:00.000Z"),
+  shell(doneThreadId, workProjectId, "review", "2026-09-19T10:03:00.000Z"),
+];
+
+const provider = (
+  instanceId: string,
+  driver: string,
+  overrides: Record<string, unknown> = {},
+): ServerProvider =>
+  ({
+    instanceId,
+    driver,
+    displayName: driver,
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated", email: `${driver}@example.com` },
+    checkedAt: "2026-09-19T10:00:00.000Z",
+    slashCommands: [],
+    skills: [],
+    models: [
+      {
+        slug: `${driver}-large`,
+        name: `${driver} Large`,
+        isCustom: false,
+        isDefault: true,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              options: [
+                { id: "medium", label: "Medium", isDefault: true },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+        },
+      },
+      { slug: `${driver}-old`, name: "Old", isCustom: false, isLegacy: true, capabilities: null },
+    ],
+    ...overrides,
+  }) as unknown as ServerProvider;
+
+const providers = [
+  provider("codex", "codex", {
+    usageLimits: {
+      checkedAt: "2026-09-19T10:00:00.000Z",
+      windows: [{ id: "w", kind: "weekly", label: "Weekly", usedPercent: 41.6 }],
+    },
+  }),
+  provider("claudeAgent", "claudeAgent"),
+  provider("grok", "grok", { auth: { status: "unauthenticated" } }),
 ];
 const archivedThreads = [
   shell(
@@ -151,10 +219,17 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-const invocation = (capabilities: ReadonlySet<McpInvocationContext.McpCapability>) =>
+/** What a failed call said. */
+const text = (result: { readonly content: ReadonlyArray<unknown> }) =>
+  result.content.map((part) => String((part as { text?: unknown }).text ?? "")).join("\n");
+
+const invocation = (
+  capabilities: ReadonlySet<McpInvocationContext.McpCapability>,
+  threadId: ThreadId = callerThreadId,
+) =>
   ({
     environmentId: EnvironmentId.make("environment-1"),
-    threadId: callerThreadId,
+    threadId,
     providerSessionId: "provider-session-1",
     providerInstanceId: ProviderInstanceId.make("codex"),
     capabilities,
@@ -185,7 +260,15 @@ const makeHarness = Effect.gen(function* () {
         getProjectShellById: (projectId) =>
           Effect.succeed(Option.fromUndefinedOr(projects.find((p) => p.id === projectId))),
         getThreadShellById: (threadId) =>
-          Effect.succeed(Option.fromUndefinedOr(activeThreads.find((t) => t.id === threadId))),
+          Effect.succeed(
+            Option.fromUndefinedOr(
+              activeThreads.find((t) => t.id === threadId) ??
+                // A thread an agent just created: a uuid the fixtures never named.
+                (/^[0-9a-f]{8}-/u.test(threadId)
+                  ? shell(threadId, homeProjectId, "spawned", "2026-09-19T10:06:00.000Z")
+                  : undefined),
+            ),
+          ),
         getThreadDetailSnapshot: (threadId, window) =>
           Effect.succeed(
             threadId === siblingThreadId
@@ -213,6 +296,7 @@ const makeHarness = Effect.gen(function* () {
         latestSequence: Effect.succeed(0),
       }),
     ),
+    Layer.provide(Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed(providers) })),
     Layer.provide(
       Layer.mock(HistorySearch)({
         search: (input) =>
@@ -292,29 +376,58 @@ const makeHarness = Effect.gen(function* () {
           ),
         readMessages: (input) =>
           Effect.succeed(
-            input.threadId === archivedThreadId
+            input.threadId === doneThreadId
               ? {
                   thread: {
-                    id: archivedThreadId,
-                    projectId: homeProjectId,
-                    title: "old",
+                    id: doneThreadId,
+                    projectId: workProjectId,
+                    title: "review",
                     branch: null,
-                    updatedAt: "2026-09-19T09:00:00.000Z",
-                    archivedAt: "2026-09-19T09:30:00.000Z",
+                    updatedAt: "2026-09-19T10:03:00.000Z",
+                    archivedAt: null,
                   },
                   messages: [
                     {
-                      id: "old-2",
+                      id: "d1",
                       role: "user",
-                      text: `the login loops ${"x".repeat(200)} and that is the end`,
-                      createdAt: "2026-09-19T09:01:00.000Z",
+                      text: "review the index",
+                      createdAt: "2026-09-19T10:02:00.000Z",
+                      streaming: false,
+                    },
+                    {
+                      id: "d2",
+                      role: "assistant",
+                      text: "Two bugs: the throttle and the vocab scan.",
+                      createdAt: "2026-09-19T10:03:00.000Z",
                       streaming: false,
                     },
                   ],
-                  hasOlder: input.aroundMessageId !== undefined,
+                  hasOlder: false,
                   hasNewer: false,
                 }
-              : null,
+              : input.threadId === archivedThreadId
+                ? {
+                    thread: {
+                      id: archivedThreadId,
+                      projectId: homeProjectId,
+                      title: "old",
+                      branch: null,
+                      updatedAt: "2026-09-19T09:00:00.000Z",
+                      archivedAt: "2026-09-19T09:30:00.000Z",
+                    },
+                    messages: [
+                      {
+                        id: "old-2",
+                        role: "user",
+                        text: `the login loops ${"x".repeat(200)} and that is the end`,
+                        createdAt: "2026-09-19T09:01:00.000Z",
+                        streaming: false,
+                      },
+                    ],
+                    hasOlder: input.aroundMessageId !== undefined,
+                    hasNewer: false,
+                  }
+                : null,
           ),
       }),
     ),
@@ -327,13 +440,17 @@ const call = (
   name: string,
   args: Record<string, unknown>,
   capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["threads"]),
+  as: ThreadId = callerThreadId,
 ) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     return yield* server
       .callTool({ name, arguments: args })
       .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+        Effect.provideService(
+          McpInvocationContext.McpInvocationContext,
+          invocation(capabilities, as),
+        ),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
   });
@@ -356,7 +473,7 @@ it.effect("lists projects with active thread counts and marks the caller's proje
           id: workProjectId,
           title: "work",
           workspaceRoot: "/tmp/work",
-          threadCount: 1,
+          threadCount: 2,
           current: false,
         },
       ],
@@ -390,7 +507,7 @@ it.effect("lists the caller's project by default, newest first, archived only on
     );
     expect(
       (other.structuredContent as { threads: Array<{ id: string }> }).threads.map((t) => t.id),
-    ).toEqual([workThreadId]);
+    ).toEqual([doneThreadId, workThreadId]);
 
     const missing = yield* call("t3_thread_list", { projectId: "project-missing" }).pipe(
       Effect.provide(layer),
@@ -535,7 +652,162 @@ it.effect("creates a thread in the caller's project with the caller's modes", ()
     expect(result.structuredContent).toMatchObject({
       projectId: homeProjectId,
       title: "Follow up",
+      started: false,
+      model: { instanceId: "codex", model: "gpt-5-codex" },
     });
+  }),
+);
+
+it.effect("lists the models that can be used now, marking the caller's provider", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* makeHarness;
+    const usable = yield* call("t3_model_list", {}).pipe(Effect.provide(layer));
+    const listed = usable.structuredContent as {
+      providers: Array<{
+        instanceId: string;
+        current: boolean;
+        account: string | null;
+        usage: Array<{ label: string; usedPercent: number }>;
+        models: Array<{
+          model: string;
+          options: Array<{ id: string; choices: string[]; default: unknown }>;
+        }>;
+      }>;
+    };
+    expect(listed.providers.map((p) => p.instanceId)).toEqual(["codex", "claudeAgent"]);
+    expect(listed.providers[0]).toMatchObject({
+      current: true,
+      account: "codex@example.com",
+      usage: [{ label: "Weekly", usedPercent: 42 }],
+    });
+    // Legacy models are not offered; options carry their choices and default.
+    expect(listed.providers[1]?.models).toEqual([
+      expect.objectContaining({
+        model: "claudeAgent-large",
+        options: [
+          expect.objectContaining({ id: "effort", choices: ["medium", "high"], default: "medium" }),
+        ],
+      }),
+    ]);
+
+    const all = yield* call("t3_model_list", { includeUnusable: true }).pipe(Effect.provide(layer));
+    expect(all.structuredContent).toMatchObject({
+      providers: [{}, {}, { instanceId: "grok", usable: false, unusableBecause: "not signed in" }],
+    });
+  }),
+);
+
+it.effect("starts a fresh thread on a chosen model, and says who sent the first message", () =>
+  Effect.gen(function* () {
+    const { dispatched, layer } = yield* makeHarness;
+    const result = yield* call("t3_thread_create", {
+      title: "Review: history search",
+      prompt: "Review apps/server/src/historySearch for bugs. Read-only.",
+      model: { instanceId: "claudeAgent", model: "claudeAgent-large", options: { effort: "high" } },
+    }).pipe(Effect.provide(layer));
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      started: true,
+      model: { instanceId: "claudeAgent", model: "claudeAgent-large" },
+    });
+    const commands = yield* Ref.get(dispatched);
+    expect(commands.map((command) => command.type)).toEqual(["thread.create", "thread.turn.start"]);
+    const chosen = {
+      instanceId: "claudeAgent",
+      model: "claudeAgent-large",
+      options: [{ id: "effort", value: "high" }],
+    };
+    expect(commands[0]).toMatchObject({ modelSelection: chosen, runtimeMode: "full-access" });
+    expect(commands[1]).toMatchObject({
+      modelSelection: chosen,
+      message: { role: "user", attachments: [] },
+    });
+    const start = commands[1] as Extract<OrchestrationCommand, { type: "thread.turn.start" }>;
+    expect(start.threadId).toBe((commands[0] as { threadId: ThreadId }).threadId);
+    expect(start.message.text).toContain('Started by the agent in thread "caller"');
+    expect(start.message.text).toContain("Review apps/server/src/historySearch for bugs.");
+  }),
+);
+
+it.effect("refuses a model that is not set up, and names what is", () =>
+  Effect.gen(function* () {
+    const { dispatched, layer } = yield* makeHarness;
+    const attempt = (model: Record<string, unknown>) =>
+      call("t3_thread_create", { title: "x", prompt: "y", model }).pipe(Effect.provide(layer));
+
+    const noProvider = yield* attempt({ instanceId: "gemini", model: "pro" });
+    expect(noProvider.isError).toBe(true);
+    expect(text(noProvider)).toContain("codex, claudeAgent, grok");
+    const signedOut = yield* attempt({ instanceId: "grok", model: "grok-large" });
+    expect(text(signedOut)).toContain("not signed in");
+    const noModel = yield* attempt({ instanceId: "codex", model: "gpt-9" });
+    expect(text(noModel)).toContain("codex-large");
+    const badOption = yield* attempt({
+      instanceId: "codex",
+      model: "codex-large",
+      options: { effort: "ludicrous" },
+    });
+    expect(text(badOption)).toContain("medium, high");
+    expect(yield* Ref.get(dispatched)).toHaveLength(0);
+  }),
+);
+
+it.effect("lets one thread start a handful an hour, and a started thread start none", () =>
+  Effect.gen(function* () {
+    const { dispatched, layer } = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const start = (as?: ThreadId) =>
+        call("t3_thread_create", { title: "Review", prompt: "look" }, new Set(["threads"]), as);
+      const first = yield* start();
+      const spawned = (first.structuredContent as { threadId: ThreadId }).threadId;
+      // The review cannot ask for a review of itself.
+      const chained = yield* start(spawned);
+      expect(chained.isError).toBe(true);
+      expect(text(chained)).toContain("started by an agent");
+
+      for (let index = 0; index < 4; index++) expect((yield* start()).isError).toBe(false);
+      const sixth = yield* start();
+      expect(sixth.isError).toBe(true);
+      expect(text(sixth)).toContain("ask the user");
+      // An empty thread spends nothing and is not counted.
+      expect((yield* call("t3_thread_create", { title: "Later" })).isError).toBe(false);
+      yield* TestClock.adjust("61 minutes");
+      expect((yield* start()).isError).toBe(false);
+    }).pipe(Effect.provide(layer));
+    const commands = yield* Ref.get(dispatched);
+    expect(commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(6);
+  }),
+);
+
+it.effect("waits for a started thread and returns its answer", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* makeHarness;
+    const done = yield* call("t3_thread_wait", { threadId: doneThreadId }).pipe(
+      Effect.provide(layer),
+    );
+    expect(done.structuredContent).toMatchObject({
+      state: "done",
+      reply: "Two bugs: the throttle and the vocab scan.",
+      thread: { id: doneThreadId },
+    });
+
+    // Still running when the wait runs out: said so, not hung on.
+    const fiber = yield* call("t3_thread_wait", {
+      threadId: siblingThreadId,
+      timeoutSeconds: 10,
+    }).pipe(Effect.provide(layer), Effect.forkChild);
+    yield* TestClock.adjust("12 seconds");
+    const running = yield* Fiber.join(fiber);
+    expect(running.structuredContent).toMatchObject({ state: "running", reply: null });
+
+    const empty = yield* call("t3_thread_wait", { threadId: workThreadId }).pipe(
+      Effect.provide(layer),
+    );
+    expect(empty.isError).toBe(true);
+    const self = yield* call("t3_thread_wait", { threadId: callerThreadId }).pipe(
+      Effect.provide(layer),
+    );
+    expect(self.isError).toBe(true);
   }),
 );
 

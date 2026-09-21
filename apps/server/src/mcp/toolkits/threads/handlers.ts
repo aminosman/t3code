@@ -19,24 +19,57 @@
  */
 import {
   CommandId,
+  MessageId,
+  type ModelSelection,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
   type ProjectId,
+  ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { HistorySearch, type ThreadMessagesOutput } from "../../../historySearch/HistorySearch.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { type ThreadSummary, ThreadsToolkit, ThreadToolError } from "./tools.ts";
 
 const DEFAULT_TURN_LIMIT = 10;
 const DEFAULT_MAX_CHARS = 6000;
+const WAIT_REPLY_CHARS = 12_000;
+const DEFAULT_WAIT_SECONDS = 300;
+const MAX_WAIT_SECONDS = 900;
+const WAIT_POLL = "2 seconds";
+/**
+ * A thread an agent starts spends the user's allowance and lands in their
+ * sidebar. One thread may start a handful an hour — a review, a second
+ * opinion — and a thread that was itself started by an agent may start none,
+ * so a review cannot ask for a review of itself without end.
+ */
+const STARTS_PER_HOUR = 5;
+const HOUR_MS = 3_600_000;
+
+/** Why a provider cannot be picked right now; null when it can. */
+const unusableBecause = (provider: ServerProvider): string | null => {
+  if (provider.availability === "unavailable") {
+    return provider.unavailableReason ?? "its driver is not available in this build";
+  }
+  if (!provider.enabled) return "disabled in settings";
+  if (!provider.installed) return "not installed";
+  if (provider.auth.status === "unauthenticated") return "not signed in";
+  if (provider.status === "error" || provider.status === "disabled") {
+    return provider.message ?? `status is ${provider.status}`;
+  }
+  return null;
+};
 
 /**
  * A long message keeps its start and its end: the start says what was asked
@@ -85,6 +118,9 @@ const makeHandlers = Effect.gen(function* () {
   const query = yield* ProjectionSnapshotQuery;
   const engine = yield* OrchestrationEngineService;
   const history = yield* HistorySearch;
+  const providerRegistry = yield* ProviderRegistry;
+  const startedByAgents = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const startsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
   const crypto = yield* Crypto.Crypto;
 
   const requireScope = Effect.gen(function* () {
@@ -299,12 +335,149 @@ const makeHandlers = Effect.gen(function* () {
       };
     }),
 
+    t3_model_list: Effect.fn("ThreadsToolkit.t3_model_list")(function* (input: {
+      readonly includeUnusable?: boolean | undefined;
+    }) {
+      const caller = yield* requireCaller;
+      const providers = yield* providerRegistry.getProviders;
+      return {
+        providers: providers
+          .map((provider) => {
+            const reason = unusableBecause(provider);
+            const current = provider.instanceId === caller.modelSelection.instanceId;
+            return {
+              instanceId: provider.instanceId,
+              provider: provider.driver,
+              name: provider.displayName ?? provider.driver,
+              account: provider.auth.email ?? provider.auth.label ?? null,
+              usable: reason === null,
+              unusableBecause: reason,
+              current,
+              usage: (provider.usageLimits?.windows ?? []).map((window) => ({
+                label: window.label,
+                usedPercent: Math.round(window.usedPercent),
+                resetsAt: window.resetsAt ?? null,
+              })),
+              models: provider.models
+                .filter((model) => model.isLegacy !== true)
+                .map((model) => ({
+                  model: model.slug,
+                  name: model.name,
+                  isDefault: model.isDefault === true,
+                  isNew: model.badge === "new",
+                  current: current && model.slug === caller.modelSelection.model,
+                  options: (model.capabilities?.optionDescriptors ?? []).map((option) =>
+                    option.type === "select"
+                      ? {
+                          id: option.id,
+                          label: option.label,
+                          type: "select" as const,
+                          choices: option.options.map((choice) => choice.id),
+                          default:
+                            option.options.find((choice) => choice.isDefault === true)?.id ??
+                            option.currentValue ??
+                            null,
+                        }
+                      : {
+                          id: option.id,
+                          label: option.label,
+                          type: "boolean" as const,
+                          choices: [],
+                          default: option.currentValue ?? null,
+                        },
+                  ),
+                })),
+            };
+          })
+          .filter((provider) => provider.usable || input.includeUnusable === true),
+      };
+    }),
+
     t3_thread_create: Effect.fn("ThreadsToolkit.t3_thread_create")(function* (input: {
       readonly title: string;
       readonly projectId?: ProjectId | undefined;
+      readonly prompt?: string | undefined;
+      readonly model?:
+        | {
+            readonly instanceId: string;
+            readonly model: string;
+            readonly options?: Readonly<Record<string, string | boolean>> | undefined;
+          }
+        | undefined;
     }) {
       const caller = yield* requireCaller;
       const project = yield* requireProject(input.projectId ?? caller.projectId);
+      const prompt = input.prompt?.trim();
+      const now = yield* Clock.currentTimeMillis;
+
+      if (prompt !== undefined) {
+        if ((yield* Ref.get(startedByAgents)).has(caller.id)) {
+          return yield* new ThreadToolError({
+            reason:
+              "this thread was itself started by an agent, and such a thread cannot start " +
+              "others; report back in your reply and let the thread that asked decide",
+          });
+        }
+        const recent = ((yield* Ref.get(startsByCaller)).get(caller.id) ?? []).filter(
+          (at) => now - at < HOUR_MS,
+        );
+        if (recent.length >= STARTS_PER_HOUR) {
+          return yield* new ThreadToolError({
+            reason: `this thread has already started ${STARTS_PER_HOUR} threads in the last hour; ask the user before starting more`,
+          });
+        }
+      }
+
+      let modelSelection: ModelSelection = project.defaultModelSelection ?? caller.modelSelection;
+      if (input.model !== undefined) {
+        const chosen = input.model;
+        const providers = yield* providerRegistry.getProviders;
+        const provider = providers.find((candidate) => candidate.instanceId === chosen.instanceId);
+        if (provider === undefined) {
+          return yield* new ThreadToolError({
+            reason: `no provider instance "${chosen.instanceId}"; t3_model_list shows the ones set up (${providers.map((p) => p.instanceId).join(", ")})`,
+          });
+        }
+        const reason = unusableBecause(provider);
+        if (reason !== null) {
+          return yield* new ThreadToolError({
+            reason: `provider "${chosen.instanceId}" cannot be used right now: ${reason}`,
+          });
+        }
+        const model = provider.models.find(
+          (candidate) =>
+            candidate.slug === chosen.model || candidate.aliases?.includes(chosen.model) === true,
+        );
+        if (model === undefined) {
+          return yield* new ThreadToolError({
+            reason: `"${chosen.instanceId}" has no model "${chosen.model}"; it has: ${provider.models.map((m) => m.slug).join(", ")}`,
+          });
+        }
+        const descriptors = model.capabilities?.optionDescriptors ?? [];
+        const options = Object.entries(chosen.options ?? {});
+        for (const [id, value] of options) {
+          const descriptor = descriptors.find((candidate) => candidate.id === id);
+          if (descriptor === undefined) {
+            return yield* new ThreadToolError({
+              reason: `model "${model.slug}" has no option "${id}"; it has: ${descriptors.map((d) => d.id).join(", ") || "none"}`,
+            });
+          }
+          if (
+            descriptor.type === "select" &&
+            !descriptor.options.some((choice) => choice.id === value)
+          ) {
+            return yield* new ThreadToolError({
+              reason: `option "${id}" of "${model.slug}" takes one of: ${descriptor.options.map((c) => c.id).join(", ")}`,
+            });
+          }
+        }
+        modelSelection = {
+          instanceId: ProviderInstanceId.make(provider.instanceId),
+          model: model.slug,
+          ...(options.length > 0 ? { options: options.map(([id, value]) => ({ id, value })) } : {}),
+        } as ModelSelection;
+      }
+
       const threadId = ThreadId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
       const commandId = CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
       const createdAt = DateTime.formatIso(yield* DateTime.now);
@@ -316,7 +489,7 @@ const makeHandlers = Effect.gen(function* () {
           threadId,
           projectId: project.id,
           title,
-          modelSelection: project.defaultModelSelection ?? caller.modelSelection,
+          modelSelection,
           runtimeMode: caller.runtimeMode,
           interactionMode: caller.interactionMode,
           branch: null,
@@ -324,7 +497,98 @@ const makeHandlers = Effect.gen(function* () {
           createdAt,
         })
         .pipe(Effect.mapError(failWith("could not create the thread")));
-      return { threadId, projectId: project.id, title };
+
+      if (prompt !== undefined) {
+        // Said in the message itself, so the user reading the new thread and
+        // the agent answering it both know nobody typed this.
+        const text =
+          `[Started by the agent in thread "${caller.title}" (${caller.id}), not typed by the user. ` +
+          `You have none of that thread's context beyond what follows; t3_thread_read can read it ` +
+          `if you need it. Answer in your reply — that thread will read it.]\n\n${prompt}`;
+        yield* engine
+          .dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+            threadId,
+            message: {
+              messageId: MessageId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+              role: "user",
+              text,
+              attachments: [],
+            },
+            modelSelection,
+            runtimeMode: caller.runtimeMode,
+            interactionMode: caller.interactionMode,
+            createdAt,
+          })
+          .pipe(Effect.mapError(failWith("the thread was created but could not be started")));
+        yield* Ref.update(startedByAgents, (set) => new Set([...set, threadId]));
+        yield* Ref.update(startsByCaller, (map) => {
+          const recent = (map.get(caller.id) ?? []).filter((at) => now - at < HOUR_MS);
+          return new Map([...map, [caller.id, [...recent, now]]]);
+        });
+      }
+      return {
+        threadId,
+        projectId: project.id,
+        title,
+        started: prompt !== undefined,
+        model: { instanceId: modelSelection.instanceId, model: modelSelection.model },
+      };
+    }),
+
+    t3_thread_wait: Effect.fn("ThreadsToolkit.t3_thread_wait")(function* (input: {
+      readonly threadId: ThreadId;
+      readonly timeoutSeconds?: number | undefined;
+    }) {
+      const caller = yield* requireCaller;
+      if (input.threadId === caller.id) {
+        return yield* new ThreadToolError({ reason: "a thread cannot wait for itself" });
+      }
+      const timeoutMs =
+        Math.min(MAX_WAIT_SECONDS, input.timeoutSeconds ?? DEFAULT_WAIT_SECONDS) * 1000;
+      const startedAt = yield* Clock.currentTimeMillis;
+      const look = Effect.gen(function* () {
+        const shell = yield* query
+          .getThreadShellById(input.threadId)
+          .pipe(Effect.mapError(failWith("could not read the thread")));
+        if (Option.isNone(shell)) {
+          return yield* new ThreadToolError({
+            reason: `no active thread with id ${input.threadId}`,
+          });
+        }
+        const thread = shell.value;
+        const state =
+          thread.hasPendingApprovals || thread.hasPendingUserInput
+            ? ("needs-user" as const)
+            : thread.latestTurn === null || thread.latestTurn.state === "running"
+              ? ("running" as const)
+              : thread.latestTurn.state === "completed"
+                ? ("done" as const)
+                : thread.latestTurn.state;
+        return { thread, state };
+      });
+
+      let seen = yield* look;
+      if (seen.thread.latestTurn === null && seen.thread.latestUserMessageAt === null) {
+        return yield* new ThreadToolError({
+          reason: "nothing has been sent to that thread, so there is no turn to wait for",
+        });
+      }
+      while (seen.state === "running" && (yield* Clock.currentTimeMillis) - startedAt < timeoutMs) {
+        yield* Effect.sleep(WAIT_POLL);
+        seen = yield* look;
+      }
+      const tail = yield* history
+        .readMessages({ threadId: input.threadId, before: 8, after: 0 })
+        .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+      const reply = tail?.messages.findLast((message) => message.role === "assistant") ?? null;
+      return {
+        thread: summarizeThread(seen.thread, caller.id),
+        state: seen.state,
+        reply: reply === null ? null : clip(reply.text, WAIT_REPLY_CHARS),
+        waitedSeconds: Math.round(((yield* Clock.currentTimeMillis) - startedAt) / 1000),
+      };
     }),
 
     t3_thread_archive: Effect.fn("ThreadsToolkit.t3_thread_archive")(function* (input: {

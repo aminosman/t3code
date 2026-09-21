@@ -19,6 +19,14 @@ describe("buildRuntimeInstructions", () => {
     expect(instructions).toContain("not the present state of the code");
   });
 
+  it("tells every harness when a fresh thread on another model is worth starting", () => {
+    const instructions = buildRuntimeInstructions({ harness: "Codex" });
+    expect(instructions).toContain("<fresh_threads>");
+    expect(instructions).toContain("pick a different provider than the one you run on");
+    expect(instructions).toContain("Do not use it to split up ordinary work");
+    expect(instructions).toContain("say when you start one and why");
+  });
+
   it("keeps known model and effort metadata on one line", () => {
     expect(
       buildRuntimeInstructions({
