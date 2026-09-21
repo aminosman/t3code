@@ -239,6 +239,7 @@ const invocation = (
 const makeHarness = Effect.gen(function* () {
   const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
   const searched = yield* Ref.make<ReadonlyArray<HistorySearchInput>>([]);
+  const usage = yield* Ref.make<ReadonlyArray<string>>([]);
   const layer = McpHttpServer.ThreadsToolkitRegistrationLive.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provide(
@@ -302,6 +303,7 @@ const makeHarness = Effect.gen(function* () {
         search: (input) =>
           Ref.update(searched, (inputs) => [...inputs, input]).pipe(
             Effect.as({
+              searchId: 7,
               terms: ['"login"'],
               meaning: { active: true, embedded: 10, pending: 0, reason: null },
               results: [
@@ -354,6 +356,13 @@ const makeHarness = Effect.gen(function* () {
               ],
             }),
           ),
+        recordOpen: (input) =>
+          Ref.update(usage, (seen) => [...seen, `open ${input.kind} ${input.id}`]),
+        recordFeedback: (input) =>
+          Ref.update(usage, (seen) => [
+            ...seen,
+            `feedback ${input.found} ${input.searchId ?? "latest"} ${input.note ?? ""}`,
+          ]).pipe(Effect.as(input.searchId ?? 7)),
         listMeetings: () => Effect.succeed([teamSync]),
         readMeeting: (input) =>
           Effect.succeed(
@@ -438,7 +447,7 @@ const makeHarness = Effect.gen(function* () {
     ),
     Layer.provide(NodeServices.layer),
   );
-  return { dispatched, searched, layer };
+  return { dispatched, searched, usage, layer };
 });
 
 const call = (
@@ -569,8 +578,37 @@ it.effect("searches threads and meetings, leaving the calling thread out unless 
       Effect.provide(layer),
     );
     const inputs = yield* Ref.get(searched);
-    expect(inputs[0]).toMatchObject({ excludeThreadId: callerThreadId, projectId: undefined });
+    expect(inputs[0]).toMatchObject({
+      excludeThreadId: callerThreadId,
+      projectId: undefined,
+      // Who asked goes into the usage record.
+      caller: { threadId: callerThreadId, provider: "codex" },
+    });
     expect(inputs[1]).toMatchObject({ excludeThreadId: undefined, role: "user" });
+  }),
+);
+
+it.effect("records what was opened after a search, and what the agent said of it", () =>
+  Effect.gen(function* () {
+    const { usage, layer } = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const found = yield* call("t3_history_search", { query: "login" });
+      expect(found.structuredContent).toMatchObject({ searchId: 7 });
+      yield* call("t3_thread_read", { threadId: archivedThreadId, aroundMessageId: "old-2" });
+      yield* call("t3_meeting_read", { meetingId: teamSync.id, around: "12:37" });
+      const rated = yield* call("t3_history_feedback", {
+        found: false,
+        note: "expected the thread where the SSO loop was fixed",
+      });
+      expect(rated.structuredContent).toEqual({ recorded: true, searchId: 7 });
+      yield* call("t3_history_feedback", { found: true, searchId: 3 });
+    }).pipe(Effect.provide(layer));
+    expect(yield* Ref.get(usage)).toEqual([
+      `open thread ${archivedThreadId}`,
+      `open meeting ${teamSync.id}`,
+      "feedback false latest expected the thread where the SSO loop was fixed",
+      "feedback true 3 ",
+    ]);
   }),
 );
 

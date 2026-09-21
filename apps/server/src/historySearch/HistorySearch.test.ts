@@ -533,3 +533,73 @@ it("keeps a vector's direction through a byte per dimension", () => {
   assert.isAbove(cosine(a, Embedder.quantize(b)), 0.9);
   assert.isBelow(cosine(a, Embedder.quantize(c)), 0.2);
 });
+
+it.effect("keeps a record of its use: the search, what was opened from it, and the verdict", () =>
+  Effect.gen(function* () {
+    const search = yield* HistorySearch.HistorySearch;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addProject("p-use", "use");
+    yield* addThread("t-answer", "p-use", "Answer");
+    yield* addThread("t-other", "p-use", "Other");
+    yield* addMessage(
+      "u1",
+      "t-answer",
+      "user",
+      "the gondola cable snapped",
+      "2026-09-11T10:00:00.000Z",
+    );
+    yield* addMessage("u2", "t-other", "user", "gondola tickets", "2026-09-11T10:01:00.000Z");
+    yield* search.refresh;
+
+    const caller = { threadId: "t-asker", provider: "codex" };
+    const found = yield* search.search({ query: "gondola cable", sources: ["threads"], caller });
+    assert.isNotNull(found.searchId);
+    // Not recorded without a caller: tests, the evaluation, internal use.
+    assert.isNull((yield* search.search({ query: "gondola" })).searchId);
+
+    yield* search.recordOpen({ callerThreadId: "t-asker", kind: "thread", id: "t-other" });
+    yield* search.recordOpen({ callerThreadId: "t-asker", kind: "thread", id: "t-unrelated" });
+    const filed = yield* search.recordFeedback({
+      callerThreadId: "t-asker",
+      found: false,
+      note: "  wanted the snapped cable thread first  ",
+    });
+    assert.strictEqual(filed, found.searchId);
+
+    const rows = yield* sql<{
+      readonly kind: string;
+      readonly query: string | null;
+      readonly results: string | null;
+      readonly searchId: number | null;
+      readonly openedId: string | null;
+      readonly openedRank: number | null;
+      readonly found: number | null;
+      readonly note: string | null;
+    }>`
+      SELECT kind AS "kind", query AS "query", results AS "results", search_id AS "searchId",
+        opened_id AS "openedId", opened_rank AS "openedRank", found AS "found", note AS "note"
+      FROM roost_history_usage ORDER BY id
+    `;
+    assert.deepStrictEqual(
+      rows.map((row) => row.kind),
+      ["search", "open", "open", "feedback"],
+    );
+    assert.strictEqual(rows[0]?.query, "gondola cable");
+    assert.match(rows[0]?.results ?? "", /^1\tthread\tt-answer\t\d+\twords\n2\tthread\tt-other\t/u);
+    // Opened from second place; the other read had nothing to do with a search.
+    assert.deepInclude(rows[1], { searchId: found.searchId, openedId: "t-other", openedRank: 2 });
+    assert.deepInclude(rows[2], { searchId: null, openedId: "t-unrelated", openedRank: null });
+    assert.deepInclude(rows[3], {
+      searchId: found.searchId,
+      found: 0,
+      note: "wanted the snapped cable thread first",
+    });
+  }).pipe(
+    Effect.provide(
+      HistorySearchTest.pipe(
+        Layer.provideMerge(SqlitePersistenceMemory),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
+);

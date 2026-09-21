@@ -177,7 +177,31 @@ export const HistorySearchResult = Schema.Struct({
   hits: Schema.Array(HistorySearchHit).annotate({ description: "The best few, strongest first." }),
 });
 
+export const HistoryFeedbackInput = Schema.Struct({
+  found: Schema.Boolean.annotate({
+    description: "Did the search give you what you were looking for?",
+  }),
+  searchId: Schema.optional(Schema.Int).annotate({
+    description: "The searchId the search returned. Omit for your most recent search.",
+  }),
+  note: Schema.optional(Schema.String).annotate({
+    description:
+      "One or two sentences that would help someone improve the search. If it missed: what " +
+      "you expected to find (the thread, meeting or fact, in your words) and how you found it " +
+      "in the end, if you did. If it worked but was hard: what got in the way — the right " +
+      "result ranked low, the snippet did not show why it matched, too much noise.",
+  }),
+});
+
+export const HistoryFeedbackOutput = Schema.Struct({
+  recorded: Schema.Boolean,
+  searchId: Schema.NullOr(Schema.Int),
+});
+
 export const HistorySearchOutput = Schema.Struct({
+  searchId: Schema.NullOr(Schema.Int).annotate({
+    description: "Names this search; pass it to t3_history_feedback.",
+  }),
   terms: Schema.Array(Schema.String).annotate({
     description:
       "How the query was read; '~' shows what a word was widened to. Reword and search again " +
@@ -466,6 +490,23 @@ export const HistorySearchTool = Tool.make("t3_history_search", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+export const HistoryFeedbackTool = Tool.make("t3_history_feedback", {
+  description:
+    "Say whether t3_history_search gave you what you needed. The search is new and is " +
+    "improved from exactly this: each miss becomes a test case. Call it once, after a search " +
+    "that mattered to the work — when it found what you needed, and above all when it did " +
+    "not (nothing relevant, the right thing buried, or you found it some other way). It " +
+    "costs one short call; it is not needed after every search.",
+  parameters: HistoryFeedbackInput,
+  success: HistoryFeedbackOutput,
+  failure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Rate a history search")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false);
+
 export const MeetingListTool = Tool.make("t3_meeting_list", {
   description:
     "List the meetings recorded on this Mac, newest first: when, how long, who was named, and " +
@@ -620,6 +661,7 @@ export const ThreadArchiveTool = Tool.make("t3_thread_archive", {
 
 export const ThreadsToolkit = Toolkit.make(
   HistorySearchTool,
+  HistoryFeedbackTool,
   MeetingListTool,
   MeetingReadTool,
   ProjectListTool,

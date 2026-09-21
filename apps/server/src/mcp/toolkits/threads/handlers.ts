@@ -196,8 +196,24 @@ const makeHandlers = Effect.gen(function* () {
           since: input.since,
           limit: input.limit,
           excludeThreadId: input.includeCurrent ? undefined : scope.threadId,
+          caller: { threadId: scope.threadId, provider: scope.providerInstanceId },
         })
         .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+    }),
+
+    t3_history_feedback: Effect.fn("ThreadsToolkit.t3_history_feedback")(function* (input: {
+      readonly found: boolean;
+      readonly searchId?: number | undefined;
+      readonly note?: string | undefined;
+    }) {
+      const scope = yield* requireScope;
+      const searchId = yield* history.recordFeedback({
+        callerThreadId: scope.threadId,
+        searchId: input.searchId,
+        found: input.found,
+        note: input.note,
+      });
+      return { recorded: true, searchId };
     }),
 
     t3_meeting_list: Effect.fn("ThreadsToolkit.t3_meeting_list")(function* (input: {
@@ -216,7 +232,12 @@ const makeHandlers = Effect.gen(function* () {
       readonly around?: string | undefined;
       readonly minutes?: number | undefined;
     }) {
-      yield* requireScope;
+      const scope = yield* requireScope;
+      yield* history.recordOpen({
+        callerThreadId: scope.threadId,
+        kind: "meeting",
+        id: input.meetingId,
+      });
       const read = yield* history
         .readMeeting(input)
         .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
@@ -287,6 +308,7 @@ const makeHandlers = Effect.gen(function* () {
       readonly beforeCursor?: string | undefined;
     }) {
       const caller = yield* requireCaller;
+      yield* history.recordOpen({ callerThreadId: caller.id, kind: "thread", id: input.threadId });
       const maxChars = input.maxCharsPerMessage ?? DEFAULT_MAX_CHARS;
       const readRows = history
         .readMessages({

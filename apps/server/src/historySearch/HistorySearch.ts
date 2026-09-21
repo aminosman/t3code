@@ -42,6 +42,14 @@
  *     anyone searching;
  *   - before each search, so a search never misses what finished a moment ago.
  *
+ * It keeps a record of its own use (roost_history_usage): every search with
+ * what it returned, which result the agent then opened and at what rank, and
+ * what the agent said when asked whether it found what it needed. That is how
+ * it gets better: a search nobody opened anything from, a question asked three
+ * ways in a row, an answer opened from eighth place, a "no, I expected the
+ * thread about X" — each is a case for the evaluation, not a rule to add.
+ * `scripts/history-search-report.ts` reads it. It never leaves this Mac.
+ *
  * The tables are created here with IF NOT EXISTS rather than by a numbered
  * migration. Roost merges upstream often and upstream owns the migration
  * sequence; an index that can always be rebuilt from its sources has no
@@ -51,6 +59,7 @@
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -89,6 +98,8 @@ export interface HistorySearchInput {
   /** Left out of the results: the thread asking already knows itself. */
   readonly excludeThreadId?: string | undefined;
   readonly limit?: number | undefined;
+  /** Who is asking, for the usage record. Omitted: the search is not recorded. */
+  readonly caller?: { readonly threadId: string; readonly provider: string } | undefined;
 }
 
 export interface MeaningStatus {
@@ -129,7 +140,18 @@ export interface HistorySearchResult {
   readonly hits: ReadonlyArray<HistorySearchHit>;
 }
 
+export interface HistoryFeedbackInput {
+  readonly callerThreadId: string;
+  /** The search it is about; omitted means the caller's latest. */
+  readonly searchId?: number | undefined;
+  readonly found: boolean;
+  /** What was expected and missing, or what made the right result hard to spot. */
+  readonly note?: string | undefined;
+}
+
 export interface HistorySearchOutput {
+  /** Names this search in the usage record; pass it with feedback. */
+  readonly searchId: number | null;
   /** How the question was read; a widened word shows what it was widened to. */
   readonly terms: ReadonlyArray<string>;
   readonly meaning: MeaningStatus;
@@ -218,6 +240,14 @@ export interface HistorySearchShape {
   readonly readMeeting: (
     input: MeetingReadInput,
   ) => Effect.Effect<MeetingReadOutput | null, HistorySearchError>;
+  /** The caller read a thread or meeting: tied to the search that led there, if one did. */
+  readonly recordOpen: (input: {
+    readonly callerThreadId: string;
+    readonly kind: "thread" | "meeting";
+    readonly id: string;
+  }) => Effect.Effect<void>;
+  /** Returns the search the feedback was filed against, or null if there was none. */
+  readonly recordFeedback: (input: HistoryFeedbackInput) => Effect.Effect<number | null>;
   /** Fold in everything that changed since the last catch-up, now. */
   readonly refresh: Effect.Effect<HistoryIndexState, HistorySearchError>;
 }
@@ -434,6 +464,34 @@ const make = (options: HistorySearchOptions) =>
           model TEXT NOT NULL,
           vector BLOB NOT NULL
         )
+      `;
+      // One row per thing an agent did with search. `results` is one line per
+      // result, "rank kind id score matchedBy", tab-separated.
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS roost_history_usage (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          at TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          provider TEXT,
+          search_id INTEGER,
+          query TEXT,
+          filters TEXT,
+          terms TEXT,
+          meaning_active INTEGER,
+          result_count INTEGER,
+          results TEXT,
+          duration_ms INTEGER,
+          opened_kind TEXT,
+          opened_id TEXT,
+          opened_rank INTEGER,
+          found INTEGER,
+          note TEXT
+        )
+      `;
+      yield* sql`
+        CREATE INDEX IF NOT EXISTS idx_roost_history_usage_thread
+        ON roost_history_usage (thread_id, kind, id)
       `;
       // A different model measures a different space: start over in it.
       const model = vectorSpace((yield* embedder.status).model);
@@ -804,8 +862,8 @@ const make = (options: HistorySearchOptions) =>
           .map((candidate) => candidate.term);
       });
 
-    const search: HistorySearchShape["search"] = Effect.fn("HistorySearch.search")(
-      function* (input) {
+    const searchCore = Effect.fn("HistorySearch.search")(
+      function* (input: HistorySearchInput) {
         const asked = queryTerms(input.query);
         if (asked.length === 0) {
           return yield* new HistorySearchError({
@@ -1162,6 +1220,119 @@ const make = (options: HistorySearchOptions) =>
       Effect.mapError(failWith("history search failed")),
     );
 
+    const isoAt = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
+    const nowIso = Clock.currentTimeMillis.pipe(Effect.map(isoAt));
+    // The record is a courtesy to whoever improves search, never a reason for
+    // a search to fail or wait long: what cannot be written is logged and dropped.
+    const quietly = <A, E>(effect: Effect.Effect<A, E>, fallback: A) =>
+      catchUpLock
+        .withPermits(1)(effect)
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("history search: usage not recorded").pipe(
+              Effect.annotateLogs({ cause: String(cause) }),
+              Effect.as(fallback),
+            ),
+          ),
+        );
+
+    const search: HistorySearchShape["search"] = (input) =>
+      Effect.gen(function* () {
+        const startedAt = yield* Clock.currentTimeMillis;
+        const found = yield* searchCore(input);
+        if (input.caller === undefined) return { searchId: null, ...found };
+        const caller = input.caller;
+        const durationMs = (yield* Clock.currentTimeMillis) - startedAt;
+        const filters = [
+          input.sources === undefined ? null : `sources=${input.sources.join(",")}`,
+          input.projectId === undefined ? null : `project=${input.projectId}`,
+          input.role === undefined ? null : `role=${input.role}`,
+          input.since === undefined ? null : `since=${input.since}`,
+        ]
+          .filter((part) => part !== null)
+          .join(" ");
+        const at = yield* nowIso;
+        const searchId = yield* quietly(
+          sql<{ readonly id: number }>`
+            INSERT INTO roost_history_usage (
+              at, kind, thread_id, provider, query, filters, terms,
+              meaning_active, result_count, results, duration_ms
+            ) VALUES (
+              ${at}, 'search', ${caller.threadId}, ${caller.provider}, ${input.query},
+              ${filters}, ${found.terms.join(" | ")}, ${found.meaning.active ? 1 : 0},
+              ${found.results.length},
+              ${found.results
+                .map((result, index) =>
+                  [index + 1, result.kind, result.id, result.score, result.matchedBy].join("\t"),
+                )
+                .join("\n")},
+              ${durationMs}
+            )
+            RETURNING id AS "id"
+          `.pipe(Effect.map((rows) => rows[0]?.id ?? null)),
+          null,
+        );
+        return { searchId, ...found };
+      });
+
+    /** The caller's searches of the last half hour, newest first. */
+    const recentSearches = (threadId: string) =>
+      Effect.gen(function* () {
+        const since = isoAt((yield* Clock.currentTimeMillis) - 30 * 60_000);
+        return yield* sql<{ readonly id: number; readonly results: string | null }>`
+          SELECT id AS "id", results AS "results" FROM roost_history_usage
+          WHERE thread_id = ${threadId} AND kind = 'search' AND at >= ${since}
+          ORDER BY id DESC LIMIT 10
+        `;
+      });
+
+    const recordOpen: HistorySearchShape["recordOpen"] = (input) =>
+      quietly(
+        Effect.gen(function* () {
+          if ((yield* Ref.get(lastSync)) === null) return;
+          // Which search led here: the latest one that offered this result.
+          let searchId: number | null = null;
+          let rank: number | null = null;
+          for (const past of yield* recentSearches(input.callerThreadId)) {
+            const line = (past.results ?? "")
+              .split("\n")
+              .map((row) => row.split("\t"))
+              .find((cells) => cells[1] === input.kind && cells[2] === input.id);
+            if (line === undefined) continue;
+            searchId = past.id;
+            rank = Number(line[0]);
+            break;
+          }
+          yield* sql`
+            INSERT INTO roost_history_usage (
+              at, kind, thread_id, search_id, opened_kind, opened_id, opened_rank
+            ) VALUES (
+              ${yield* nowIso}, 'open', ${input.callerThreadId}, ${searchId},
+              ${input.kind}, ${input.id}, ${rank}
+            )
+          `;
+        }),
+        undefined,
+      );
+
+    const recordFeedback: HistorySearchShape["recordFeedback"] = (input) =>
+      quietly(
+        Effect.gen(function* () {
+          if ((yield* Ref.get(lastSync)) === null) return null;
+          const searchId =
+            input.searchId ?? (yield* recentSearches(input.callerThreadId))[0]?.id ?? null;
+          yield* sql`
+            INSERT INTO roost_history_usage (at, kind, thread_id, search_id, found, note)
+            VALUES (
+              ${yield* nowIso}, 'feedback', ${input.callerThreadId}, ${searchId},
+              ${input.found ? 1 : 0}, ${input.note?.trim() || null}
+            )
+          `;
+          return searchId;
+        }),
+        null,
+      );
+
     type MeetingRow = {
       readonly id: string;
       readonly title: string;
@@ -1362,7 +1533,15 @@ const make = (options: HistorySearchOptions) =>
       Effect.mapError(failWith("could not read the thread")),
     );
 
-    return HistorySearch.of({ search, readMessages, listMeetings, readMeeting, refresh });
+    return HistorySearch.of({
+      search,
+      readMessages,
+      listMeetings,
+      readMeeting,
+      recordOpen,
+      recordFeedback,
+      refresh,
+    });
   });
 
 export const layerWith = (options: HistorySearchOptions) =>
