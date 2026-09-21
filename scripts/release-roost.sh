@@ -61,7 +61,11 @@ case "$SPEC" in
   *) VERSION="$SPEC" ;;
 esac
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "version must be x.y.z (got $VERSION)"
-TAG="v$VERSION"
+# Roost's tags live in their own namespace: this checkout also carries
+# upstream's `v*` tags, and T3 has shipped the same numbers (v0.0.40 is
+# theirs, Sep 7 2026). Nothing reads the tag name — Tui's feed holds the
+# full download URL and Ruru's installer asks for releases/latest.
+TAG="roost-v$VERSION"
 if git ls-remote --tags "$REMOTE" "refs/tags/$TAG" | grep -q "$TAG"; then die "$TAG already exists on $REMOTE"; fi
 if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then die "release $TAG already exists on $REPO"; fi
 say "Roost $CURRENT → $VERSION ($TAG)$( [ $DRY = 1 ] && echo ', dry run')"
@@ -118,7 +122,7 @@ git push -q "$REMOTE" main "$TAG"
 say "pushed main and $TAG to $REMOTE"
 
 if [ -z "$NOTES" ]; then
-  LAST="$(git describe --tags --abbrev=0 --match 'v*' HEAD~1 2>/dev/null || true)"
+  LAST="$(git describe --tags --abbrev=0 --match 'roost-v*' HEAD~1 2>/dev/null || true)"
   NOTES="Roost $VERSION: our build of the T3 Code fork (\`main\` @ $(git rev-parse --short HEAD))."$'\n\n'
   if [ -n "$LAST" ]; then
     NOTES+="$(git log --no-merges --format='- %s' "$LAST..HEAD~1" | grep -v '^- release:' | head -30)"$'\n\n'

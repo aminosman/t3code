@@ -485,7 +485,9 @@ scripts/release-roost.sh 0.0.40 --dry-run # build and verify, publish nothing
 ```
 
 It bumps the desktop, server and web versions, builds with the Roost name
-and icon, verifies the zip and dmg, commits and tags `v<version>`, pushes
+and icon, verifies the zip and dmg, commits and tags `roost-v<version>` (its
+own namespace — upstream's `v*` tags are in this checkout too, and T3 has
+used the same numbers), pushes
 `main` and the tag to the `fork` remote, creates the GitHub release with
 those assets, and then signs the zip into Tui's update feed. Needs a clean
 tree on `main`, `gh` logged in, a Rust toolchain with the
