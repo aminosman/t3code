@@ -824,6 +824,63 @@ it.effect("lets one thread start a handful an hour, and a started thread start n
   }),
 );
 
+it.effect(
+  "sends a message to an idle thread on that thread's own model, and says who sent it",
+  () =>
+    Effect.gen(function* () {
+      const { dispatched, layer } = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const sent = yield* call("t3_thread_send", {
+          threadId: doneThreadId,
+          message: "  Which of the two bugs is worse?  ",
+        });
+        expect(sent.isError).toBe(false);
+        expect(sent.structuredContent).toMatchObject({
+          threadId: doneThreadId,
+          title: "review",
+          sent: true,
+          model: { instanceId: modelSelection.instanceId, model: modelSelection.model },
+        });
+
+        // Busy: said so, nothing dispatched.
+        const busy = yield* call("t3_thread_send", { threadId: siblingThreadId, message: "hi" });
+        expect(busy.isError).toBe(true);
+        expect(text(busy)).toContain("t3_thread_wait");
+        const self = yield* call("t3_thread_send", { threadId: callerThreadId, message: "hi" });
+        expect(self.isError).toBe(true);
+        const gone = yield* call("t3_thread_send", { threadId: archivedThreadId, message: "hi" });
+        expect(gone.isError).toBe(true);
+        expect(text(gone)).toContain("no active thread");
+
+        for (let index = 1; index < 30; index++) {
+          expect(
+            (yield* call("t3_thread_send", { threadId: workThreadId, message: "go" })).isError,
+          ).toBe(false);
+        }
+        const capped = yield* call("t3_thread_send", { threadId: workThreadId, message: "go" });
+        expect(capped.isError).toBe(true);
+        expect(text(capped)).toContain("ask the user");
+        yield* TestClock.adjust("61 minutes");
+        expect(
+          (yield* call("t3_thread_send", { threadId: workThreadId, message: "go" })).isError,
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+
+      const commands = yield* Ref.get(dispatched);
+      expect(commands.map((command) => command.type)).toEqual(Array(31).fill("thread.turn.start"));
+      const first = commands[0] as Extract<OrchestrationCommand, { type: "thread.turn.start" }>;
+      expect(first).toMatchObject({
+        threadId: doneThreadId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        message: { role: "user", attachments: [] },
+      });
+      expect(first.message.text).toContain('Sent by the agent in thread "caller"');
+      expect(first.message.text).toContain("Which of the two bugs is worse?");
+    }),
+);
+
 it.effect("waits for a started thread and returns its answer", () =>
   Effect.gen(function* () {
     const { layer } = yield* makeHarness;

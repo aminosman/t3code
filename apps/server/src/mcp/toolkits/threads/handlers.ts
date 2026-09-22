@@ -55,6 +55,12 @@ const WAIT_POLL = "2 seconds";
  * so a review cannot ask for a review of itself without end.
  */
 const STARTS_PER_HOUR = 5;
+/**
+ * A message to an existing thread spends the same allowance but makes no new
+ * thread, so the cap is looser: enough for a conversation with a reviewer,
+ * not enough for a loop between two agents to run unattended for long.
+ */
+const SENDS_PER_HOUR = 30;
 const HOUR_MS = 3_600_000;
 
 /** Why a provider cannot be picked right now; null when it can. */
@@ -121,6 +127,7 @@ const makeHandlers = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const startedByAgents = yield* Ref.make<ReadonlySet<string>>(new Set());
   const startsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
+  const sendsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
   const crypto = yield* Crypto.Crypto;
 
   const requireScope = Effect.gen(function* () {
@@ -556,6 +563,70 @@ const makeHandlers = Effect.gen(function* () {
         title,
         started: prompt !== undefined,
         model: { instanceId: modelSelection.instanceId, model: modelSelection.model },
+      };
+    }),
+
+    t3_thread_send: Effect.fn("ThreadsToolkit.t3_thread_send")(function* (input: {
+      readonly threadId: ThreadId;
+      readonly message: string;
+    }) {
+      const caller = yield* requireCaller;
+      if (input.threadId === caller.id) {
+        return yield* new ThreadToolError({
+          reason: "a thread cannot send a message to itself; just carry on",
+        });
+      }
+      const shell = yield* query
+        .getThreadShellById(input.threadId)
+        .pipe(Effect.mapError(failWith("could not read the thread")));
+      if (Option.isNone(shell)) {
+        return yield* new ThreadToolError({
+          reason: `no active thread with id ${input.threadId} (archived, or never existed); t3_thread_list shows the active ones`,
+        });
+      }
+      const target = shell.value;
+      if (target.latestTurn?.state === "running") {
+        return yield* new ThreadToolError({
+          reason: `thread "${target.title}" is working; t3_thread_wait for its turn to end, then send`,
+        });
+      }
+      const now = yield* Clock.currentTimeMillis;
+      const recent = ((yield* Ref.get(sendsByCaller)).get(caller.id) ?? []).filter(
+        (at) => now - at < HOUR_MS,
+      );
+      if (recent.length >= SENDS_PER_HOUR) {
+        return yield* new ThreadToolError({
+          reason: `this thread has already sent ${SENDS_PER_HOUR} messages to other threads in the last hour; ask the user before sending more`,
+        });
+      }
+      // Said in the message itself, so the user reading that thread and the
+      // agent answering it both know nobody typed this.
+      const text =
+        `[Sent by the agent in thread "${caller.title}" (${caller.id}), not typed by the user. ` +
+        `Answer in your reply — that thread will read it.]\n\n${input.message.trim()}`;
+      yield* engine
+        .dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+          threadId: target.id,
+          message: {
+            messageId: MessageId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+            role: "user",
+            text,
+            attachments: [],
+          },
+          modelSelection: target.modelSelection,
+          runtimeMode: target.runtimeMode,
+          interactionMode: target.interactionMode,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        })
+        .pipe(Effect.mapError(failWith("could not send the message")));
+      yield* Ref.update(sendsByCaller, (map) => new Map([...map, [caller.id, [...recent, now]]]));
+      return {
+        threadId: target.id,
+        title: target.title,
+        sent: true as const,
+        model: { instanceId: target.modelSelection.instanceId, model: target.modelSelection.model },
       };
     }),
 

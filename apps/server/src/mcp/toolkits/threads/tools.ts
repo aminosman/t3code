@@ -426,6 +426,23 @@ export const ThreadCreateOutput = Schema.Struct({
   model: Schema.Struct({ instanceId: Schema.String, model: Schema.String }),
 });
 
+export const ThreadSendInput = Schema.Struct({
+  threadId: ThreadId,
+  message: Schema.String.check(Schema.isMinLength(1)).annotate({
+    description:
+      "The message, as the user would type it there. The agent in that thread has none of " +
+      "this thread's context, so say what you need in full: what to look at, what you want " +
+      "back, and what not to touch.",
+  }),
+});
+
+export const ThreadSendOutput = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  sent: Schema.Literal(true),
+  model: Schema.Struct({ instanceId: Schema.String, model: Schema.String }),
+});
+
 export const ThreadWaitInput = Schema.Struct({
   threadId: ThreadId,
   timeoutSeconds: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))).annotate({
@@ -629,6 +646,26 @@ export const ThreadCreateTool = Tool.make("t3_thread_create", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
+export const ThreadSendTool = Tool.make("t3_thread_send", {
+  description:
+    "Send a message to an existing thread, in any project, and start it working on it — the " +
+    "same as the user typing there. The thread answers on its own model, in its own runtime " +
+    "mode, and its agent sees only its own history plus this message, so write it in full. " +
+    "Use it to follow up with a thread you started (a question about its review, a second " +
+    "task), to hand a thread the user named something to do, or to answer a thread that " +
+    "asked you something. A thread that is working cannot take a message until its turn " +
+    "ends: t3_thread_wait for it first. It spends the user's allowance and shows up in " +
+    "their sidebar, so tell the user when you do it. Then t3_thread_wait for the answer.",
+  parameters: ThreadSendInput,
+  success: ThreadSendOutput,
+  failure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Send a message to a thread")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false);
+
 export const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
     "Wait for another thread's current turn to end and return its answer: the way to collect " +
@@ -669,6 +706,7 @@ export const ThreadsToolkit = Toolkit.make(
   ThreadReadTool,
   ModelListTool,
   ThreadCreateTool,
+  ThreadSendTool,
   ThreadWaitTool,
   ThreadArchiveTool,
 );
