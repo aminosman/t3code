@@ -88,6 +88,7 @@ const T3_MCP_TOOL_LABELS: Record<
   delete_scheduled_task: ["Delete", "Deleting", "Deleted", "a scheduled task"],
   create_threads: ["Create", "Creating", "Created", "T3 threads"],
   t3_project_list: ["List", "Listing", "Listed", "T3 projects"],
+  t3_project_create: ["Add", "Adding", "Added", "a T3 project"],
   t3_thread_start: ["Start", "Starting", "Started", "a T3 thread"],
   t3_thread_create: ["Create", "Creating", "Created", "a T3 thread"],
   t3_thread_list: ["List", "Listing", "Listed", "T3 threads"],

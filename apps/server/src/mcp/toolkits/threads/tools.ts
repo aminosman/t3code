@@ -6,14 +6,11 @@
  * boundary — search everything that was ever said, in threads and in recorded
  * meetings, list the projects, list a project's threads, read a thread's
  * messages, read a meeting, see which models the user has set up — and take
- * two writes: create a
- * thread and archive one. Search comes first on purpose: an agent that wants
- * to know how something was done before should ask for it by what it is, get
- * back the handful of threads that hold it, and read only those. There is
- * deliberately no delete, no interrupt, and no sending into a thread that already
- * exists: the one message an agent may send is the first one of a thread it
- * creates, which is how it asks for a fresh pair of eyes (a review by another
- * model, from another provider, with none of this thread's context). Archiving is reversible from
+ * a few writes: add a project, create a thread, send to one, archive one.
+ * Search comes first on purpose: an agent that wants to know how something
+ * was done before should ask for it by what it is, get back the handful of
+ * threads that hold it, and read only those. There is deliberately no delete
+ * and no interrupt. Archiving is reversible from
  * the archive page; deletion is not, so an agent never holds it.
  *
  * The calling thread is never a parameter. It comes off the invocation scope,
@@ -392,6 +389,26 @@ export const ModelListOutput = Schema.Struct({
   providers: Schema.Array(ProviderSummary),
 });
 
+export const ProjectCreateInput = Schema.Struct({
+  path: Schema.String.check(Schema.isMinLength(1)).annotate({
+    description:
+      "The project's folder, absolute or starting with ~ (e.g. ~/Projects/support-app). " +
+      "Created if it does not exist.",
+  }),
+  title: Schema.optional(Schema.String.check(Schema.isMinLength(1))).annotate({
+    description: "Name shown in the sidebar. Omit for the folder's name.",
+  }),
+});
+
+export const ProjectCreateOutput = Schema.Struct({
+  projectId: ProjectId,
+  title: Schema.String,
+  workspaceRoot: Schema.String,
+  created: Schema.Boolean.annotate({
+    description: "False when a project already had this folder; its id is returned instead.",
+  }),
+});
+
 export const ThreadCreateInput = Schema.Struct({
   title: Schema.String.check(Schema.isMinLength(1)).annotate({
     description: "Title of the new thread. Say what it is for: 'Review: history search index'.",
@@ -618,6 +635,21 @@ export const ModelListTool = Tool.make("t3_model_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+export const ProjectCreateTool = Tool.make("t3_project_create", {
+  description:
+    "Add a project to Roost for a folder on this Mac, creating the folder if it is missing. " +
+    "If a project already has that folder, returns it. Then t3_thread_create with its " +
+    "projectId to start threads there.",
+  parameters: ProjectCreateInput,
+  success: ProjectCreateOutput,
+  failure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Add a project")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 export const ThreadCreateTool = Tool.make("t3_thread_create", {
   description:
     "Create a new thread in a project — by default the project this thread belongs to — and, " +
@@ -702,6 +734,7 @@ export const ThreadsToolkit = Toolkit.make(
   MeetingListTool,
   MeetingReadTool,
   ProjectListTool,
+  ProjectCreateTool,
   ThreadListTool,
   ThreadReadTool,
   ModelListTool,

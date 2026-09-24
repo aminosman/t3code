@@ -3,7 +3,7 @@
  *
  * Reads go through `ProjectionSnapshotQuery`, the same service the HTTP
  * snapshot routes use; writes go through `OrchestrationEngineService.dispatch`
- * as `thread.create` and `thread.archive` commands, so every invariant the UI
+ * as `project.create`, `thread.create` and `thread.archive` commands, so every invariant the UI
  * is held to (no archiving twice, no creating in a deleted project) holds for
  * an agent too. `thread.delete` is never dispatched from here.
  *
@@ -23,7 +23,7 @@ import {
   type ModelSelection,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
-  type ProjectId,
+  ProjectId,
   ProviderInstanceId,
   type ServerProvider,
   ThreadId,
@@ -33,12 +33,14 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { HistorySearch, type ThreadMessagesOutput } from "../../../historySearch/HistorySearch.ts";
+import { WorkspacePaths } from "../../../workspace/WorkspacePaths.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { type ThreadSummary, ThreadsToolkit, ThreadToolError } from "./tools.ts";
 
@@ -125,6 +127,8 @@ const makeHandlers = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const history = yield* HistorySearch;
   const providerRegistry = yield* ProviderRegistry;
+  const workspacePaths = yield* WorkspacePaths;
+  const path = yield* Path.Path;
   const startedByAgents = yield* Ref.make<ReadonlySet<string>>(new Set());
   const startsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
   const sendsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
@@ -281,6 +285,42 @@ const makeHandlers = Effect.gen(function* () {
           current: project.id === caller.projectId,
         })),
       };
+    }),
+
+    t3_project_create: Effect.fn("ThreadsToolkit.t3_project_create")(function* (input: {
+      readonly path: string;
+      readonly title?: string | undefined;
+    }) {
+      yield* requireScope;
+      const workspaceRoot = yield* workspacePaths
+        .normalizeWorkspaceRoot(input.path, { createIfMissing: true })
+        .pipe(Effect.mapError(failWith(`could not use ${input.path}`)));
+      const shell = yield* query
+        .getShellSnapshot()
+        .pipe(Effect.mapError(failWith("could not list projects")));
+      const existing = shell.projects.find((project) => project.workspaceRoot === workspaceRoot);
+      if (existing !== undefined) {
+        return {
+          projectId: existing.id,
+          title: existing.title,
+          workspaceRoot,
+          created: false,
+        };
+      }
+      const title = input.title?.trim() || path.basename(workspaceRoot) || "project";
+      const projectId = ProjectId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
+      yield* engine
+        .dispatch({
+          type: "project.create",
+          commandId: CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+          projectId,
+          title,
+          workspaceRoot,
+          createWorkspaceRootIfMissing: true,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        })
+        .pipe(Effect.mapError(failWith("could not add the project")));
+      return { projectId, title, workspaceRoot, created: true };
     }),
 
     t3_thread_list: Effect.fn("ThreadsToolkit.t3_thread_list")(function* (input: {

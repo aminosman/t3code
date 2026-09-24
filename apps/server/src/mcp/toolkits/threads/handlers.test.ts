@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -28,6 +29,7 @@ import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts
 import { HistorySearch, type HistorySearchInput } from "../../../historySearch/HistorySearch.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 
 const homeProjectId = ProjectId.make("project-home");
 const workProjectId = ProjectId.make("project-work");
@@ -445,6 +447,7 @@ const makeHarness = Effect.gen(function* () {
           ),
       }),
     ),
+    Layer.provide(WorkspacePaths.layer),
     Layer.provide(NodeServices.layer),
   );
   return { dispatched, searched, usage, layer };
@@ -701,6 +704,49 @@ it.effect("creates a thread in the caller's project with the caller's modes", ()
       model: { instanceId: "codex", model: "gpt-5-codex" },
     });
   }),
+);
+
+it.effect("adds a project for a folder, creating the folder, and names it after it", () =>
+  Effect.gen(function* () {
+    const { dispatched, layer } = yield* makeHarness;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = yield* fileSystem.makeTempDirectoryScoped();
+    const folder = `${root}/support-app`;
+    const result = yield* call("t3_project_create", { path: folder }).pipe(Effect.provide(layer));
+    expect(result.isError).toBe(false);
+    expect((yield* fileSystem.stat(folder)).type).toBe("Directory");
+    const commands = yield* Ref.get(dispatched);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({
+      type: "project.create",
+      title: "support-app",
+      workspaceRoot: folder,
+      createWorkspaceRootIfMissing: true,
+    });
+    expect(result.structuredContent).toMatchObject({ title: "support-app", created: true });
+
+    const titled = yield* call("t3_project_create", { path: folder, title: "Support" }).pipe(
+      Effect.provide(layer),
+    );
+    expect(titled.structuredContent).toMatchObject({ title: "Support", created: true });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("returns the project that already has the folder instead of adding another", () =>
+  Effect.gen(function* () {
+    const { dispatched, layer } = yield* makeHarness;
+    yield* (yield* FileSystem.FileSystem).makeDirectory("/tmp/work", { recursive: true });
+    const result = yield* call("t3_project_create", { path: "/tmp/work" }).pipe(
+      Effect.provide(layer),
+    );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      projectId: workProjectId,
+      title: "work",
+      created: false,
+    });
+    expect(yield* Ref.get(dispatched)).toHaveLength(0);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("lists the models that can be used now, marking the caller's provider", () =>
