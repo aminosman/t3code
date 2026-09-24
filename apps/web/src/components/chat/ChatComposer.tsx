@@ -946,8 +946,8 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
+  collapseAccountGroups,
   sortProviderInstanceEntries,
-  type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
@@ -1827,14 +1827,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Instance-aware projection of the wire provider list. One entry per
   // configured instance (default built-in + any custom `providerInstances.*`),
   // sorted default-first per driver kind for a stable picker order.
-  const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
+  // Accounts in one `accountGroup` show as one entry; the server picks the
+  // account per turn, so a thread bound to any member reads as the group.
+  const { entries: providerInstanceEntries, leadByInstanceId: accountGroupLeads } = useMemo(
     () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+      collapseAccountGroups(
+        sortProviderInstanceEntries(
+          applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+        ),
+        settings,
       ),
     [providerStatuses, settings],
   );
-  const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
+  const asGroupLead = (instanceId: ProviderInstanceId | null | undefined) =>
+    instanceId ? (accountGroupLeads.get(instanceId) ?? instanceId) : instanceId;
+  const selectedProviderByThreadId = asGroupLead(composerDraft.activeProvider) ?? null;
+  const sessionInstanceIdForPicker = asGroupLead(activeThread?.session?.providerInstanceId);
+  const threadInstanceIdForPicker = asGroupLead(activeThreadModelSelection?.instanceId);
+  const projectInstanceIdForPicker = asGroupLead(activeProjectDefaultModelSelection?.instanceId);
   const {
     selectedProviderEntry,
     requestedDriverKind,
@@ -1846,18 +1856,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         entries: providerInstanceEntries,
         candidateInstanceIds: [
           selectedProviderByThreadId,
-          activeThread?.session?.providerInstanceId,
-          activeThreadModelSelection?.instanceId,
-          activeProjectDefaultModelSelection?.instanceId,
+          sessionInstanceIdForPicker,
+          threadInstanceIdForPicker,
+          projectInstanceIdForPicker,
         ],
         lockedProvider,
-        lockedInstanceId:
-          activeThread?.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
+        lockedInstanceId: sessionInstanceIdForPicker ?? threadInstanceIdForPicker,
       }),
     [
-      activeProjectDefaultModelSelection?.instanceId,
-      activeThread?.session?.providerInstanceId,
-      activeThreadModelSelection?.instanceId,
+      projectInstanceIdForPicker,
+      sessionInstanceIdForPicker,
+      threadInstanceIdForPicker,
       selectedProviderByThreadId,
       lockedProvider,
       providerInstanceEntries,

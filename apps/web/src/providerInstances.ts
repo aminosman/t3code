@@ -298,3 +298,80 @@ export function resolveDefaultProviderModelSelection(
   const model = getDefaultProviderInstanceModel(providers, instanceId);
   return model ? { instanceId, model } : null;
 }
+
+/**
+ * The `accountGroup` an instance opts into in settings, or `""`. Claude
+ * instances that share one are accounts of the same subscription; the server
+ * already picks which of them serves each turn (`ClaudeAccountRouter`).
+ */
+export function readProviderInstanceAccountGroup(
+  settings: Pick<ServerSettings, "providerInstances">,
+  instanceId: ProviderInstanceId,
+): string {
+  const instance = Object.hasOwn(settings.providerInstances, instanceId)
+    ? settings.providerInstances[instanceId]
+    : undefined;
+  const config = instance?.config;
+  if (typeof config !== "object" || config === null) return "";
+  const group = (config as { readonly accountGroup?: unknown }).accountGroup;
+  return typeof group === "string" ? group.trim() : "";
+}
+
+export interface AccountGroupedEntries {
+  /** One entry per account group, named after its driver; others unchanged. */
+  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
+  /** A hidden group member → the entry that stands for its group. */
+  readonly leadByInstanceId: ReadonlyMap<ProviderInstanceId, ProviderInstanceId>;
+}
+
+/**
+ * Fold enabled instances that share an `accountGroup` into one picker entry,
+ * so choosing "Claude Opus 5.5" never means choosing between two Max
+ * accounts: the server routes the turn to whichever account should be drained
+ * (Amin, Sep 24 2026: "it's silly for me to pick between the Thursday and the
+ * Sundays one"). The first member in `entries` order stands for the group,
+ * shown under the driver's own name. A group of one is left as it is.
+ */
+export function collapseAccountGroups(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  settings: Pick<ServerSettings, "providerInstances">,
+): AccountGroupedEntries {
+  const membersByGroup = new Map<string, ProviderInstanceEntry[]>();
+  for (const entry of entries) {
+    if (!entry.enabled) continue;
+    const group = readProviderInstanceAccountGroup(settings, entry.instanceId);
+    if (group.length === 0) continue;
+    const key = `${entry.driverKind}\u0000${group}`;
+    const members = membersByGroup.get(key);
+    if (members) members.push(entry);
+    else membersByGroup.set(key, [entry]);
+  }
+  const leadByInstanceId = new Map<ProviderInstanceId, ProviderInstanceId>();
+  const leads = new Set<ProviderInstanceId>();
+  for (const members of membersByGroup.values()) {
+    if (members.length < 2) continue;
+    const lead = members.find(isProviderInstancePickerReady) ?? members[0]!;
+    leads.add(lead.instanceId);
+    for (const member of members) {
+      if (member !== lead) leadByInstanceId.set(member.instanceId, lead.instanceId);
+    }
+  }
+  if (leadByInstanceId.size === 0) return { entries, leadByInstanceId };
+  return {
+    entries: entries.flatMap((entry) => {
+      if (leadByInstanceId.has(entry.instanceId)) return [];
+      if (!leads.has(entry.instanceId)) return [entry];
+      return [
+        {
+          ...entry,
+          displayName: resolveProviderInstanceDisplayName({
+            instanceId: defaultInstanceIdForDriver(entry.driverKind),
+            driver: entry.driverKind,
+          }),
+          accentColor: undefined,
+        },
+      ];
+    }),
+    leadByInstanceId,
+  };
+}

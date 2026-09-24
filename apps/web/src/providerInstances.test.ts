@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
+  collapseAccountGroups,
   deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
@@ -539,5 +540,47 @@ describe("resolveDefaultProviderModelSelection", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("collapseAccountGroups", () => {
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const entries = deriveProviderInstanceEntries([
+    provider({
+      provider: claude,
+      instanceId: "claudeAgent",
+      displayName: "Sunday",
+      accentColor: "#2535eb",
+    }),
+    provider({ provider: claude, instanceId: "claudeAgent_claude_2", displayName: "Thursday" }),
+    provider({ provider: claude, instanceId: "claudeAgent_work", displayName: "Work" }),
+  ]);
+  const settings = {
+    providerInstances: {
+      claudeAgent: { driver: claude, config: { accountGroup: "max" } },
+      claudeAgent_claude_2: { driver: claude, config: { accountGroup: " max " } },
+      claudeAgent_work: { driver: claude },
+    },
+  } as never;
+
+  it("shows one entry for the accounts in a group, named after the agent", () => {
+    const { entries: collapsed, leadByInstanceId } = collapseAccountGroups(entries, settings);
+    expect(collapsed.map((entry) => [entry.instanceId, entry.displayName])).toEqual([
+      ["claudeAgent", "Claude"],
+      ["claudeAgent_work", "Work"],
+    ]);
+    expect(collapsed[0]?.accentColor).toBeUndefined();
+    expect(leadByInstanceId.get(ProviderInstanceId.make("claudeAgent_claude_2"))).toBe(
+      "claudeAgent",
+    );
+  });
+
+  it("leaves a group of one alone", () => {
+    const one = {
+      providerInstances: { claudeAgent: { driver: claude, config: { accountGroup: "max" } } },
+    } as never;
+    const result = collapseAccountGroups(entries, one);
+    expect(result.entries).toBe(entries);
+    expect(result.leadByInstanceId.size).toBe(0);
   });
 });

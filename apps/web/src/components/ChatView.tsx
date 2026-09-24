@@ -258,6 +258,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
+  collapseAccountGroups,
   sortProviderInstanceEntries,
 } from "../providerInstances";
 import {
@@ -2859,34 +2860,44 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchThreadContinuation,
     versionMismatchServerLabel,
   ]);
-  const providerInstanceEntries = useMemo(
+  // Must fold account groups exactly as ChatComposer does, so the instance
+  // the picker shows is the one a send resolves.
+  const { entries: providerInstanceEntries, leadByInstanceId: accountGroupLeads } = useMemo(
     () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+      collapseAccountGroups(
+        sortProviderInstanceEntries(
+          applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+        ),
+        settings,
       ),
     [providerStatuses, settings],
   );
+  const asGroupLead = (instanceId: ProviderInstanceId | null | undefined) =>
+    instanceId ? (accountGroupLeads.get(instanceId) ?? instanceId) : instanceId;
+  const selectedInstanceIdForSend = asGroupLead(selectedProviderByThreadId) ?? null;
+  const sessionInstanceIdForSend = asGroupLead(activeThread?.session?.providerInstanceId);
+  const threadInstanceIdForSend = asGroupLead(activeThread?.modelSelection.instanceId);
+  const projectInstanceIdForSend = asGroupLead(activeProjectDefaultModelSelection?.instanceId);
   const { selectedProviderEntry, requestedDriverKind } = useMemo(
     () =>
       resolveComposerProviderSelection({
         entries: providerInstanceEntries,
         candidateInstanceIds: [
-          selectedProviderByThreadId,
-          activeThread?.session?.providerInstanceId,
-          activeThread?.modelSelection.instanceId,
-          activeProjectDefaultModelSelection?.instanceId,
+          selectedInstanceIdForSend,
+          sessionInstanceIdForSend,
+          threadInstanceIdForSend,
+          projectInstanceIdForSend,
         ],
         lockedProvider,
-        lockedInstanceId:
-          activeThread?.session?.providerInstanceId ?? activeThread?.modelSelection.instanceId,
+        lockedInstanceId: sessionInstanceIdForSend ?? threadInstanceIdForSend,
       }),
     [
-      activeProjectDefaultModelSelection?.instanceId,
-      activeThread?.modelSelection.instanceId,
-      activeThread?.session?.providerInstanceId,
       lockedProvider,
+      projectInstanceIdForSend,
       providerInstanceEntries,
-      selectedProviderByThreadId,
+      selectedInstanceIdForSend,
+      sessionInstanceIdForSend,
+      threadInstanceIdForSend,
     ],
   );
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
