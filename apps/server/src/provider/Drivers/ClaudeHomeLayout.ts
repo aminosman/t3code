@@ -74,6 +74,13 @@ const SHADOW_LOCAL_ENTRY_NAMES = new Set([
 const REPLACEABLE_SHARED_RUNTIME_DIRECTORIES = new Set(["cache"]);
 
 /**
+ * Where a shadow's own copy of a shared file goes when the shared home already
+ * has one of that name. Under `backups`, which is shadow-local, so nothing a
+ * Claude Code run wrote is ever discarded — only set aside where it can be read.
+ */
+const SHADOW_MERGE_BACKUP_DIRECTORY = ["backups", "shadow-merge"] as const;
+
+/**
  * The config dir itself, unlike `resolveClaudeHomePath`, which answers `$HOME`
  * for a default install because `CLAUDE_CONFIG_DIR` is then left unset.
  */
@@ -118,7 +125,15 @@ export class ClaudeShadowHomeFileSystemError extends Schema.TaggedError<ClaudeSh
   "ClaudeShadowHomeFileSystemError",
   {
     ...ClaudeShadowHomeContext,
-    operation: Schema.Literals(["readLink", "makeDirectory", "readDirectory", "remove", "symlink"]),
+    operation: Schema.Literals([
+      "readLink",
+      "makeDirectory",
+      "readDirectory",
+      "remove",
+      "symlink",
+      "stat",
+      "rename",
+    ]),
     path: Schema.String,
     targetPath: Schema.optional(Schema.String),
     entryName: Schema.optional(Schema.String),
@@ -246,6 +261,92 @@ const removePrivateSymlink = Effect.fn("ClaudeHomeLayout.removePrivateSymlink")(
   );
 });
 
+/**
+ * Fold a real directory squatting a shared link into the shared home. Returns
+ * false when the squatter is not a directory, or the shared entry exists and is
+ * not one, so the caller can surface the conflict instead.
+ */
+const mergeShadowDirectoryIntoShared = Effect.fn("ClaudeHomeLayout.mergeShadowDirectoryIntoShared")(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly sharedHomePath: string;
+    readonly effectiveHomePath: string;
+    readonly entryName: string;
+    readonly link: string;
+    readonly target: string;
+  }): Effect.fn.Return<boolean, ClaudeShadowHomeError, Path.Path> {
+    const path = yield* Path.Path;
+    const fail =
+      (
+        operation: "stat" | "rename" | "readDirectory" | "makeDirectory" | "remove",
+        at: string,
+        to?: string,
+      ) =>
+      (cause: PlatformError.PlatformError) =>
+        new ClaudeShadowHomeFileSystemError({
+          sharedHomePath: input.sharedHomePath,
+          effectiveHomePath: input.effectiveHomePath,
+          operation,
+          path: at,
+          ...(to === undefined ? {} : { targetPath: to }),
+          entryName: input.entryName,
+          cause,
+        });
+    const statType = (at: string) =>
+      input.fileSystem.stat(at).pipe(
+        Effect.map((info) => info.type),
+        Effect.catchIf(
+          (cause) => cause.reason._tag === "NotFound",
+          () => Effect.succeed<"Missing">("Missing"),
+        ),
+        Effect.mapError(fail("stat", at)),
+      );
+    const rename = (from: string, to: string) =>
+      input.fileSystem.rename(from, to).pipe(Effect.mapError(fail("rename", from, to)));
+
+    if ((yield* statType(input.link)) !== "Directory") return false;
+    const targetType = yield* statType(input.target);
+    if (targetType === "Missing") {
+      // Nothing shared yet: the shadow's copy becomes the shared one.
+      yield* rename(input.link, input.target);
+      return true;
+    }
+    if (targetType !== "Directory") return false;
+
+    const names = yield* input.fileSystem
+      .readDirectory(input.link)
+      .pipe(Effect.mapError(fail("readDirectory", input.link)));
+    const backupDirectory = path.join(
+      input.effectiveHomePath,
+      ...SHADOW_MERGE_BACKUP_DIRECTORY,
+      input.entryName,
+    );
+    for (const name of names) {
+      const from = path.join(input.link, name);
+      const to = path.join(input.target, name);
+      if ((yield* statType(to)) === "Missing") {
+        yield* rename(from, to);
+        continue;
+      }
+      yield* input.fileSystem
+        .makeDirectory(backupDirectory, { recursive: true })
+        .pipe(Effect.mapError(fail("makeDirectory", backupDirectory)));
+      const setAside = path.join(backupDirectory, name);
+      yield* rename(from, setAside);
+      yield* Effect.logWarning("claude shadow home kept the shared copy of an entry", {
+        entryName: input.entryName,
+        name,
+        sharedPath: to,
+        setAside,
+      });
+    }
+    yield* input.fileSystem
+      .remove(input.link, { recursive: true })
+      .pipe(Effect.mapError(fail("remove", input.link)));
+    return true;
+  },
+);
+
 const ensureSymlink = Effect.fn("ClaudeHomeLayout.ensureSymlink")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
@@ -289,9 +390,18 @@ const ensureSymlink = Effect.fn("ClaudeHomeLayout.ensureSymlink")(function* (inp
 
   if (state._tag === "NotSymlink") {
     // Claude Code rewrites some entries by atomic rename, which replaces the
-    // link with a real path. Only known-disposable runtime dirs are recreated;
-    // anything else is surfaced so a real file is never silently discarded.
-    if (!REPLACEABLE_SHARED_RUNTIME_DIRECTORIES.has(input.entryName)) {
+    // link with a real path. Known-disposable runtime dirs are recreated.
+    if (REPLACEABLE_SHARED_RUNTIME_DIRECTORIES.has(input.entryName)) {
+      yield* removeAt(link, { recursive: true });
+      return yield* createLink;
+    }
+    // A directory a newer Claude Code created inside the shadow before the
+    // shared home had one of that name (`state`, Sep 2026) is folded into the
+    // shared one — its files move over, and any name the shared home already
+    // holds is set aside under the shadow's backups — then linked like the
+    // rest. A real file is still surfaced, never silently discarded.
+    const merged = yield* mergeShadowDirectoryIntoShared({ ...input, link, target });
+    if (!merged) {
       return yield* new ClaudeShadowHomeEntryConflictError({
         sharedHomePath: input.sharedHomePath,
         effectiveHomePath: input.effectiveHomePath,
@@ -300,7 +410,6 @@ const ensureSymlink = Effect.fn("ClaudeHomeLayout.ensureSymlink")(function* (inp
         targetPath: target,
       });
     }
-    yield* removeAt(link, { recursive: true });
     return yield* createLink;
   }
 

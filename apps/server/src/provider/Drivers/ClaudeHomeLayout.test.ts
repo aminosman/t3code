@@ -248,6 +248,71 @@ it.layer(NodeServices.layer)("ClaudeHomeLayout", (it) => {
       }),
     );
 
+    // A newer Claude Code creates a directory (`state`, Sep 2026) inside the
+    // shadow before the shared home has one; the shadow's copy becomes shared.
+    it.effect.skipIf(!symlinksSupported)(
+      "promotes a directory the shadow made before the shared home had it",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome } = yield* makeHomes();
+
+          yield* writeTextFile(path.join(shadowHome, "state", "verdicts.json"), '{"a":1}\n');
+          // the shared home learns of `state` only from its own listing, so give it none
+          const layout = yield* resolveClaudeHomeLayout(
+            decodeClaudeSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+          yield* materializeClaudeShadowHome(layout);
+          // second shadow of the same shared home sees it as a shared entry now
+          yield* writeTextFile(path.join(sharedHome, "state", "later.json"), "{}\n");
+          yield* materializeClaudeShadowHome(layout);
+
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "state"))).toBe(
+            path.join(sharedHome, "state"),
+          );
+          expect(
+            yield* fileSystem.readFileString(path.join(sharedHome, "state/verdicts.json")),
+          ).toBe('{"a":1}\n');
+        }),
+    );
+
+    // Both homes hold the directory: the shadow's files move over, and a name
+    // the shared home already has is set aside under the shadow's backups.
+    it.effect.skipIf(!symlinksSupported)(
+      "merges a squatting directory into the shared one and sets clashes aside",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome } = yield* makeHomes();
+
+          yield* writeTextFile(path.join(sharedHome, "state", "verdicts.json"), "shared\n");
+          yield* writeTextFile(path.join(shadowHome, "state", "verdicts.json"), "local\n");
+          yield* writeTextFile(path.join(shadowHome, "state", "only-here.json"), "mine\n");
+
+          const layout = yield* resolveClaudeHomeLayout(
+            decodeClaudeSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+          yield* materializeClaudeShadowHome(layout);
+
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "state"))).toBe(
+            path.join(sharedHome, "state"),
+          );
+          expect(
+            yield* fileSystem.readFileString(path.join(sharedHome, "state/verdicts.json")),
+          ).toBe("shared\n");
+          expect(
+            yield* fileSystem.readFileString(path.join(sharedHome, "state/only-here.json")),
+          ).toBe("mine\n");
+          expect(
+            yield* fileSystem.readFileString(
+              path.join(shadowHome, "backups/shadow-merge/state/verdicts.json"),
+            ),
+          ).toBe("local\n");
+        }),
+    );
+
     it.effect("fails when the shadow home is the shared home", () =>
       Effect.gen(function* () {
         const sharedHome = yield* makeTempDir("t3code-claude-shared-");
