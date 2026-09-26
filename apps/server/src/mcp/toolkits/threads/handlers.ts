@@ -53,10 +53,13 @@ const WAIT_POLL = "2 seconds";
 /**
  * A thread an agent starts spends the user's allowance and lands in their
  * sidebar. One thread may start a handful an hour — a review, a second
- * opinion — and a thread that was itself started by an agent may start none,
- * so a review cannot ask for a review of itself without end.
+ * opinion — and a thread started by an agent may itself start others, down to
+ * MAX_DEPTH layers below a thread the user opened, so a review can ask for a
+ * review of its own work but not without end (Amin, Sep 26 2026: "we should be
+ * able to go … four layers deep, not just one").
  */
 const STARTS_PER_HOUR = 5;
+const MAX_DEPTH = 4;
 /**
  * A message to an existing thread spends the same allowance but makes no new
  * thread, so the cap is looser: enough for a conversation with a reviewer,
@@ -129,7 +132,8 @@ const makeHandlers = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const workspacePaths = yield* WorkspacePaths;
   const path = yield* Path.Path;
-  const startedByAgents = yield* Ref.make<ReadonlySet<string>>(new Set());
+  /** How many agent-started threads sit between a thread and the user; absent means 0. */
+  const depthByThread = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const startsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
   const sendsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
   const crypto = yield* Crypto.Crypto;
@@ -480,11 +484,12 @@ const makeHandlers = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
 
       if (prompt !== undefined) {
-        if ((yield* Ref.get(startedByAgents)).has(caller.id)) {
+        const depth = (yield* Ref.get(depthByThread)).get(caller.id) ?? 0;
+        if (depth >= MAX_DEPTH) {
           return yield* new ThreadToolError({
             reason:
-              "this thread was itself started by an agent, and such a thread cannot start " +
-              "others; report back in your reply and let the thread that asked decide",
+              `this thread is ${MAX_DEPTH} layers of agent-started threads below the user, the most ` +
+              "allowed; report back in your reply and let the thread that asked decide",
           });
         }
         const recent = ((yield* Ref.get(startsByCaller)).get(caller.id) ?? []).filter(
@@ -591,7 +596,8 @@ const makeHandlers = Effect.gen(function* () {
             createdAt,
           })
           .pipe(Effect.mapError(failWith("the thread was created but could not be started")));
-        yield* Ref.update(startedByAgents, (set) => new Set([...set, threadId]));
+        const depth = (yield* Ref.get(depthByThread)).get(caller.id) ?? 0;
+        yield* Ref.update(depthByThread, (map) => new Map([...map, [threadId, depth + 1]]));
         yield* Ref.update(startsByCaller, (map) => {
           const recent = (map.get(caller.id) ?? []).filter((at) => now - at < HOUR_MS);
           return new Map([...map, [caller.id, [...recent, now]]]);

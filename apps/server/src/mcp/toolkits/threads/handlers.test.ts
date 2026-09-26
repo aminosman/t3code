@@ -843,18 +843,24 @@ it.effect("refuses a model that is not set up, and names what is", () =>
   }),
 );
 
-it.effect("lets one thread start a handful an hour, and a started thread start none", () =>
+it.effect("lets one thread start a handful an hour, and a chain go four layers deep", () =>
   Effect.gen(function* () {
     const { dispatched, layer } = yield* makeHarness;
     yield* Effect.gen(function* () {
       const start = (as?: ThreadId) =>
         call("t3_thread_create", { title: "Review", prompt: "look" }, new Set(["threads"]), as);
-      const first = yield* start();
-      const spawned = (first.structuredContent as { threadId: ThreadId }).threadId;
-      // The review cannot ask for a review of itself.
-      const chained = yield* start(spawned);
-      expect(chained.isError).toBe(true);
-      expect(text(chained)).toContain("started by an agent");
+      const spawnedBy = (result: { readonly structuredContent?: unknown }) =>
+        (result.structuredContent as { threadId: ThreadId }).threadId;
+      // A started thread may start its own, down to four layers below the user.
+      let child = spawnedBy(yield* start());
+      for (let layer = 2; layer <= 4; layer++) {
+        const next = yield* start(child);
+        expect(next.isError).toBe(false);
+        child = spawnedBy(next);
+      }
+      const fifth = yield* start(child);
+      expect(fifth.isError).toBe(true);
+      expect(text(fifth)).toContain("4 layers");
 
       for (let index = 0; index < 4; index++) expect((yield* start()).isError).toBe(false);
       const sixth = yield* start();
@@ -866,7 +872,7 @@ it.effect("lets one thread start a handful an hour, and a started thread start n
       expect((yield* start()).isError).toBe(false);
     }).pipe(Effect.provide(layer));
     const commands = yield* Ref.get(dispatched);
-    expect(commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(6);
+    expect(commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(9);
   }),
 );
 
