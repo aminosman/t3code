@@ -36,6 +36,44 @@ const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabil
 });
 
 describe("providerModelsFromSettings", () => {
+  it("drops the built-ins and makes the first custom model the default when customModelsOnly is set", () => {
+    const builtIn = {
+      slug: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      isCustom: false,
+      isDefault: true,
+      capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+    };
+    const models = providerModelsFromSettings(
+      [builtIn],
+      [
+        { slug: "k3-256k", name: "Kimi K3 (256K)" },
+        { slug: "k3[1m]", name: "Kimi K3 (1M)" },
+      ],
+      OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+      { customModelsOnly: true },
+    );
+
+    expect(models).toEqual([
+      {
+        slug: "k3-256k",
+        name: "Kimi K3 (256K)",
+        isCustom: true,
+        isDefault: true,
+        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+      },
+      {
+        slug: "k3[1m]",
+        name: "Kimi K3 (1M)",
+        isCustom: true,
+        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+      },
+    ]);
+    expect(
+      providerModelsFromSettings([builtIn], ["k3-256k"], OPENCODE_CUSTOM_MODEL_CAPABILITIES),
+    ).toHaveLength(2);
+  });
+
   it("applies the provided capabilities to custom models", () => {
     const models = providerModelsFromSettings(
       [],

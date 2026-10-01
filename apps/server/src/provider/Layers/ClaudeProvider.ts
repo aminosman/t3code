@@ -437,6 +437,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     modelCatalog.models.map((entry) => entry.model),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    { customModelsOnly: claudeSettings.customModelsOnly },
   );
 
   if (!claudeSettings.enabled) {
@@ -527,6 +528,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    { customModelsOnly: claudeSettings.customModelsOnly },
   );
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
@@ -602,6 +604,7 @@ export const makePendingClaudeProvider = (
       modelCatalog.models.map((entry) => entry.model),
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+      { customModelsOnly: claudeSettings.customModelsOnly },
     );
 
     if (!claudeSettings.enabled) {

@@ -127,8 +127,17 @@ export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
   customModelCapabilities: ModelCapabilities,
+  options?: {
+    /**
+     * Drop the built-ins and offer only the custom entries, the first of
+     * them as the default. For an instance that fronts another vendor's
+     * endpoint, where the built-in names are accepted but not honoured.
+     */
+    readonly customModelsOnly?: boolean | undefined;
+  },
 ): ReadonlyArray<ServerProviderModel> {
-  const resolvedBuiltInModels = [...builtInModels];
+  const customModelsOnly = options?.customModelsOnly === true;
+  const resolvedBuiltInModels = customModelsOnly ? [] : [...builtInModels];
   const seen = new Set(resolvedBuiltInModels.map((model) => model.slug));
   const customEntries: ServerProviderModel[] = [];
 
@@ -142,6 +151,7 @@ export function providerModelsFromSettings(
       name: entry.name,
       isCustom: true,
       capabilities: entry.capabilities ?? customModelCapabilities,
+      ...(customModelsOnly && customEntries.length === 0 ? { isDefault: true } : {}),
     });
   }
 

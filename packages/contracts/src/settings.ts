@@ -708,6 +708,21 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "85", clearWhenEmpty: "omit" },
       }),
     ),
+    // For an instance whose environment points Claude Code at another
+    // vendor's Anthropic-compatible endpoint (Kimi Code, Oct 1 2026): the
+    // Claude names are accepted there but run whatever that vendor decides,
+    // so the picker, the MCP model list and thread creation offer only the
+    // slugs the user named. Server-side, unlike the client's hidden-models
+    // preference, so an agent choosing a model sees the same list.
+    customModelsOnly: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Custom models only",
+        description:
+          "Offer only this instance's custom models and hide Claude's built-ins. For an instance whose environment points Claude Code at another vendor's Anthropic-compatible endpoint, where the Claude names are not what runs.",
+        providerSettingsForm: { clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
     order: [
@@ -718,6 +733,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       "switchAtPercent",
       "autoCompactWindow",
       "launchArgs",
+      "customModelsOnly",
     ],
   },
 );
@@ -1441,6 +1457,7 @@ const ClaudeSettingsPatch = Schema.Struct({
   switchAtPercent: Schema.optionalKey(
     TrimmedString.check(Schema.isPattern(CLAUDE_SWITCH_AT_PERCENT_PATTERN)),
   ),
+  customModelsOnly: Schema.optionalKey(Schema.Boolean),
 });
 
 const CursorSettingsPatch = Schema.Struct({
