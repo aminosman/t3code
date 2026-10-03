@@ -1,8 +1,10 @@
 import type {
-  OrchestrationLatestTurn,
-  OrchestrationMessage,
-  OrchestrationSession,
+  OrchestrationV2ConversationMessage,
+  OrchestrationV2RunStatus,
+  OrchestrationV2ThreadProjection,
+  RunId,
 } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "../state/models.ts";
 import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import type { VoiceToolDefinition } from "./realtimeSession.ts";
 
@@ -10,9 +12,59 @@ import type { VoiceToolDefinition } from "./realtimeSession.ts";
 export interface VoiceOracleThreadView {
   readonly threadTitle: string;
   readonly projectName: string | null;
-  readonly messages: ReadonlyArray<OrchestrationMessage>;
-  readonly session: OrchestrationSession | null;
-  readonly latestTurn: OrchestrationLatestTurn | null;
+  readonly messages: ReadonlyArray<
+    Pick<OrchestrationV2ConversationMessage, "role" | "text" | "streaming">
+  >;
+  readonly runtime: {
+    readonly status: OrchestrationV2RunStatus | "idle";
+    readonly providerName: string | null;
+    readonly lastError: string | null;
+  } | null;
+  readonly latestRun: {
+    readonly runId: RunId;
+    readonly status: OrchestrationV2RunStatus;
+  } | null;
+}
+
+const ACTIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+/**
+ * The oracle's view of a thread: its messages from the projection, the agent's
+ * state from the shell's runtime summary, and the newest run from either.
+ */
+export function voiceOracleThreadView(input: {
+  readonly threadTitle: string;
+  readonly projectName: string | null;
+  readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly shell: Pick<EnvironmentThreadShell, "runtime" | "latestRun"> | null;
+}): VoiceOracleThreadView {
+  const runtime = input.shell?.runtime ?? null;
+  const lastRun = input.projection?.runs.at(-1) ?? null;
+  const latestRun = input.shell?.latestRun
+    ? { runId: input.shell.latestRun.runId, status: input.shell.latestRun.status }
+    : lastRun
+      ? { runId: lastRun.id, status: lastRun.status }
+      : null;
+  return {
+    threadTitle: input.threadTitle,
+    projectName: input.projectName,
+    messages: input.projection?.messages ?? [],
+    runtime: runtime
+      ? { status: runtime.status, providerName: runtime.providerName, lastError: runtime.lastError }
+      : null,
+    latestRun,
+  };
+}
+
+/** A run that has not reached a terminal status: the agent is still on it. */
+export function isRunActive(status: string | null | undefined): boolean {
+  return status != null && ACTIVE_RUN_STATUSES.has(status);
 }
 
 export const VOICE_ORACLE_TOOLS: ReadonlyArray<VoiceToolDefinition> = [
@@ -81,7 +133,7 @@ export function providerDisplayName(providerName: string | null | undefined): st
 }
 
 export function buildOracleInstructions(view: VoiceOracleThreadView): string {
-  const provider = providerDisplayName(view.session?.providerName);
+  const provider = providerDisplayName(view.runtime?.providerName);
   const project = view.projectName ? ` on the project "${view.projectName}"` : "";
   return [
     `You are the T3 Code oracle: a calm, sharp spoken copilot helping the user direct ${provider}${project}, in the thread "${view.threadTitle}".`,
@@ -140,18 +192,18 @@ export function describeAgentActivity(view: VoiceOracleThreadView): {
   readonly working: boolean;
   readonly label: string;
 } {
-  const sessionStatus = view.session?.status ?? "idle";
-  const turnState = view.latestTurn?.state ?? null;
-  if (sessionStatus === "starting" || sessionStatus === "running" || turnState === "running") {
+  const runtimeStatus = view.runtime?.status ?? "idle";
+  const runStatus = view.latestRun?.status ?? null;
+  if (isRunActive(runtimeStatus) || isRunActive(runStatus)) {
     return { working: true, label: "Agent working" };
   }
-  if (sessionStatus === "error" || turnState === "error") {
+  if (runStatus === "failed") {
     return { working: false, label: "Agent hit an error" };
   }
-  if (turnState === "completed") {
+  if (runStatus === "completed") {
     return { working: false, label: "Agent finished" };
   }
-  if (turnState === "interrupted") {
+  if (runStatus === "interrupted" || runStatus === "cancelled") {
     return { working: false, label: "Agent interrupted" };
   }
   return { working: false, label: "Agent idle" };
@@ -173,12 +225,12 @@ export async function executeVoiceOracleTool(input: {
     case "get_agent_status": {
       const activity = describeAgentActivity(input.view);
       return {
-        provider: providerDisplayName(input.view.session?.providerName),
-        sessionStatus: input.view.session?.status ?? "idle",
-        latestTurnState: input.view.latestTurn?.state ?? null,
+        provider: providerDisplayName(input.view.runtime?.providerName),
+        runtimeStatus: input.view.runtime?.status ?? "idle",
+        latestRunStatus: input.view.latestRun?.status ?? null,
         working: activity.working,
         summary: activity.label,
-        lastError: input.view.session?.lastError ?? null,
+        lastError: input.view.runtime?.lastError ?? null,
         messageCount: input.view.messages.length,
       };
     }

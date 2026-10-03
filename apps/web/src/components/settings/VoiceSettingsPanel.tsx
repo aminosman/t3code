@@ -184,7 +184,7 @@ function PushAuthKeyControl({
       <Textarea
         autoComplete="off"
         rows={3}
-        className="w-full font-mono text-xs sm:w-72"
+        className="w-full sm:w-72"
         value={draft}
         placeholder={
           configured

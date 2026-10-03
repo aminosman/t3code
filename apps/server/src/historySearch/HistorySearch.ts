@@ -71,7 +71,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import * as Embedder from "./Embedder.ts";
 import * as Meetings from "./Meetings.ts";
 
@@ -421,6 +421,36 @@ const make = (options: HistorySearchOptions) =>
     const meetingsDir = options.meetingsDir ?? (yield* Meetings.configuredDir);
 
     const ensureSchema = Effect.gen(function* () {
+      // The index reads threads and messages through these two views, in the
+      // shape the V1 projection had, so the queries below stay as they were.
+      // Rebuilt every launch: the V2 tables underneath are upstream's to change.
+      yield* sql`DROP VIEW IF EXISTS roost_threads`;
+      yield* sql`
+        CREATE VIEW roost_threads AS
+        SELECT
+          thread_id,
+          project_id,
+          title,
+          json_extract(payload_json, '$.branch') AS branch,
+          updated_at,
+          archived_at,
+          deleted_at
+        FROM orchestration_v2_projection_threads
+      `;
+      yield* sql`DROP VIEW IF EXISTS roost_thread_messages`;
+      yield* sql`
+        CREATE VIEW roost_thread_messages AS
+        SELECT
+          message_id,
+          thread_id,
+          role,
+          coalesce(json_extract(payload_json, '$.text'), '') AS text,
+          streaming AS is_streaming,
+          created_at,
+          updated_at
+        FROM orchestration_v2_projection_messages
+        WHERE role IN ('user', 'assistant')
+      `;
       yield* sql`
         CREATE VIRTUAL TABLE IF NOT EXISTS roost_history_search USING fts5(
           text,
@@ -534,12 +564,12 @@ const make = (options: HistorySearchOptions) =>
         UPDATE roost_history_docs SET indexed = -1
         WHERE id IN (
           SELECT d.id FROM roost_history_docs d
-          LEFT JOIN projection_thread_messages m ON m.message_id = d.doc_key
+          LEFT JOIN roost_thread_messages m ON m.message_id = d.doc_key
           WHERE d.kind = 'message'
             AND (m.message_id IS NULL OR m.updated_at <> d.version OR m.is_streaming = 1)
           UNION ALL
           SELECT d.id FROM roost_history_docs d
-          LEFT JOIN projection_threads t ON t.thread_id = d.doc_key
+          LEFT JOIN roost_threads t ON t.thread_id = d.doc_key
           WHERE d.kind = 'title' AND (t.thread_id IS NULL OR t.title <> d.version)
         )
       `;
@@ -549,14 +579,14 @@ const make = (options: HistorySearchOptions) =>
       yield* sql`
         INSERT INTO roost_history_docs (kind, doc_key, version)
         SELECT 'message', m.message_id, m.updated_at
-        FROM projection_thread_messages m
+        FROM roost_thread_messages m
         LEFT JOIN roost_history_docs d ON d.kind = 'message' AND d.doc_key = m.message_id
         WHERE d.id IS NULL AND m.is_streaming = 0 AND length(m.text) > 0
       `;
       yield* sql`
         INSERT INTO roost_history_docs (kind, doc_key, version)
         SELECT 'title', t.thread_id, t.title
-        FROM projection_threads t
+        FROM roost_threads t
         LEFT JOIN roost_history_docs d ON d.kind = 'title' AND d.doc_key = t.thread_id
         WHERE d.id IS NULL AND length(t.title) > 0
       `;
@@ -564,14 +594,14 @@ const make = (options: HistorySearchOptions) =>
         INSERT INTO roost_history_search (rowid, text, source, container_id, ref, role, at)
         SELECT d.id, m.text, 'thread', m.thread_id, m.message_id, m.role, m.created_at
         FROM roost_history_docs d
-        JOIN projection_thread_messages m ON m.message_id = d.doc_key
+        JOIN roost_thread_messages m ON m.message_id = d.doc_key
         WHERE d.kind = 'message' AND d.indexed = 0
       `;
       yield* sql`
         INSERT INTO roost_history_search (rowid, text, source, container_id, ref, role, at)
         SELECT d.id, t.title, 'thread', t.thread_id, NULL, 'title', NULL
         FROM roost_history_docs d
-        JOIN projection_threads t ON t.thread_id = d.doc_key
+        JOIN roost_threads t ON t.thread_id = d.doc_key
         WHERE d.kind = 'title' AND d.indexed = 0
       `;
       yield* sql`UPDATE roost_history_docs SET indexed = 1 WHERE indexed = 0`;
@@ -917,7 +947,7 @@ const make = (options: HistorySearchOptions) =>
             bm25(roost_history_search) AS "rank",
             snippet(roost_history_search, 0, '«', '»', '…', 24) AS "snippet"
           FROM roost_history_search s
-          LEFT JOIN projection_threads t ON s.source = 'thread' AND t.thread_id = s.container_id
+          LEFT JOIN roost_threads t ON s.source = 'thread' AND t.thread_id = s.container_id
           LEFT JOIN roost_history_meetings g
             ON s.source = 'meeting' AND g.meeting_id = s.container_id
           WHERE roost_history_search MATCH ${groups.join(" OR ")}
@@ -983,7 +1013,7 @@ const make = (options: HistorySearchOptions) =>
                   0 AS "rank",
                   substr(s.text, 1, 240) AS "snippet"
                 FROM roost_history_search s
-                LEFT JOIN projection_threads t
+                LEFT JOIN roost_threads t
                   ON s.source = 'thread' AND t.thread_id = s.container_id
                 LEFT JOIN roost_history_meetings g
                   ON s.source = 'meeting' AND g.meeting_id = s.container_id
@@ -1156,7 +1186,7 @@ const make = (options: HistorySearchOptions) =>
                   t.title AS "title",
                   t.updated_at AS "updatedAt",
                   t.archived_at AS "archivedAt"
-                FROM projection_threads t
+                FROM roost_threads t
                 LEFT JOIN projection_projects p ON p.project_id = t.project_id
                 WHERE ${sql.in("t.thread_id", threadIds)}
               `;
@@ -1453,7 +1483,7 @@ const make = (options: HistorySearchOptions) =>
           branch AS "branch",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt"
-        FROM projection_threads
+        FROM roost_threads
         WHERE thread_id = ${input.threadId} AND deleted_at IS NULL
       `;
         const thread = threads[0];
@@ -1483,7 +1513,7 @@ const make = (options: HistorySearchOptions) =>
         if (input.aroundMessageId === undefined) {
           // One more than asked for says whether there is anything older.
           const rows = yield* sql<Row>`
-          SELECT ${columns} FROM projection_thread_messages
+          SELECT ${columns} FROM roost_thread_messages
           WHERE thread_id = ${input.threadId}
           ORDER BY created_at DESC, message_id DESC
           LIMIT ${before + after + 2}
@@ -1498,7 +1528,7 @@ const make = (options: HistorySearchOptions) =>
         }
 
         const anchors = yield* sql<Row>`
-        SELECT ${columns} FROM projection_thread_messages
+        SELECT ${columns} FROM roost_thread_messages
         WHERE thread_id = ${input.threadId} AND message_id = ${input.aroundMessageId}
       `;
         const anchor = anchors[0];
@@ -1508,14 +1538,14 @@ const make = (options: HistorySearchOptions) =>
           });
         }
         const older = yield* sql<Row>`
-        SELECT ${columns} FROM projection_thread_messages
+        SELECT ${columns} FROM roost_thread_messages
         WHERE thread_id = ${input.threadId}
           AND (created_at, message_id) < (${anchor.createdAt}, ${anchor.id})
         ORDER BY created_at DESC, message_id DESC
         LIMIT ${before + 1}
       `;
         const newer = yield* sql<Row>`
-        SELECT ${columns} FROM projection_thread_messages
+        SELECT ${columns} FROM roost_thread_messages
         WHERE thread_id = ${input.threadId}
           AND (created_at, message_id) > (${anchor.createdAt}, ${anchor.id})
         ORDER BY created_at ASC, message_id ASC
@@ -1566,10 +1596,10 @@ const MEETINGS_EVERY_TICKS = 20;
 export const followLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const search = yield* HistorySearch;
-    const engine = yield* OrchestrationEngineService;
+    const threads = yield* ThreadManagementService;
     const dirty = yield* Ref.make(false);
     const ticks = yield* Ref.make(0);
-    yield* engine.streamDomainEvents.pipe(
+    yield* threads.streamDomainEvents.pipe(
       Stream.runForEach(() => Ref.set(dirty, true)),
       Effect.forkScoped,
     );

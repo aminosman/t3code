@@ -8,8 +8,8 @@
  * register with the environment, so a self-hosted server notifies its own
  * phone with nobody else in the path.
  */
-import { type AgentAwarenessPhase, projectThreadAwareness } from "@t3tools/shared/agentAwareness";
-import type { OrchestrationProjectShell, ThreadId } from "@t3tools/contracts";
+import { type AgentAwarenessPhase, projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import type { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,9 +17,9 @@ import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { eventThreadId, shouldPublishAgentAwarenessEvent } from "../relay/AgentAwarenessRelay.ts";
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { shouldPublishAgentAwarenessEvent } from "../relay/AgentAwarenessRelay.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -66,8 +66,8 @@ export class PushNotifier extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
-  const snapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const projects = yield* ProjectService.ProjectService;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const registry = yield* PushDeviceRegistry.PushDeviceRegistry;
   const apns = yield* ApnsClient.ApnsClient;
@@ -104,18 +104,15 @@ export const make = Effect.gen(function* () {
       return;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
-    const thread = yield* snapshotQuery.getThreadShellById(threadId);
-    const project = Option.isSome(thread)
-      ? yield* snapshotQuery.getProjectShellById(thread.value.projectId)
-      : Option.none<OrchestrationProjectShell>();
+    const thread = yield* threads.getThreadShell(threadId);
+    const project =
+      thread !== null && thread.archivedAt === null
+        ? yield* projects.getById(thread.projectId)
+        : Option.none();
 
     const state =
-      Option.isSome(thread) && Option.isSome(project)
-        ? projectThreadAwareness({
-            environmentId,
-            project: project.value,
-            thread: thread.value,
-          })
+      thread !== null && Option.isSome(project)
+        ? projectThreadAwarenessV2({ environmentId, project: project.value, thread })
         : null;
 
     const previous = phaseByThread.get(threadId);
@@ -171,9 +168,9 @@ export const make = Effect.gen(function* () {
 
   const start = Effect.gen(function* () {
     yield* forkParked(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        const threadId = eventThreadId(event);
-        if (threadId === null || !shouldPublishAgentAwarenessEvent(event)) {
+      Stream.runForEach(threads.streamDomainEvents, (event) => {
+        const threadId = event.threadId;
+        if (!shouldPublishAgentAwarenessEvent(event)) {
           return Effect.void;
         }
         return notifyThread(threadId).pipe(

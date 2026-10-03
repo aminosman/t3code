@@ -48,6 +48,9 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
 
     const resolved = yield* registry.resolve(token);
     expect(resolved?.threadId).toBe(threadId);
+    expect(resolved?.capabilities).toEqual(
+      new Set(["preview", "orchestration", "worktree", "pull-requests", "threads"]),
+    );
 
     yield* registry.revokeThread(threadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
@@ -81,9 +84,26 @@ it.effect(
           .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
           .pipe(Effect.map((scope) => [...(scope?.capabilities ?? [])].sort()));
 
-      expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests", "threads"]);
-      expect(yield* capabilitiesOf(withoutPreview)).toEqual(["pull-requests", "threads"]);
-      expect(yield* capabilitiesOf(withDevice)).toEqual(["device", "pull-requests", "threads"]);
+      expect(yield* capabilitiesOf(withPreview)).toEqual([
+        "orchestration",
+        "preview",
+        "pull-requests",
+        "threads",
+        "worktree",
+      ]);
+      expect(yield* capabilitiesOf(withoutPreview)).toEqual([
+        "orchestration",
+        "pull-requests",
+        "threads",
+        "worktree",
+      ]);
+      expect(yield* capabilitiesOf(withDevice)).toEqual([
+        "device",
+        "orchestration",
+        "pull-requests",
+        "threads",
+        "worktree",
+      ]);
     }),
 );
 

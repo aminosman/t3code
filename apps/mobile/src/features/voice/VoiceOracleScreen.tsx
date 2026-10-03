@@ -5,6 +5,8 @@ import {
   buildResumeContext,
   describeAgentActivity,
   executeVoiceOracleTool,
+  isRunActive,
+  voiceOracleThreadView,
   truncateForVoice,
   VOICE_ORACLE_TOOLS,
   type VoiceOracleThreadView,
@@ -84,20 +86,14 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
 
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
 
-  const viewRef = useRef<VoiceOracleThreadView>({
-    threadTitle: thread?.title ?? "this thread",
+  const view = voiceOracleThreadView({
+    threadTitle: shell?.title ?? "this thread",
     projectName: null,
-    messages: thread?.messages ?? [],
-    session: thread?.session ?? null,
-    latestTurn: thread?.latestTurn ?? null,
+    projection: thread,
+    shell,
   });
-  viewRef.current = {
-    threadTitle: thread?.title ?? "this thread",
-    projectName: null,
-    messages: thread?.messages ?? [],
-    session: thread?.session ?? null,
-    latestTurn: thread?.latestTurn ?? null,
-  };
+  const viewRef = useRef<VoiceOracleThreadView>(view);
+  viewRef.current = view;
 
   const sendToAgent = useCallback(
     async (text: string): Promise<string | null> => {
@@ -136,8 +132,8 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
 
   const voiceSessionRef = useRef<RealtimeVoiceSession | null>(null);
   const lastTurnRef = useRef<{ turnId: string | null; state: string | null }>({
-    turnId: thread?.latestTurn?.turnId ?? null,
-    state: thread?.latestTurn?.state ?? null,
+    turnId: view.latestRun?.runId ?? null,
+    state: view.latestRun?.status ?? null,
   });
 
   useEffect(() => {
@@ -200,8 +196,8 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
         // reflect whatever it chose so the toggle starts truthful.
         setSpeakerOn(isVoiceSpeakerphoneOn());
         lastTurnRef.current = {
-          turnId: viewRef.current.latestTurn?.turnId ?? null,
-          state: viewRef.current.latestTurn?.state ?? null,
+          turnId: viewRef.current.latestRun?.runId ?? null,
+          state: viewRef.current.latestRun?.status ?? null,
         };
       } catch (error) {
         if (disposed) return;
@@ -224,8 +220,8 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
   }, [environmentId, navigation]);
 
   // Report coding-agent turn transitions into the live voice conversation.
-  const latestTurnId = thread?.latestTurn?.turnId ?? null;
-  const latestTurnState = thread?.latestTurn?.state ?? null;
+  const latestTurnId = view.latestRun?.runId ?? null;
+  const latestTurnState = view.latestRun?.status ?? null;
   useEffect(() => {
     const voiceSession = voiceSessionRef.current;
     const previous = lastTurnRef.current;
@@ -233,13 +229,13 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     lastTurnRef.current = { turnId: latestTurnId, state: latestTurnState };
     if (!voiceSession || latestTurnId === null || latestTurnState === null) return;
 
-    if (latestTurnState === "running") {
+    if (isRunActive(latestTurnState)) {
       if (previous.turnId !== latestTurnId) {
         voiceSession.injectContext("The coding agent started working on a new turn.");
       }
       return;
     }
-    const wasRunningTurn = previous.turnId === latestTurnId && previous.state === "running";
+    const wasRunningTurn = previous.turnId === latestTurnId && isRunActive(previous.state);
     if (!wasRunningTurn) return;
 
     const lastAssistantText = [...viewRef.current.messages]
@@ -248,7 +244,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     const outcome =
       latestTurnState === "completed"
         ? "finished its turn"
-        : latestTurnState === "error"
+        : latestTurnState === "failed"
           ? "stopped with an error"
           : "was interrupted";
     voiceSession.injectContext(

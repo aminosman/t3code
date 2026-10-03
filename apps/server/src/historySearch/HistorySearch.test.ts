@@ -13,9 +13,9 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
-import type { OrchestrationEvent } from "@t3tools/contracts";
+import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as Embedder from "./Embedder.ts";
 import * as HistorySearch from "./HistorySearch.ts";
@@ -111,8 +111,15 @@ const addThread = (
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
-      INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at, archived_at)
-      VALUES (${id}, ${projectId}, ${title}, '2026-09-01T00:00:00.000Z', '2026-09-02T00:00:00.000Z', ${archivedAt})
+      INSERT INTO orchestration_v2_projection_threads (
+        thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+        created_at, updated_at, archived_at, payload_json
+      )
+      VALUES (
+        ${id}, ${projectId}, ${title}, 'codex', 'full-access', 'default',
+        '2026-09-01T00:00:00.000Z', '2026-09-02T00:00:00.000Z', ${archivedAt},
+'{"branch":null}'
+      )
     `;
   });
 
@@ -127,8 +134,13 @@ const addMessage = (
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
-      INSERT INTO projection_thread_messages (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-      VALUES (${id}, ${threadId}, NULL, ${role}, ${text}, ${isStreaming}, ${createdAt}, ${createdAt})
+      INSERT INTO orchestration_v2_projection_messages (
+        message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json
+      )
+      VALUES (
+        ${id}, ${threadId}, NULL, NULL, ${role}, ${isStreaming}, ${createdAt}, ${createdAt},
+        json_object('text', ${text})
+      )
     `;
   });
 
@@ -235,16 +247,17 @@ layer("HistorySearch", (it) => {
       assert.deepStrictEqual(yield* ids("zeppelin"), []);
 
       yield* sql`
-        UPDATE projection_thread_messages
-        SET text = 'zeppelin moored at the quay', is_streaming = 0, updated_at = '2026-09-05T10:01:00.000Z'
+        UPDATE orchestration_v2_projection_messages
+        SET payload_json = json_set(payload_json, '$.text', 'zeppelin moored at the quay'),
+          streaming = 0, updated_at = '2026-09-05T10:01:00.000Z'
         WHERE message_id = 's1'
       `;
-      yield* sql`UPDATE projection_threads SET title = 'Airship docking' WHERE thread_id = 't-sync'`;
+      yield* sql`UPDATE orchestration_v2_projection_threads SET title = 'Airship docking' WHERE thread_id = 't-sync'`;
       yield* TestClock.adjust("6 seconds");
       assert.deepStrictEqual(yield* ids("quay"), ["t-sync"]);
       assert.deepStrictEqual(yield* ids("airships"), ["t-sync"]);
 
-      yield* sql`DELETE FROM projection_thread_messages WHERE message_id = 's1'`;
+      yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE message_id = 's1'`;
       yield* TestClock.adjust("6 seconds");
       assert.deepStrictEqual(yield* ids("quay"), []);
       assert.deepStrictEqual(yield* ids("untitled"), []);
@@ -399,7 +412,7 @@ layer("HistorySearch", (it) => {
 
 it.effect("builds the index at launch and folds in new messages as thread events arrive", () =>
   Effect.gen(function* () {
-    const events = yield* Queue.unbounded<OrchestrationEvent>();
+    const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
     const persistence = SqlitePersistenceMemory;
     const seeded = Layer.effectDiscard(
       Effect.gen(function* () {
@@ -411,7 +424,7 @@ it.effect("builds the index at launch and folds in new messages as thread events
     const live = HistorySearch.followLayer.pipe(
       Layer.provideMerge(HistorySearchTest),
       Layer.provide(
-        Layer.mock(OrchestrationEngineService)({ streamDomainEvents: Stream.fromQueue(events) }),
+        Layer.mock(ThreadManagementService)({ streamDomainEvents: Stream.fromQueue(events) }),
       ),
       Layer.provideMerge(seeded),
       Layer.provideMerge(persistence),
@@ -434,7 +447,7 @@ it.effect("builds the index at launch and folds in new messages as thread events
       // Nothing said anything moved, so nothing was read.
       assert.strictEqual(yield* indexed("funicular"), 0);
 
-      yield* Queue.offer(events, { type: "thread.message-sent" } as OrchestrationEvent);
+      yield* Queue.offer(events, { type: "message.updated" } as OrchestrationV2DomainEvent);
       yield* TestClock.adjust("4 seconds");
       assert.strictEqual(yield* indexed("funicular"), 1);
     }).pipe(Effect.provide(live));
@@ -498,7 +511,7 @@ it.effect("finds by meaning what shares no word with the question, and says whic
 
     // A deleted message takes its vector with it.
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`DELETE FROM projection_thread_messages WHERE message_id = 'b1'`;
+    yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE message_id = 'b1'`;
     yield* TestClock.adjust("6 seconds");
     assert.lengthOf((yield* ask()).results, 0);
     const vectors = yield* sql<{ readonly count: number }>`

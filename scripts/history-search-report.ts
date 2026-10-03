@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalConsole:off - a read-only report run by hand with node, not part of the server.
 /**
  * How agents are using t3_history_search, and where it is failing them.
  *
@@ -50,7 +51,7 @@ const searches = rows(
           (SELECT COUNT(*) FROM roost_history_usage o
             WHERE o.kind = 'open' AND o.search_id = u.id) AS opens
    FROM roost_history_usage u
-   LEFT JOIN projection_threads t ON t.thread_id = u.thread_id
+   LEFT JOIN orchestration_v2_projection_threads t ON t.thread_id = u.thread_id
    WHERE u.kind = 'search' AND u.at >= ? ORDER BY u.id`,
   since,
 );
@@ -58,7 +59,7 @@ const feedback = rows(
   `SELECT f.at, f.found, f.note, s.query, s.result_count, s.results, t.title AS thread_title
    FROM roost_history_usage f
    LEFT JOIN roost_history_usage s ON s.id = f.search_id
-   LEFT JOIN projection_threads t ON t.thread_id = f.thread_id
+   LEFT JOIN orchestration_v2_projection_threads t ON t.thread_id = f.thread_id
    WHERE f.kind = 'feedback' AND f.at >= ? ORDER BY f.id`,
   since,
 );

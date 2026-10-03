@@ -1,15 +1,16 @@
 /**
- * The `threads` toolkit, wired to the projection and the engine.
+ * The `threads` toolkit, wired to the V2 orchestrator.
  *
- * Reads go through `ProjectionSnapshotQuery`, the same service the HTTP
- * snapshot routes use; writes go through `OrchestrationEngineService.dispatch`
- * as `project.create`, `thread.create` and `thread.archive` commands, so every invariant the UI
+ * Shells and commands go through `ThreadManagementService`, the same service
+ * upstream's own MCP thread tools use; writes are `thread.create`,
+ * `message.dispatch` and `thread.archive` commands, so every invariant the UI
  * is held to (no archiving twice, no creating in a deleted project) holds for
- * an agent too. `thread.delete` is never dispatched from here.
+ * an agent too. `thread.delete` is never dispatched from here. Unlike
+ * upstream's tools, these reach every project, not only the caller's.
  *
- * Search, and any read the snapshot cannot serve (a window around one message,
- * an archived thread), go through `HistorySearch`, which reads the projection
- * tables directly. Meetings are files on this Mac and are read there too.
+ * Message reads (the latest window, a window around one message, an archived
+ * thread) go through `HistorySearch`, which reads the projection tables
+ * directly. Meetings are files on this Mac and are read there too.
  *
  * The calling thread comes off the invocation scope and is the default
  * project for listing and creating. It is also the one thread that cannot be
@@ -21,9 +22,8 @@ import {
   CommandId,
   MessageId,
   type ModelSelection,
-  type OrchestrationProjectShell,
-  type OrchestrationThreadShell,
-  ProjectId,
+  type OrchestrationV2ThreadShell,
+  type ProjectId,
   ProviderInstanceId,
   type ServerProvider,
   ThreadId,
@@ -33,14 +33,12 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
-import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { ProjectService } from "../../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { HistorySearch, type ThreadMessagesOutput } from "../../../historySearch/HistorySearch.ts";
-import { WorkspacePaths } from "../../../workspace/WorkspacePaths.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { type ThreadSummary, ThreadsToolkit, ThreadToolError } from "./tools.ts";
 
@@ -105,33 +103,47 @@ const describeCause = (cause: unknown): string => {
 const failWith = (prefix: string) => (cause: unknown) =>
   new ThreadToolError({ reason: `${prefix}: ${describeCause(cause)}` });
 
+/** The V2 shell's status, in the words the tool has always used. */
+const turnStateOf = (thread: OrchestrationV2ThreadShell): string | null => {
+  if (thread.activeRunId !== null || thread.activityRunStatus != null) return "running";
+  switch (thread.status) {
+    case "idle":
+      return thread.latestRunId === null ? null : "completed";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "error";
+    case "interrupted":
+    case "cancelled":
+    case "rolled_back":
+      return "interrupted";
+    default:
+      return "running";
+  }
+};
+
 const summarizeThread = (
-  thread: Pick<
-    OrchestrationThreadShell,
-    "id" | "projectId" | "title" | "branch" | "latestTurn" | "updatedAt" | "archivedAt"
-  >,
+  thread: OrchestrationV2ThreadShell,
   callerThreadId: ThreadId,
 ): typeof ThreadSummary.Type => ({
   id: thread.id,
   projectId: thread.projectId,
   title: thread.title,
   branch: thread.branch,
-  turnState: thread.latestTurn?.state ?? null,
-  updatedAt: thread.updatedAt,
-  archivedAt: thread.archivedAt,
+  turnState: turnStateOf(thread),
+  updatedAt: DateTime.formatIso(thread.updatedAt),
+  archivedAt: thread.archivedAt === null ? null : DateTime.formatIso(thread.archivedAt),
   current: thread.id === callerThreadId,
 });
 
-const byMostRecent = (a: { updatedAt: string }, b: { updatedAt: string }) =>
-  b.updatedAt.localeCompare(a.updatedAt);
+const byMostRecent = (a: OrchestrationV2ThreadShell, b: OrchestrationV2ThreadShell) =>
+  b.updatedAt.epochMilliseconds - a.updatedAt.epochMilliseconds;
 
 const makeHandlers = Effect.gen(function* () {
-  const query = yield* ProjectionSnapshotQuery;
-  const engine = yield* OrchestrationEngineService;
+  const threads = yield* ThreadManagementService;
+  const projects = yield* ProjectService;
   const history = yield* HistorySearch;
   const providerRegistry = yield* ProviderRegistry;
-  const workspacePaths = yield* WorkspacePaths;
-  const path = yield* Path.Path;
   /** How many agent-started threads sit between a thread and the user; absent means 0. */
   const depthByThread = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const startsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
@@ -151,26 +163,38 @@ const makeHandlers = Effect.gen(function* () {
   /** The thread making the call, as the projection sees it right now. */
   const requireCaller = Effect.gen(function* () {
     const scope = yield* requireScope;
-    const caller = yield* query
-      .getThreadShellById(scope.threadId)
+    const caller = yield* threads
+      .getThreadShell(scope.threadId)
       .pipe(Effect.mapError(failWith("could not read the calling thread")));
-    if (Option.isNone(caller)) {
+    if (caller === null || caller.archivedAt !== null) {
       return yield* new ThreadToolError({
         reason: "the calling thread is no longer active",
       });
     }
-    return caller.value;
+    return caller;
   });
 
   const requireProject = (projectId: ProjectId) =>
     Effect.gen(function* () {
-      const project = yield* query
-        .getProjectShellById(projectId)
+      const project = yield* projects
+        .getById(projectId)
         .pipe(Effect.mapError(failWith("could not read the project")));
       if (Option.isNone(project)) {
         return yield* new ThreadToolError({ reason: `no project with id ${projectId}` });
       }
-      return project.value satisfies OrchestrationProjectShell;
+      return project.value;
+    });
+
+  /** A thread that exists and is not archived, or a reason why not. */
+  const requireActiveThread = (threadId: ThreadId, missing: string) =>
+    Effect.gen(function* () {
+      const thread = yield* threads
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError(failWith("could not read the thread")));
+      if (thread === null || thread.archivedAt !== null) {
+        return yield* new ThreadToolError({ reason: missing });
+      }
+      return thread;
     });
 
   const fromRows = (rows: ThreadMessagesOutput, callerThreadId: ThreadId, maxChars: number) => ({
@@ -268,88 +292,32 @@ const makeHandlers = Effect.gen(function* () {
       };
     }),
 
-    t3_project_list: Effect.fn("ThreadsToolkit.t3_project_list")(function* (input: {
-      readonly includeArchived?: boolean | undefined;
-    }) {
-      const caller = yield* requireCaller;
-      const shell = yield* query
-        .getShellSnapshot()
-        .pipe(Effect.mapError(failWith("could not list projects")));
-      const counts = new Map<ProjectId, number>();
-      for (const thread of shell.threads) {
-        if (thread.archivedAt !== null && !input.includeArchived) continue;
-        counts.set(thread.projectId, (counts.get(thread.projectId) ?? 0) + 1);
-      }
-      return {
-        projects: shell.projects.map((project) => ({
-          id: project.id,
-          title: project.title,
-          workspaceRoot: project.workspaceRoot,
-          threadCount: counts.get(project.id) ?? 0,
-          current: project.id === caller.projectId,
-        })),
-      };
-    }),
-
-    t3_project_create: Effect.fn("ThreadsToolkit.t3_project_create")(function* (input: {
-      readonly path: string;
-      readonly title?: string | undefined;
-    }) {
-      yield* requireScope;
-      const workspaceRoot = yield* workspacePaths
-        .normalizeWorkspaceRoot(input.path, { createIfMissing: true })
-        .pipe(Effect.mapError(failWith(`could not use ${input.path}`)));
-      const shell = yield* query
-        .getShellSnapshot()
-        .pipe(Effect.mapError(failWith("could not list projects")));
-      const existing = shell.projects.find((project) => project.workspaceRoot === workspaceRoot);
-      if (existing !== undefined) {
-        return {
-          projectId: existing.id,
-          title: existing.title,
-          workspaceRoot,
-          created: false,
-        };
-      }
-      const title = input.title?.trim() || path.basename(workspaceRoot) || "project";
-      const projectId = ProjectId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
-      yield* engine
-        .dispatch({
-          type: "project.create",
-          commandId: CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
-          projectId,
-          title,
-          workspaceRoot,
-          createWorkspaceRootIfMissing: true,
-          createdAt: DateTime.formatIso(yield* DateTime.now),
-        })
-        .pipe(Effect.mapError(failWith("could not add the project")));
-      return { projectId, title, workspaceRoot, created: true };
-    }),
-
-    t3_thread_list: Effect.fn("ThreadsToolkit.t3_thread_list")(function* (input: {
+    t3_any_thread_list: Effect.fn("ThreadsToolkit.t3_any_thread_list")(function* (input: {
       readonly projectId?: ProjectId | undefined;
       readonly includeArchived?: boolean | undefined;
     }) {
       const caller = yield* requireCaller;
       const projectId = input.projectId ?? caller.projectId;
       yield* requireProject(projectId);
-      const active = yield* query
+      const active = yield* threads
         .getShellSnapshot()
         .pipe(Effect.mapError(failWith("could not list threads")));
       const archived = input.includeArchived
-        ? yield* query
-            .getArchivedShellSnapshot()
+        ? yield* threads
+            .getShellSnapshot({ location: "archive" })
             .pipe(Effect.mapError(failWith("could not list archived threads")))
         : null;
-      const threads = [...active.threads, ...(archived?.threads ?? [])]
-        .filter((thread) => thread.projectId === projectId)
+      const listed = [...active.threads, ...(archived?.archivedThreads ?? [])]
+        .filter(
+          (thread) =>
+            thread.projectId === projectId && thread.lineage.relationshipToParent !== "subagent",
+        )
         .sort(byMostRecent)
         .map((thread) => summarizeThread(thread, caller.id));
-      return { threads };
+      return { threads: listed };
     }),
 
-    t3_thread_read: Effect.fn("ThreadsToolkit.t3_thread_read")(function* (input: {
+    t3_any_thread_read: Effect.fn("ThreadsToolkit.t3_any_thread_read")(function* (input: {
       readonly threadId: ThreadId;
       readonly aroundMessageId?: string | undefined;
       readonly before?: number | undefined;
@@ -361,50 +329,47 @@ const makeHandlers = Effect.gen(function* () {
       const caller = yield* requireCaller;
       yield* history.recordOpen({ callerThreadId: caller.id, kind: "thread", id: input.threadId });
       const maxChars = input.maxCharsPerMessage ?? DEFAULT_MAX_CHARS;
-      const readRows = history
-        .readMessages({
-          threadId: input.threadId,
+      const readRows = (window: {
+        readonly aroundMessageId?: string | undefined;
+        readonly before?: number | undefined;
+        readonly after?: number | undefined;
+      }) =>
+        history
+          .readMessages({ threadId: input.threadId, ...window })
+          .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+      if (input.aroundMessageId !== undefined) {
+        const rows = yield* readRows({
           aroundMessageId: input.aroundMessageId,
           before: input.before,
           after: input.after,
-        })
-        .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
-      if (input.aroundMessageId !== undefined) {
-        const rows = yield* readRows;
+        });
         if (rows === null) {
           return yield* new ThreadToolError({ reason: `no thread with id ${input.threadId}` });
         }
         return fromRows(rows, caller.id, maxChars);
       }
-      const snapshot = yield* query
-        .getThreadDetailSnapshot(input.threadId, {
-          turnLimit: input.turnLimit ?? DEFAULT_TURN_LIMIT,
-          ...(input.beforeCursor !== undefined ? { beforeCursor: input.beforeCursor } : {}),
-        })
+      // A turn is a prompt and its answer; the cursor is the oldest message
+      // returned, and the next page is the window before it.
+      const count = (input.turnLimit ?? DEFAULT_TURN_LIMIT) * 2;
+      const rows =
+        input.beforeCursor === undefined
+          ? yield* readRows({ before: count - 1, after: 0 })
+          : yield* readRows({ aroundMessageId: input.beforeCursor, before: count, after: 0 });
+      if (rows === null) {
+        return yield* new ThreadToolError({ reason: `no thread with id ${input.threadId}` });
+      }
+      const page =
+        input.beforeCursor === undefined
+          ? rows
+          : { ...rows, messages: rows.messages.slice(0, -1), hasNewer: true };
+      const shell = yield* threads
+        .getThreadShell(input.threadId)
         .pipe(Effect.mapError(failWith("could not read the thread")));
-      if (Option.isNone(snapshot)) {
-        // Archived: not in the snapshot, still in the projection.
-        const rows = yield* readRows;
-        if (rows === null) {
-          return yield* new ThreadToolError({ reason: `no thread with id ${input.threadId}` });
-        }
-        return fromRows(rows, caller.id, maxChars);
-      }
-      const thread = snapshot.value.thread;
+      const read = fromRows(page, caller.id, maxChars);
       return {
-        thread: summarizeThread(thread, caller.id),
-        messages: thread.messages.map((message) => ({
-          id: message.id,
-          role: message.role,
-          text: clip(message.text, maxChars),
-          createdAt: message.createdAt,
-          streaming: message.streaming,
-        })),
-        beforeCursor: snapshot.value.page?.hasMore
-          ? (snapshot.value.page.beforeCursor ?? null)
-          : null,
-        hasOlder: snapshot.value.page?.hasMore ?? false,
-        hasNewer: false,
+        ...read,
+        thread: shell === null ? read.thread : summarizeThread(shell, caller.id),
+        beforeCursor: page.hasOlder ? (page.messages[0]?.id ?? null) : null,
       };
     }),
 
@@ -554,11 +519,12 @@ const makeHandlers = Effect.gen(function* () {
 
       const threadId = ThreadId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
       const commandId = CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
-      const createdAt = DateTime.formatIso(yield* DateTime.now);
       const title = input.title.trim();
-      yield* engine
+      yield* threads
         .dispatch({
           type: "thread.create",
+          createdBy: "agent",
+          creationSource: "mcp",
           commandId,
           threadId,
           projectId: project.id,
@@ -568,7 +534,6 @@ const makeHandlers = Effect.gen(function* () {
           interactionMode: caller.interactionMode,
           branch: null,
           worktreePath: null,
-          createdAt,
         })
         .pipe(Effect.mapError(failWith("could not create the thread")));
 
@@ -577,23 +542,21 @@ const makeHandlers = Effect.gen(function* () {
         // the agent answering it both know nobody typed this.
         const text =
           `[Started by the agent in thread "${caller.title}" (${caller.id}), not typed by the user. ` +
-          `You have none of that thread's context beyond what follows; t3_thread_read can read it ` +
+          `You have none of that thread's context beyond what follows; t3_any_thread_read can read it ` +
           `if you need it. Answer in your reply — that thread will read it.]\n\n${prompt}`;
-        yield* engine
+        yield* threads
           .dispatch({
-            type: "thread.turn.start",
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "mcp",
             commandId: CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
             threadId,
-            message: {
-              messageId: MessageId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
-              role: "user",
-              text,
-              attachments: [],
-            },
+            senderThreadId: caller.id,
+            messageId: MessageId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+            text,
+            attachments: [],
             modelSelection,
-            runtimeMode: caller.runtimeMode,
-            interactionMode: caller.interactionMode,
-            createdAt,
+            dispatchMode: { type: "start_immediately" },
           })
           .pipe(Effect.mapError(failWith("the thread was created but could not be started")));
         const depth = (yield* Ref.get(depthByThread)).get(caller.id) ?? 0;
@@ -612,7 +575,7 @@ const makeHandlers = Effect.gen(function* () {
       };
     }),
 
-    t3_thread_send: Effect.fn("ThreadsToolkit.t3_thread_send")(function* (input: {
+    t3_any_thread_send: Effect.fn("ThreadsToolkit.t3_any_thread_send")(function* (input: {
       readonly threadId: ThreadId;
       readonly message: string;
     }) {
@@ -622,18 +585,13 @@ const makeHandlers = Effect.gen(function* () {
           reason: "a thread cannot send a message to itself; just carry on",
         });
       }
-      const shell = yield* query
-        .getThreadShellById(input.threadId)
-        .pipe(Effect.mapError(failWith("could not read the thread")));
-      if (Option.isNone(shell)) {
+      const target = yield* requireActiveThread(
+        input.threadId,
+        `no active thread with id ${input.threadId} (archived, or never existed); t3_any_thread_list shows the active ones`,
+      );
+      if (turnStateOf(target) === "running") {
         return yield* new ThreadToolError({
-          reason: `no active thread with id ${input.threadId} (archived, or never existed); t3_thread_list shows the active ones`,
-        });
-      }
-      const target = shell.value;
-      if (target.latestTurn?.state === "running") {
-        return yield* new ThreadToolError({
-          reason: `thread "${target.title}" is working; t3_thread_wait for its turn to end, then send`,
+          reason: `thread "${target.title}" is working; t3_any_thread_wait for its turn to end, then send`,
         });
       }
       const now = yield* Clock.currentTimeMillis;
@@ -650,21 +608,18 @@ const makeHandlers = Effect.gen(function* () {
       const text =
         `[Sent by the agent in thread "${caller.title}" (${caller.id}), not typed by the user. ` +
         `Answer in your reply — that thread will read it.]\n\n${input.message.trim()}`;
-      yield* engine
-        .dispatch({
-          type: "thread.turn.start",
+      yield* threads
+        .sendToThread({
+          projectId: target.projectId,
           commandId: CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
           threadId: target.id,
-          message: {
-            messageId: MessageId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
-            role: "user",
-            text,
-            attachments: [],
-          },
-          modelSelection: target.modelSelection,
-          runtimeMode: target.runtimeMode,
-          interactionMode: target.interactionMode,
-          createdAt: DateTime.formatIso(yield* DateTime.now),
+          senderThreadId: caller.id,
+          messageId: MessageId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+          text,
+          attachments: [],
+          mode: "auto",
+          createdBy: "agent",
+          creationSource: "mcp",
         })
         .pipe(Effect.mapError(failWith("could not send the message")));
       yield* Ref.update(sendsByCaller, (map) => new Map([...map, [caller.id, [...recent, now]]]));
@@ -676,7 +631,7 @@ const makeHandlers = Effect.gen(function* () {
       };
     }),
 
-    t3_thread_wait: Effect.fn("ThreadsToolkit.t3_thread_wait")(function* (input: {
+    t3_any_thread_wait: Effect.fn("ThreadsToolkit.t3_any_thread_wait")(function* (input: {
       readonly threadId: ThreadId;
       readonly timeoutSeconds?: number | undefined;
     }) {
@@ -688,28 +643,24 @@ const makeHandlers = Effect.gen(function* () {
         Math.min(MAX_WAIT_SECONDS, input.timeoutSeconds ?? DEFAULT_WAIT_SECONDS) * 1000;
       const startedAt = yield* Clock.currentTimeMillis;
       const look = Effect.gen(function* () {
-        const shell = yield* query
-          .getThreadShellById(input.threadId)
-          .pipe(Effect.mapError(failWith("could not read the thread")));
-        if (Option.isNone(shell)) {
-          return yield* new ThreadToolError({
-            reason: `no active thread with id ${input.threadId}`,
-          });
-        }
-        const thread = shell.value;
+        const thread = yield* requireActiveThread(
+          input.threadId,
+          `no active thread with id ${input.threadId}`,
+        );
+        const turnState = turnStateOf(thread);
         const state =
-          thread.hasPendingApprovals || thread.hasPendingUserInput
+          thread.pendingRuntimeRequest !== null
             ? ("needs-user" as const)
-            : thread.latestTurn === null || thread.latestTurn.state === "running"
+            : turnState === null || turnState === "running"
               ? ("running" as const)
-              : thread.latestTurn.state === "completed"
+              : turnState === "completed"
                 ? ("done" as const)
-                : thread.latestTurn.state;
+                : (turnState as "interrupted" | "error");
         return { thread, state };
       });
 
       let seen = yield* look;
-      if (seen.thread.latestTurn === null && seen.thread.latestUserMessageAt === null) {
+      if (seen.thread.latestRunId === null && seen.thread.latestUserMessageAt === null) {
         return yield* new ThreadToolError({
           reason: "nothing has been sent to that thread, so there is no turn to wait for",
         });
@@ -725,7 +676,9 @@ const makeHandlers = Effect.gen(function* () {
       return {
         thread: summarizeThread(seen.thread, caller.id),
         state: seen.state,
-        reply: reply === null ? null : clip(reply.text, WAIT_REPLY_CHARS),
+        // A turn still running has no answer yet, only a draft of one.
+        reply:
+          reply === null || seen.state === "running" ? null : clip(reply.text, WAIT_REPLY_CHARS),
         waitedSeconds: Math.round(((yield* Clock.currentTimeMillis) - startedAt) / 1000),
       };
     }),
@@ -739,16 +692,12 @@ const makeHandlers = Effect.gen(function* () {
           reason: "a thread cannot archive itself while it is running; ask the user to",
         });
       }
-      const target = yield* query
-        .getThreadShellById(input.threadId)
-        .pipe(Effect.mapError(failWith("could not read the thread")));
-      if (Option.isNone(target)) {
-        return yield* new ThreadToolError({
-          reason: `no active thread with id ${input.threadId} (already archived, or never existed)`,
-        });
-      }
+      yield* requireActiveThread(
+        input.threadId,
+        `no active thread with id ${input.threadId} (already archived, or never existed)`,
+      );
       const commandId = CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
-      yield* engine
+      yield* threads
         .dispatch({ type: "thread.archive", commandId, threadId: input.threadId })
         .pipe(Effect.mapError(failWith("could not archive the thread")));
       return { threadId: input.threadId, archived: true as const };

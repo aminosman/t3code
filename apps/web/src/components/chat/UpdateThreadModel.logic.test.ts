@@ -38,8 +38,8 @@ function thread(input: {
       instanceId: ProviderInstanceId.make(input.instanceId ?? "claudeAgent"),
       model: input.model ?? "claude-fable-5-1",
     },
-    session: null,
-    latestTurn: null,
+    runtime: null,
+    latestRun: null,
     latestUserMessageAt:
       input.lastMessage === undefined ? "2026-09-24T12:00:00.000Z" : input.lastMessage,
     createdAt: "2026-09-01T00:00:00.000Z",

@@ -171,7 +171,6 @@ export const UpdateThreadModelControl = memo(function UpdateThreadModelControl(p
       instanceEntries={pickerEntries}
       modelOptionsByInstance={modelOptionsByInstance}
       size="xs"
-      triggerVariant="ghost"
       triggerLabel={pending ? "Updating…" : "Update thread model"}
       triggerAriaLabel={`Update the model of every thread used in the last ${UPDATE_THREAD_MODEL_RECENT_DAYS} days and of new threads`}
       triggerClassName="text-muted-foreground hover:text-foreground"

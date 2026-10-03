@@ -1,9 +1,4 @@
-import type {
-  EnvironmentId,
-  OrchestrationLatestTurn,
-  OrchestrationMessage,
-  OrchestrationSession,
-} from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { MicIcon, MicOffIcon, SettingsIcon, XIcon } from "lucide-react";
@@ -16,6 +11,7 @@ import {
   buildResumeContext,
   describeAgentActivity,
   executeVoiceOracleTool,
+  isRunActive,
   truncateForVoice,
   VOICE_ORACLE_TOOLS,
   type VoiceOracleThreadView,
@@ -23,11 +19,8 @@ import {
 
 interface VoiceOverlayProps {
   environmentId: EnvironmentId;
-  threadTitle: string;
-  projectName: string | null;
-  messages: ReadonlyArray<OrchestrationMessage>;
-  session: OrchestrationSession | null;
-  latestTurn: OrchestrationLatestTurn | null;
+  /** The thread as the oracle sees it; rebuilt every render. */
+  view: VoiceOracleThreadView;
   /** Sends a message to the coding agent; resolves to an error message or null. */
   onSendToAgent: (text: string) => Promise<string | null>;
   onClose: () => void;
@@ -58,11 +51,7 @@ const ORB_LEVEL_EPSILON = 0.015;
 
 export const VoiceOverlay = memo(function VoiceOverlay({
   environmentId,
-  threadTitle,
-  projectName,
-  messages,
-  session,
-  latestTurn,
+  view,
   onSendToAgent,
   onClose,
 }: VoiceOverlayProps) {
@@ -85,22 +74,16 @@ export const VoiceOverlay = memo(function VoiceOverlay({
 
   // Tools and the turn watcher always read the freshest thread facts without
   // re-tearing the WebRTC session on every stream update.
-  const viewRef = useRef<VoiceOracleThreadView>({
-    threadTitle,
-    projectName,
-    messages,
-    session,
-    latestTurn,
-  });
-  viewRef.current = { threadTitle, projectName, messages, session, latestTurn };
+  const viewRef = useRef<VoiceOracleThreadView>(view);
+  viewRef.current = view;
   const sendToAgentRef = useRef(onSendToAgent);
   sendToAgentRef.current = onSendToAgent;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
   const lastTurnRef = useRef<{ turnId: string | null; state: string | null }>({
-    turnId: latestTurn?.turnId ?? null,
-    state: latestTurn?.state ?? null,
+    turnId: view.latestRun?.runId ?? null,
+    state: view.latestRun?.status ?? null,
   });
 
   useEffect(() => {
@@ -161,8 +144,8 @@ export const VoiceOverlay = memo(function VoiceOverlay({
         setSessionReady(true);
         // Announce only turn changes that happen while the oracle is live.
         lastTurnRef.current = {
-          turnId: viewRef.current.latestTurn?.turnId ?? null,
-          state: viewRef.current.latestTurn?.state ?? null,
+          turnId: viewRef.current.latestRun?.runId ?? null,
+          state: viewRef.current.latestRun?.status ?? null,
         };
       } catch (error) {
         if (disposed) return;
@@ -185,8 +168,8 @@ export const VoiceOverlay = memo(function VoiceOverlay({
   }, [environmentId]);
 
   // Report coding-agent turn transitions into the live voice conversation.
-  const latestTurnId = latestTurn?.turnId ?? null;
-  const latestTurnState = latestTurn?.state ?? null;
+  const latestTurnId = view.latestRun?.runId ?? null;
+  const latestTurnState = view.latestRun?.status ?? null;
   useEffect(() => {
     const voiceSession = voiceSessionRef.current;
     const previous = lastTurnRef.current;
@@ -194,13 +177,13 @@ export const VoiceOverlay = memo(function VoiceOverlay({
     lastTurnRef.current = { turnId: latestTurnId, state: latestTurnState };
     if (!voiceSession || latestTurnId === null || latestTurnState === null) return;
 
-    if (latestTurnState === "running") {
+    if (isRunActive(latestTurnState)) {
       if (previous.turnId !== latestTurnId) {
         voiceSession.injectContext("The coding agent started working on a new turn.");
       }
       return;
     }
-    const wasRunningTurn = previous.turnId === latestTurnId && previous.state === "running";
+    const wasRunningTurn = previous.turnId === latestTurnId && isRunActive(previous.state);
     if (!wasRunningTurn) return;
 
     const lastAssistantText = viewRef.current.messages
@@ -209,7 +192,7 @@ export const VoiceOverlay = memo(function VoiceOverlay({
     const outcome =
       latestTurnState === "completed"
         ? "finished its turn"
-        : latestTurnState === "error"
+        : latestTurnState === "failed"
           ? "stopped with an error"
           : "was interrupted";
     voiceSession.injectContext(
@@ -308,13 +291,7 @@ export const VoiceOverlay = memo(function VoiceOverlay({
     void navigate({ to: "/settings/voice" });
   }, [navigate, onClose]);
 
-  const agentActivity = describeAgentActivity({
-    threadTitle,
-    projectName,
-    messages,
-    session,
-    latestTurn,
-  });
+  const agentActivity = describeAgentActivity(view);
   const orbStatus: VoiceSessionStatus = phase.kind === "active" ? phase.status : "connecting";
 
   return (
@@ -326,9 +303,9 @@ export const VoiceOverlay = memo(function VoiceOverlay({
     >
       <div className="flex w-full items-start justify-between p-4 sm:p-6">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-foreground">{threadTitle}</p>
+          <p className="truncate text-sm font-medium text-foreground">{view.threadTitle}</p>
           <p className="truncate text-xs text-muted-foreground">
-            {projectName ? `${projectName} · ` : ""}
+            {view.projectName ? `${view.projectName} · ` : ""}
             {agentActivity.label}
             {agentActivity.working ? "…" : ""}
           </p>
@@ -398,7 +375,6 @@ export const VoiceOverlay = memo(function VoiceOverlay({
           aria-pressed={muted}
           disabled={!isActive}
           onClick={toggleMuted}
-          className="rounded-full"
         >
           {muted ? <MicOffIcon className="size-5" /> : <MicIcon className="size-5" />}
         </Button>
@@ -408,7 +384,6 @@ export const VoiceOverlay = memo(function VoiceOverlay({
           variant="destructive"
           aria-label="End voice session"
           onClick={onClose}
-          className="rounded-full"
         >
           <XIcon className="size-5" />
         </Button>

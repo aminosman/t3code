@@ -24,6 +24,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
       reasoningTokens: 0,
     },
     reportedCostUsd: null,
+    speed: "standard",
     dedupeKey: "msg_1:",
     ...overrides,
   };
@@ -57,7 +58,11 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 describe("scan cache round trip", () => {
   it("restores records unchanged", () => {
     const original = cacheWith([
-      ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5" })]],
+      [
+        "/a.jsonl",
+        100,
+        [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", speed: "fast" })],
+      ],
       ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
     ]);
     original.set("/grok.jsonl", {
@@ -74,11 +79,14 @@ describe("scan cache round trip", () => {
       size: 80,
       mtimeMs: 400,
       provider: "codex",
-      records: [record({ provider: "codex", model: "gpt-5.2-codex", dedupeKey: null })],
+      records: [
+        record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null, speed: "ultrafast" }),
+      ],
       tailRecords: [],
       position: position({
         codexState: {
-          model: "gpt-5.2-codex",
+          model: "gpt-6-astra",
+          speed: "ultrafast",
           sessionId: "session-c",
           lastUsageSignature: '{"input_tokens":1}',
           sawSessionMeta: true,
@@ -123,9 +131,20 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
   });
 
-  it("rejects a document from the previous cache version", () => {
+  it("drops an entry whose speed is not a known index", () => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record({ speed: "fast" })]]]));
+    const row = encoded.files["/a.jsonl"]!.r[0]!;
+    const poisoned = {
+      ...encoded,
+      files: { "/a.jsonl": { ...encoded.files["/a.jsonl"]!, r: [[...row.slice(0, 10), true]] } },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+
+  it("rejects a document from before records carried a speed", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const previous = { ...encoded, version: 2 };
+    const previous = { ...encoded, version: 3 };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });

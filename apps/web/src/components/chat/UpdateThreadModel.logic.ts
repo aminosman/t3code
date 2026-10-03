@@ -20,8 +20,8 @@ type PlannedThread = Pick<
   ThreadShell,
   | "id"
   | "modelSelection"
-  | "session"
-  | "latestTurn"
+  | "runtime"
+  | "latestRun"
   | "latestUserMessageAt"
   | "createdAt"
   | "archivedAt"
@@ -78,7 +78,7 @@ export function planUpdateThreadModel<T extends PlannedThread>(input: {
     if (!(lastInteractionMs(thread) >= cutoffMs)) continue;
 
     const currentInstanceId =
-      thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+      thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
     const sameInstance =
       currentInstanceId === input.target.instanceId ||
       (input.sameAccountsAsTarget?.has(currentInstanceId) ?? false);

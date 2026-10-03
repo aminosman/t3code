@@ -34,14 +34,6 @@ export class ThreadToolError extends Schema.TaggedError<ThreadToolError>()("Thre
 
 const IsoDateTime = Schema.String;
 
-export const ProjectSummary = Schema.Struct({
-  id: ProjectId,
-  title: Schema.String,
-  workspaceRoot: Schema.String,
-  threadCount: Schema.Number.annotate({ description: "Active (unarchived) threads." }),
-  current: Schema.Boolean.annotate({ description: "True for the project this thread belongs to." }),
-});
-
 export const ThreadSummary = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -68,15 +60,6 @@ export const MessageSummary = Schema.Struct({
 // emits `not: {type: null}`), and the MCP server refuses to register a tool
 // whose input schema has no `type` — which took the whole server down at
 // startup. One optional key keeps it an object, as device_list does.
-export const ProjectListInput = Schema.Struct({
-  includeArchived: Schema.optional(Schema.Boolean).annotate({
-    description: "Count archived threads too. Default false.",
-  }),
-});
-
-export const ProjectListOutput = Schema.Struct({
-  projects: Schema.Array(ProjectSummary),
-});
 
 export const ThreadListInput = Schema.Struct({
   projectId: Schema.optional(ProjectId).annotate({
@@ -136,7 +119,7 @@ export const HistorySearchHit = Schema.Struct({
   }),
   messageId: Schema.NullOr(Schema.String).annotate({
     description:
-      "Thread hits: pass to t3_thread_read as aroundMessageId to read the exchange around it. " +
+      "Thread hits: pass to t3_any_thread_read as aroundMessageId to read the exchange around it. " +
       "Null for a title match and for meetings.",
   }),
   at: Schema.NullOr(Schema.String).annotate({
@@ -154,7 +137,7 @@ export const HistorySearchHit = Schema.Struct({
 export const HistorySearchResult = Schema.Struct({
   kind: Schema.Literals(["thread", "meeting"]),
   id: Schema.String.annotate({
-    description: "A thread id (for t3_thread_read) or a meeting id (for t3_meeting_read).",
+    description: "A thread id (for t3_any_thread_read) or a meeting id (for t3_meeting_read).",
   }),
   title: Schema.String,
   projectId: Schema.NullOr(Schema.String),
@@ -389,26 +372,6 @@ export const ModelListOutput = Schema.Struct({
   providers: Schema.Array(ProviderSummary),
 });
 
-export const ProjectCreateInput = Schema.Struct({
-  path: Schema.String.check(Schema.isMinLength(1)).annotate({
-    description:
-      "The project's folder, absolute or starting with ~ (e.g. ~/Projects/support-app). " +
-      "Created if it does not exist.",
-  }),
-  title: Schema.optional(Schema.String.check(Schema.isMinLength(1))).annotate({
-    description: "Name shown in the sidebar. Omit for the folder's name.",
-  }),
-});
-
-export const ProjectCreateOutput = Schema.Struct({
-  projectId: ProjectId,
-  title: Schema.String,
-  workspaceRoot: Schema.String,
-  created: Schema.Boolean.annotate({
-    description: "False when a project already had this folder; its id is returned instead.",
-  }),
-});
-
 export const ThreadCreateInput = Schema.Struct({
   title: Schema.String.check(Schema.isMinLength(1)).annotate({
     description: "Title of the new thread. Say what it is for: 'Review: history search index'.",
@@ -438,7 +401,7 @@ export const ThreadCreateOutput = Schema.Struct({
   title: Schema.String,
   started: Schema.Boolean.annotate({
     description:
-      "True when a prompt was sent and the thread is working. Follow it with t3_thread_wait.",
+      "True when a prompt was sent and the thread is working. Follow it with t3_any_thread_wait.",
   }),
   model: Schema.Struct({ instanceId: Schema.String, model: Schema.String }),
 });
@@ -505,13 +468,13 @@ export const HistorySearchTool = Tool.make("t3_history_search", {
     "or corrected last time, what was said about it on a call, and what else has been worked " +
     "on around it. It is also the way to find a thread at all: thread titles are " +
     "auto-generated and often say nothing about the work inside, so do not hunt through " +
-    "t3_thread_list.\n\n" +
+    "t3_any_thread_list.\n\n" +
     "Loose on purpose: words are stemmed, any of them may match, more of them ranks higher, " +
     "misspellings are widened, and passages are also matched by meaning by a model on this " +
     "Mac, so a plain description works even when it shares no words with what was said. " +
     "The result's `meaning` says whether that was active; when it was not, add synonyms. " +
     "It costs a few KB however large the history is. Then " +
-    "read only what earned it: t3_thread_read with a hit's messageId as aroundMessageId, or " +
+    "read only what earned it: t3_any_thread_read with a hit's messageId as aroundMessageId, or " +
     "t3_meeting_read with a hit's at as around. If the first wording misses, search again " +
     "with other words, a file name, or the error text.",
   parameters: HistorySearchInput,
@@ -572,23 +535,10 @@ export const MeetingReadTool = Tool.make("t3_meeting_read", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ProjectListTool = Tool.make("t3_project_list", {
+export const ThreadListTool = Tool.make("t3_any_thread_list", {
   description:
-    "List every project in this Roost, with how many active threads each has. " +
-    "The project this thread belongs to is marked current.",
-  parameters: ProjectListInput,
-  success: ProjectListOutput,
-  failure,
-  dependencies,
-})
-  .annotate(Tool.Title, "List projects")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
-
-export const ThreadListTool = Tool.make("t3_thread_list", {
-  description:
-    "List the threads of a project — by default the project this thread belongs to. " +
+    "List the threads of any project — by default the project this thread belongs to " +
+    "(t3_thread_list is the same for this project, with run filters). " +
     "Each entry carries the latest turn's state, so you can see what is running. " +
     "Archived threads are left out unless includeArchived is set.",
   parameters: ThreadListInput,
@@ -601,9 +551,10 @@ export const ThreadListTool = Tool.make("t3_thread_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ThreadReadTool = Tool.make("t3_thread_read", {
+export const ThreadReadTool = Tool.make("t3_any_thread_read", {
   description:
-    "Read a thread's messages in any project: the user's prompts and the agent's replies. " +
+    "Read a thread's messages in any project, archived ones included: the user's prompts and " +
+    "the agent's replies (t3_thread_read reads this project's threads in full detail). " +
     "With aroundMessageId (a hit from t3_history_search) it returns that message and the few " +
     "around it, from active and archived threads alike. Without it, the most recent turns, " +
     "oldest first within the window; page back with beforeCursor. Long messages are cut to " +
@@ -635,21 +586,6 @@ export const ModelListTool = Tool.make("t3_model_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ProjectCreateTool = Tool.make("t3_project_create", {
-  description:
-    "Add a project to Roost for a folder on this Mac, creating the folder if it is missing. " +
-    "If a project already has that folder, returns it. Then t3_thread_create with its " +
-    "projectId to start threads there.",
-  parameters: ProjectCreateInput,
-  success: ProjectCreateOutput,
-  failure,
-  dependencies,
-})
-  .annotate(Tool.Title, "Add a project")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
-
 export const ThreadCreateTool = Tool.make("t3_thread_create", {
   description:
     "Create a new thread in a project — by default the project this thread belongs to — and, " +
@@ -665,7 +601,7 @@ export const ThreadCreateTool = Tool.make("t3_thread_create", {
     "thread spends the user's allowance and lands in their sidebar. Tell the user when you " +
     "start one and why. It runs in the project's own checkout with this thread's runtime " +
     "mode, so say in the prompt whether it may edit files; for a review, say read-only.\n\n" +
-    "Then t3_thread_wait for its answer, read it critically, and report what it found — " +
+    "Then t3_any_thread_wait for its answer, read it critically, and report what it found — " +
     "including where it disagrees with you. Without a prompt, the thread is created empty and " +
     "the user picks it up from the sidebar.",
   parameters: ThreadCreateInput,
@@ -678,16 +614,18 @@ export const ThreadCreateTool = Tool.make("t3_thread_create", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
-export const ThreadSendTool = Tool.make("t3_thread_send", {
+export const ThreadSendTool = Tool.make("t3_any_thread_send", {
   description:
-    "Send a message to an existing thread, in any project, and start it working on it — the " +
+    "Send a message to an existing thread in any project and start it working on it — the " +
     "same as the user typing there. The thread answers on its own model, in its own runtime " +
     "mode, and its agent sees only its own history plus this message, so write it in full. " +
     "Use it to follow up with a thread you started (a question about its review, a second " +
     "task), to hand a thread the user named something to do, or to answer a thread that " +
     "asked you something. A thread that is working cannot take a message until its turn " +
-    "ends: t3_thread_wait for it first. It spends the user's allowance and shows up in " +
-    "their sidebar, so tell the user when you do it. Then t3_thread_wait for the answer.",
+    "ends: t3_any_thread_wait for it first. It spends the user's allowance and shows up in " +
+    "their sidebar, so tell the user when you do it. Then t3_any_thread_wait for the answer. " +
+    "Do not use a delegated task's childThreadId to start another review round here; " +
+    "call delegate_task again with the full review context for that.",
   parameters: ThreadSendInput,
   success: ThreadSendOutput,
   failure,
@@ -698,12 +636,12 @@ export const ThreadSendTool = Tool.make("t3_thread_send", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
-export const ThreadWaitTool = Tool.make("t3_thread_wait", {
+export const ThreadWaitTool = Tool.make("t3_any_thread_wait", {
   description:
-    "Wait for another thread's current turn to end and return its answer: the way to collect " +
+    "Wait for another thread's current turn to end, in any project, and return its answer: the way to collect " +
     "the result of a thread started with t3_thread_create. Returns early with needs-user if " +
     "the thread stops for an approval or a question, and with running if the wait runs out. " +
-    "For more than the last message, use t3_thread_read.",
+    "For more than the last message, use t3_any_thread_read.",
   parameters: ThreadWaitInput,
   success: ThreadWaitOutput,
   failure,
@@ -733,8 +671,6 @@ export const ThreadsToolkit = Toolkit.make(
   HistoryFeedbackTool,
   MeetingListTool,
   MeetingReadTool,
-  ProjectListTool,
-  ProjectCreateTool,
   ThreadListTool,
   ThreadReadTool,
   ModelListTool,
