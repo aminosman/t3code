@@ -438,19 +438,43 @@ const make = (options: HistorySearchOptions) =>
         FROM orchestration_v2_projection_threads
       `;
       yield* sql`DROP VIEW IF EXISTS roost_thread_messages`;
-      yield* sql`
-        CREATE VIEW roost_thread_messages AS
-        SELECT
-          message_id,
-          thread_id,
-          role,
-          coalesce(json_extract(payload_json, '$.text'), '') AS text,
-          streaming AS is_streaming,
-          created_at,
-          updated_at
-        FROM orchestration_v2_projection_messages
-        WHERE role IN ('user', 'assistant')
+      // Upstream copies V1 transcripts into V2 a while after launch. Until a
+      // message is copied it is read from the V1 table, so the index neither
+      // drops it (and its vector) nor misses its thread in the meantime. V1's
+      // reasoning messages are never copied (V2 keeps reasoning as turn
+      // items), so they stay readable from there, as they were indexed.
+      const legacy = yield* sql<{ readonly name: string }>`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'projection_thread_messages'
       `;
+      yield* legacy.length === 0
+        ? sql`
+            CREATE VIEW roost_thread_messages AS
+            SELECT
+              message_id, thread_id, role,
+              coalesce(json_extract(payload_json, '$.text'), '') AS text,
+              streaming AS is_streaming, created_at, updated_at
+            FROM orchestration_v2_projection_messages
+            WHERE role IN ('user', 'assistant')
+          `
+        : sql`
+            CREATE VIEW roost_thread_messages AS
+            SELECT
+              message_id, thread_id, role,
+              coalesce(json_extract(payload_json, '$.text'), '') AS text,
+              streaming AS is_streaming, created_at, updated_at
+            FROM orchestration_v2_projection_messages
+            WHERE role IN ('user', 'assistant')
+            UNION ALL
+            SELECT
+              l.message_id, l.thread_id, l.role, l.text,
+              l.is_streaming, l.created_at, l.updated_at
+            FROM projection_thread_messages l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_messages v
+                WHERE v.message_id = l.message_id
+              )
+          `;
       yield* sql`
         CREATE VIRTUAL TABLE IF NOT EXISTS roost_history_search USING fts5(
           text,

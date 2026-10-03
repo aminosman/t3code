@@ -264,6 +264,47 @@ layer("HistorySearch", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps a V1 message indexed until upstream copies it into V2, then holds one copy",
+    () =>
+      Effect.gen(function* () {
+        const search = yield* HistorySearch.HistorySearch;
+        const sql = yield* SqlClient.SqlClient;
+        yield* addProject("p-legacy", "legacy");
+        yield* addThread("t-legacy", "p-legacy", "Old work");
+        yield* sql`
+        INSERT INTO projection_thread_messages (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
+        VALUES ('v1', 't-legacy', NULL, 'user', 'the dirigible manifest', 0, '2026-08-01T10:00:00.000Z', '2026-08-01T10:00:00.000Z')
+      `;
+        const hits = (query: string) =>
+          search
+            .search({ query, projectId: "p-legacy" })
+            .pipe(Effect.map((found) => found.results.flatMap((result) => result.hits)));
+
+        yield* TestClock.adjust("6 seconds");
+        assert.deepStrictEqual(
+          (yield* hits("dirigible")).map((hit) => hit.messageId),
+          ["v1"],
+        );
+        const docs = sql<{ readonly id: number }>`
+        SELECT id FROM roost_history_docs WHERE kind = 'message' AND doc_key = 'v1'
+      `;
+        const before = yield* docs;
+
+        // Upstream's import lands the same message in V2: nothing is re-indexed.
+        yield* addMessage(
+          "v1",
+          "t-legacy",
+          "user",
+          "the dirigible manifest",
+          "2026-08-01T10:00:00.000Z",
+        );
+        yield* TestClock.adjust("6 seconds");
+        assert.deepStrictEqual(yield* docs, before);
+        assert.lengthOf(yield* hits("dirigible"), 1);
+      }),
+  );
+
   it.effect("finds meetings beside threads, by notes and by the minute it was said", () =>
     Effect.gen(function* () {
       const search = yield* HistorySearch.HistorySearch;
