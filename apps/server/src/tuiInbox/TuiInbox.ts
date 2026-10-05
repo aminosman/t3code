@@ -195,6 +195,7 @@ export const make = Effect.gen(function* () {
     switch (message.type) {
       case "prompt": {
         openPrompts.add(message.promptId);
+        if (message.kind === "rate") return;
         yield* notifyInBackground({
           title: "tui is asking",
           body: pushBody(message.text),

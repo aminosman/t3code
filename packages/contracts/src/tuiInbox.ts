@@ -117,6 +117,9 @@ export const TuiInboxPost = Schema.Union([
     type: Schema.Literal("prompt"),
     promptId: TrimmedNonEmptyString,
     text: InboxText,
+    /** `confirm` waits for ↑ before acting and is pushed; `rate` asks
+     * whether what was done was right and is only shown in the app. */
+    kind: Schema.optional(Schema.Literals(["confirm", "rate"])),
     utteranceId: Schema.optional(Schema.String),
     /** How long tui waits before giving up, in ms. */
     expiresInMs: Schema.optional(Schema.Number),

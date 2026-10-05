@@ -130,6 +130,11 @@ it.live("relays a prompt to the phone, pushes it with actions, and routes the ve
       yield* Effect.sleep("10 millis");
       expect(received[1]).toEqual({ type: "verdict", promptId: "p1", verdict: "up" });
 
+      // A rating of what was already done is shown, never pushed.
+      yield* inbox.post({ type: "prompt", promptId: "p2", text: "Right?", kind: "rate" });
+      yield* Effect.sleep("10 millis");
+      expect(sent).toHaveLength(1);
+
       yield* inbox.post({ type: "settled", promptId: "p1", outcome: "up" });
       const late = yield* Effect.flip(
         inbox.control({ type: "verdict", promptId: "p1", verdict: "down" }),
