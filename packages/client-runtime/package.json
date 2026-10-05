@@ -378,6 +378,10 @@
     "./device/duo-control": {
       "types": "./src/device/duoControl.ts",
       "default": "./src/device/duoControl.ts"
+    },
+    "./tui-inbox": {
+      "types": "./src/tuiInbox/state.ts",
+      "default": "./src/tuiInbox/state.ts"
     }
   },
   "scripts": {

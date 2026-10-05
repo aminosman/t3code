@@ -28,6 +28,15 @@ export function foregroundNotificationBehavior(
   deepLinkOnScreen: string | null,
 ): NotificationBehavior {
   const target = extractAgentNotificationDeepLink({ notification });
+  // The tui screen shows its own conversation live; only a card still buzzes.
+  if (
+    target !== null &&
+    target.startsWith("/tui") &&
+    deepLinkOnScreen?.startsWith("/tui") === true &&
+    notification.request.content.categoryIdentifier !== "TUI_PROMPT"
+  ) {
+    return SUPPRESS;
+  }
   if (target !== null && target === deepLinkOnScreen) {
     return SUPPRESS;
   }

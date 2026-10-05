@@ -6,6 +6,7 @@ import { setAndroidThreadOnScreen } from "./androidNotifications";
 import { foregroundNotificationBehavior } from "./foregroundNotificationBehavior";
 import { routeAgentNotificationResponseOnce, threadDeepLinkOnScreen } from "./notificationPayload";
 import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
+import { routeTuiNotificationAnswer } from "../tui/tuiNotificationActions";
 
 export function useAgentNotificationNavigation(pathname: string): void {
   const linkTo = useLinkTo();
@@ -15,7 +16,7 @@ export function useAgentNotificationNavigation(pathname: string): void {
   const deepLinkOnScreen = useRef<string | null>(null);
   useLayoutEffect(() => {
     const thread = threadDeepLinkOnScreen(pathname);
-    deepLinkOnScreen.current = thread;
+    deepLinkOnScreen.current = pathname.startsWith("/tui") ? pathname : thread;
     // Android alerts are built natively from FCM data, so update the native
     // route at commit time alongside the iOS handler's route reference.
     setAndroidThreadOnScreen(thread);
@@ -33,6 +34,8 @@ export function useAgentNotificationNavigation(pathname: string): void {
 
   useEffect(() => {
     const handleResponse = (response: Notifications.NotificationResponse): void => {
+      // Allow / Decline on a tui card; the tap still opens the tui screen.
+      routeTuiNotificationAnswer(response);
       routeAgentNotificationResponseOnce({
         handledResponseIds: handledResponseIds.current,
         response,

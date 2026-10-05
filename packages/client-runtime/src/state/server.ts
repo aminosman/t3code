@@ -36,6 +36,7 @@ import {
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
+import { EMPTY_TUI_INBOX, reduceTuiInbox } from "../tuiInbox/state.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import {
@@ -1071,6 +1072,12 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
+    /** The phone's conversation with tui (Roost's tui inbox), folded from its stream. */
+    tuiInbox: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:tui-inbox",
+      tag: WS_METHODS.tuiInboxSubscribe,
+      transform: (stream) => stream.pipe(Stream.scan(EMPTY_TUI_INBOX, reduceTuiInbox)),
+    }),
     /** Live scheduled-task list: snapshot on subscribe, fresh list after every server-side change. */
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
@@ -1276,6 +1283,14 @@ export function createServerEnvironmentAtoms<R, E>(
     // Deliberately not on the config lane: run-now blocks until the run is
     // dispatched, and a slow run must not stall settings/keybinding/provider
     // mutations (or other scheduled-task edits) queued behind it.
+    sendToTui: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tui-inbox:send",
+      tag: WS_METHODS.tuiInboxSend,
+    }),
+    controlTui: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tui-inbox:control",
+      tag: WS_METHODS.tuiInboxControl,
+    }),
     runScheduledTaskNow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:run-now",
       tag: WS_METHODS.scheduledTasksRunNow,

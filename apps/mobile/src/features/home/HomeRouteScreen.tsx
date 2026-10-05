@@ -204,6 +204,7 @@ export function HomeRouteScreen() {
           }
           onSearchQueryChange={setSearchQuery}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+          onOpenTui={() => navigation.navigate("TuiInbox", undefined)}
         />
 
         <HomeScreen

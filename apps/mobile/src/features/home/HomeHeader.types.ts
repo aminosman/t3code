@@ -17,5 +17,7 @@ export interface HomeHeaderProps {
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onOpenEnvironments: () => void;
   readonly onOpenSettings: () => void;
+  /** Talk to tui, the Mac's voice assistant, from no thread. */
+  readonly onOpenTui?: () => void;
   readonly onStartNewTask: () => void;
 }

@@ -85,6 +85,13 @@ export function threadDeepLinkOnScreen(pathname: string): string | null {
 export function extractAgentNotificationDeepLink(response: unknown): string | null {
   const data = dataFromNotificationResponse(response);
   const deepLink = data?.deepLink;
+  // tui (the Mac's voice assistant) talking back through the tui inbox.
+  if (deepLink === "/tui") {
+    const environmentId = data?.environmentId;
+    return typeof environmentId === "string" && environmentId.length > 0
+      ? `/tui/${encodeURIComponent(environmentId)}`
+      : "/tui";
+  }
   if (typeof deepLink === "string") {
     const normalizedDeepLink = normalizeThreadDeepLink(deepLink);
     if (normalizedDeepLink) {

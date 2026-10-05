@@ -37,6 +37,18 @@ export function HomeHeader(props: HomeHeaderProps) {
           // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.
           headerTintColor: iconColor,
           unstable_headerRightItems: () => [
+            ...(props.onOpenTui
+              ? [
+                  withNativeGlassHeaderItem({
+                    accessibilityLabel: "Talk to tui",
+                    icon: { name: "waveform", type: "sfSymbol" } as const,
+                    identifier: "home-tui",
+                    label: "",
+                    onPress: props.onOpenTui,
+                    type: "button",
+                  }),
+                ]
+              : []),
             withNativeGlassHeaderItem({
               accessibilityLabel: "Open settings",
               icon: { name: "ellipsis", type: "sfSymbol" } as const,

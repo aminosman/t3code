@@ -41,6 +41,8 @@ import {
 } from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { VoiceOracleScreen } from "./features/voice/VoiceOracleScreen";
+import { TuiInboxScreen } from "./features/tui/TuiInboxScreen";
+import { useTuiNotificationAnswers } from "./features/tui/useTuiNotificationAnswers";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
@@ -593,6 +595,7 @@ function RootStackLayout(props: {
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspaceLocation = workspaceLocationFromState(props.state);
   useAgentNotificationNavigation(workspaceLocation.pathname);
+  useTuiNotificationAnswers();
   // Presents the T3 Connect onboarding sheet after an in-session sign-in.
   useConnectOnboardingNavigation();
   // Launcher app shortcuts: routes shortcut taps and tracks opened threads.
@@ -684,6 +687,14 @@ const RootStackConfig = createNativeStackNavigator({
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
+      },
+    }),
+    TuiInbox: createNativeStackScreen({
+      screen: TuiInboxScreen,
+      linking: "tui/:environmentId?",
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        title: "tui",
       },
     }),
     Thread: createNativeStackScreen({
