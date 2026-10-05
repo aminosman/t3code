@@ -6,7 +6,8 @@
  * boundary — search everything that was ever said, in threads and in recorded
  * meetings, list the projects, list a project's threads, read a thread's
  * messages, read a meeting, see which models the user has set up — and take
- * a few writes: add a project, create a thread, send to one, archive one.
+ * a few writes: send to a thread, archive one. Agents start other agents with
+ * upstream's delegate_task and t3_thread_launch (Oct 5 2026).
  * Search comes first on purpose: an agent that wants to know how something
  * was done before should ask for it by what it is, get back the handful of
  * threads that hold it, and read only those. There is deliberately no delete
@@ -372,40 +373,6 @@ export const ModelListOutput = Schema.Struct({
   providers: Schema.Array(ProviderSummary),
 });
 
-export const ThreadCreateInput = Schema.Struct({
-  title: Schema.String.check(Schema.isMinLength(1)).annotate({
-    description: "Title of the new thread. Say what it is for: 'Review: history search index'.",
-  }),
-  projectId: Schema.optional(ProjectId).annotate({
-    description: "Project to create it in. Omit for the project this thread belongs to.",
-  }),
-  prompt: Schema.optional(Schema.String.check(Schema.isMinLength(1))).annotate({
-    description:
-      "The first message. With it the new thread starts working at once; without it the thread " +
-      "is created empty for the user to pick up. The agent there starts with NONE of this " +
-      "thread's context — that is the point — so write everything it needs: what to look at " +
-      "(paths, commits, branch), what to judge or do, what you want back, and what not to " +
-      "touch. For a review, do not tell it your conclusions; tell it what to examine.",
-  }),
-  model: Schema.optional(ModelChoice).annotate({
-    description:
-      "The model for the new thread, from t3_model_list. Omit for the project's default, or " +
-      "this thread's. For an independent or adversarial review, pick a different provider " +
-      "than the one this thread runs on, and a strong model.",
-  }),
-});
-
-export const ThreadCreateOutput = Schema.Struct({
-  threadId: ThreadId,
-  projectId: ProjectId,
-  title: Schema.String,
-  started: Schema.Boolean.annotate({
-    description:
-      "True when a prompt was sent and the thread is working. Follow it with t3_any_thread_wait.",
-  }),
-  model: Schema.Struct({ instanceId: Schema.String, model: Schema.String }),
-});
-
 export const ThreadSendInput = Schema.Struct({
   threadId: ThreadId,
   message: Schema.String.check(Schema.isMinLength(1)).annotate({
@@ -574,8 +541,8 @@ export const ModelListTool = Tool.make("t3_model_list", {
     "List the agent providers and models the user has set up in this Roost and that can be " +
     "used right now: provider instance, account, how much of its allowance is spent, and each " +
     "model with its options (reasoning effort and the like). The provider and model this " +
-    "thread runs on are marked current. Call it before t3_thread_create when you want a " +
-    "particular model — never guess a slug.",
+    "thread runs on are marked current. Call it before delegate_task or t3_thread_launch when " +
+    "you want a particular model, to see which account has allowance left — never guess a slug.",
   parameters: ModelListInput,
   success: ModelListOutput,
   failure,
@@ -585,34 +552,6 @@ export const ModelListTool = Tool.make("t3_model_list", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
-
-export const ThreadCreateTool = Tool.make("t3_thread_create", {
-  description:
-    "Create a new thread in a project — by default the project this thread belongs to — and, " +
-    "with a prompt, start it working on a model you choose. The agent there is a separate " +
-    "session with a clean context: it knows nothing of this conversation beyond what the " +
-    "prompt says (it can search and read this thread like any other).\n\n" +
-    "Use it when a fresh, independent mind is worth more than continuity: a review of work " +
-    "you just did, an adversarial check of a plan or a diagnosis, a second opinion from a " +
-    "different provider's model, or a separate piece of work the user asked to have its own " +
-    "thread. Pick the model with t3_model_list: for a review, a different provider than this " +
-    "thread's and a strong model. Do NOT use it to split up ordinary work, to get around a " +
-    "failing approach, or for anything the user would expect to see happen here — a new " +
-    "thread spends the user's allowance and lands in their sidebar. Tell the user when you " +
-    "start one and why. It runs in the project's own checkout with this thread's runtime " +
-    "mode, so say in the prompt whether it may edit files; for a review, say read-only.\n\n" +
-    "Then t3_any_thread_wait for its answer, read it critically, and report what it found — " +
-    "including where it disagrees with you. Without a prompt, the thread is created empty and " +
-    "the user picks it up from the sidebar.",
-  parameters: ThreadCreateInput,
-  success: ThreadCreateOutput,
-  failure,
-  dependencies,
-})
-  .annotate(Tool.Title, "Create a thread")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, false);
 
 export const ThreadSendTool = Tool.make("t3_any_thread_send", {
   description:
@@ -639,7 +578,7 @@ export const ThreadSendTool = Tool.make("t3_any_thread_send", {
 export const ThreadWaitTool = Tool.make("t3_any_thread_wait", {
   description:
     "Wait for another thread's current turn to end, in any project, and return its answer: the way to collect " +
-    "the result of a thread started with t3_thread_create. Returns early with needs-user if " +
+    "the reply to a message sent with t3_any_thread_send. Returns early with needs-user if " +
     "the thread stops for an approval or a question, and with running if the wait runs out. " +
     "For more than the last message, use t3_any_thread_read.",
   parameters: ThreadWaitInput,
@@ -674,7 +613,6 @@ export const ThreadsToolkit = Toolkit.make(
   ThreadListTool,
   ThreadReadTool,
   ModelListTool,
-  ThreadCreateTool,
   ThreadSendTool,
   ThreadWaitTool,
   ThreadArchiveTool,

@@ -20,12 +20,17 @@ describe("buildRuntimeInstructions", () => {
     expect(instructions).toContain("not the present state of the code");
   });
 
-  it("tells every harness when a fresh thread on another model is worth starting", () => {
+  it("routes a fresh look to delegate_task and separate work to t3_thread_launch", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
     expect(instructions).toContain("<fresh_threads>");
+    expect(instructions).toMatch(/A fresh mind on this work[^\n]*: delegate_task\./);
+    expect(instructions).toMatch(
+      /Separate work the user wants as its own thread[^\n]*: t3_thread_launch/,
+    );
     expect(instructions).toContain("pick a different provider than the one you run on");
-    expect(instructions).toContain("Do not use it to split up ordinary work");
+    expect(instructions).toContain("Do not use either to split up ordinary work");
     expect(instructions).toContain("say when you start one and why");
+    expect(instructions).not.toContain("t3_thread_create");
   });
 
   it("keeps known model and effort metadata on one line", () => {

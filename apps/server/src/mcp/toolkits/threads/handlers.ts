@@ -2,9 +2,9 @@
  * The `threads` toolkit, wired to the V2 orchestrator.
  *
  * Shells and commands go through `ThreadManagementService`, the same service
- * upstream's own MCP thread tools use; writes are `thread.create`,
- * `message.dispatch` and `thread.archive` commands, so every invariant the UI
- * is held to (no archiving twice, no creating in a deleted project) holds for
+ * upstream's own MCP thread tools use; writes are `message.dispatch` and
+ * `thread.archive` commands, so every invariant the UI is held to (no
+ * archiving twice, no sending to a deleted thread) holds for
  * an agent too. `thread.delete` is never dispatched from here. Unlike
  * upstream's tools, these reach every project, not only the caller's.
  *
@@ -13,7 +13,7 @@
  * directly. Meetings are files on this Mac and are read there too.
  *
  * The calling thread comes off the invocation scope and is the default
- * project for listing and creating. It is also the one thread that cannot be
+ * project for listing. It is also the one thread that cannot be
  * archived from here: it is running this very call.
  *
  * @module mcp/toolkits/threads/handlers
@@ -21,10 +21,8 @@
 import {
   CommandId,
   MessageId,
-  type ModelSelection,
   type OrchestrationV2ThreadShell,
   type ProjectId,
-  ProviderInstanceId,
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
@@ -49,18 +47,8 @@ const DEFAULT_WAIT_SECONDS = 300;
 const MAX_WAIT_SECONDS = 900;
 const WAIT_POLL = "2 seconds";
 /**
- * A thread an agent starts spends the user's allowance and lands in their
- * sidebar. One thread may start a handful an hour — a review, a second
- * opinion — and a thread started by an agent may itself start others, down to
- * MAX_DEPTH layers below a thread the user opened, so a review can ask for a
- * review of its own work but not without end (Amin, Sep 26 2026: "we should be
- * able to go … four layers deep, not just one").
- */
-const STARTS_PER_HOUR = 5;
-const MAX_DEPTH = 4;
-/**
- * A message to an existing thread spends the same allowance but makes no new
- * thread, so the cap is looser: enough for a conversation with a reviewer,
+ * A message to an existing thread spends the user's allowance but makes no new
+ * thread, so the cap is looser than AgentStartGuard's: enough for a conversation with a reviewer,
  * not enough for a loop between two agents to run unattended for long.
  */
 const SENDS_PER_HOUR = 30;
@@ -144,9 +132,6 @@ const makeHandlers = Effect.gen(function* () {
   const projects = yield* ProjectService;
   const history = yield* HistorySearch;
   const providerRegistry = yield* ProviderRegistry;
-  /** How many agent-started threads sit between a thread and the user; absent means 0. */
-  const depthByThread = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
-  const startsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
   const sendsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
   const crypto = yield* Crypto.Crypto;
 
@@ -428,150 +413,6 @@ const makeHandlers = Effect.gen(function* () {
             };
           })
           .filter((provider) => provider.usable || input.includeUnusable === true),
-      };
-    }),
-
-    t3_thread_create: Effect.fn("ThreadsToolkit.t3_thread_create")(function* (input: {
-      readonly title: string;
-      readonly projectId?: ProjectId | undefined;
-      readonly prompt?: string | undefined;
-      readonly model?:
-        | {
-            readonly instanceId: string;
-            readonly model: string;
-            readonly options?: Readonly<Record<string, string | boolean>> | undefined;
-          }
-        | undefined;
-    }) {
-      const caller = yield* requireCaller;
-      const project = yield* requireProject(input.projectId ?? caller.projectId);
-      const prompt = input.prompt?.trim();
-      const now = yield* Clock.currentTimeMillis;
-
-      if (prompt !== undefined) {
-        const depth = (yield* Ref.get(depthByThread)).get(caller.id) ?? 0;
-        if (depth >= MAX_DEPTH) {
-          return yield* new ThreadToolError({
-            reason:
-              `this thread is ${MAX_DEPTH} layers of agent-started threads below the user, the most ` +
-              "allowed; report back in your reply and let the thread that asked decide",
-          });
-        }
-        const recent = ((yield* Ref.get(startsByCaller)).get(caller.id) ?? []).filter(
-          (at) => now - at < HOUR_MS,
-        );
-        if (recent.length >= STARTS_PER_HOUR) {
-          return yield* new ThreadToolError({
-            reason: `this thread has already started ${STARTS_PER_HOUR} threads in the last hour; ask the user before starting more`,
-          });
-        }
-      }
-
-      let modelSelection: ModelSelection = project.defaultModelSelection ?? caller.modelSelection;
-      if (input.model !== undefined) {
-        const chosen = input.model;
-        const providers = yield* providerRegistry.getProviders;
-        const provider = providers.find((candidate) => candidate.instanceId === chosen.instanceId);
-        if (provider === undefined) {
-          return yield* new ThreadToolError({
-            reason: `no provider instance "${chosen.instanceId}"; t3_model_list shows the ones set up (${providers.map((p) => p.instanceId).join(", ")})`,
-          });
-        }
-        const reason = unusableBecause(provider);
-        if (reason !== null) {
-          return yield* new ThreadToolError({
-            reason: `provider "${chosen.instanceId}" cannot be used right now: ${reason}`,
-          });
-        }
-        const model = provider.models.find(
-          (candidate) =>
-            candidate.slug === chosen.model || candidate.aliases?.includes(chosen.model) === true,
-        );
-        if (model === undefined) {
-          return yield* new ThreadToolError({
-            reason: `"${chosen.instanceId}" has no model "${chosen.model}"; it has: ${provider.models.map((m) => m.slug).join(", ")}`,
-          });
-        }
-        const descriptors = model.capabilities?.optionDescriptors ?? [];
-        const options = Object.entries(chosen.options ?? {});
-        for (const [id, value] of options) {
-          const descriptor = descriptors.find((candidate) => candidate.id === id);
-          if (descriptor === undefined) {
-            return yield* new ThreadToolError({
-              reason: `model "${model.slug}" has no option "${id}"; it has: ${descriptors.map((d) => d.id).join(", ") || "none"}`,
-            });
-          }
-          if (
-            descriptor.type === "select" &&
-            !descriptor.options.some((choice) => choice.id === value)
-          ) {
-            return yield* new ThreadToolError({
-              reason: `option "${id}" of "${model.slug}" takes one of: ${descriptor.options.map((c) => c.id).join(", ")}`,
-            });
-          }
-        }
-        modelSelection = {
-          instanceId: ProviderInstanceId.make(provider.instanceId),
-          model: model.slug,
-          ...(options.length > 0 ? { options: options.map(([id, value]) => ({ id, value })) } : {}),
-        } as ModelSelection;
-      }
-
-      const threadId = ThreadId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
-      const commandId = CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
-      const title = input.title.trim();
-      yield* threads
-        .dispatch({
-          type: "thread.create",
-          createdBy: "agent",
-          creationSource: "mcp",
-          commandId,
-          threadId,
-          projectId: project.id,
-          title,
-          modelSelection,
-          runtimeMode: caller.runtimeMode,
-          interactionMode: caller.interactionMode,
-          branch: null,
-          worktreePath: null,
-        })
-        .pipe(Effect.mapError(failWith("could not create the thread")));
-
-      if (prompt !== undefined) {
-        // Said in the message itself, so the user reading the new thread and
-        // the agent answering it both know nobody typed this.
-        const text =
-          `[Started by the agent in thread "${caller.title}" (${caller.id}), not typed by the user. ` +
-          `You have none of that thread's context beyond what follows; t3_any_thread_read can read it ` +
-          `if you need it. Answer in your reply — that thread will read it.]\n\n${prompt}`;
-        yield* threads
-          .dispatch({
-            type: "message.dispatch",
-            createdBy: "agent",
-            creationSource: "mcp",
-            commandId: CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
-            threadId,
-            senderThreadId: caller.id,
-            messageId: MessageId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
-            text,
-            attachments: [],
-            modelSelection,
-            dispatchMode: { type: "start_immediately" },
-          })
-          .pipe(Effect.mapError(failWith("the thread was created but could not be started")));
-        const depth = (yield* Ref.get(depthByThread)).get(caller.id) ?? 0;
-        yield* Ref.update(depthByThread, (map) => new Map([...map, [threadId, depth + 1]]));
-        yield* Ref.update(startsByCaller, (map) => {
-          const recent = (map.get(caller.id) ?? []).filter((at) => now - at < HOUR_MS);
-          return new Map([...map, [caller.id, [...recent, now]]]);
-        });
-      }
-      return {
-        threadId,
-        projectId: project.id,
-        title,
-        started: prompt !== undefined,
-        model: { instanceId: modelSelection.instanceId, model: modelSelection.model },
       };
     }),
 

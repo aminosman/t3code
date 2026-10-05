@@ -6,6 +6,7 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
+import * as AgentStartGuard from "../../AgentStartGuard.ts";
 import { newCommandId, readCaller, readMutationCaller, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -77,6 +78,11 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
               ),
             )).projectId
           : (input.projectId ?? caller.projectId);
+      // Roost: a launch with a task sets an agent working, so it counts toward
+      // the caller's limits, and its first message says who sent it.
+      const starts = input.message !== undefined || attachments.length > 0;
+      const guard = yield* AgentStartGuard.AgentStartGuard;
+      if (starts) yield* guard.admit(scope.threadId);
       const result = yield* ThreadMessageIntake.launchThread({
         commandId,
         threadId,
@@ -92,7 +98,10 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
               initialMessage: {
                 messageId,
                 senderThreadId: scope.threadId,
-                text: input.message ?? "",
+                text:
+                  `[Started by the agent in thread "${caller.title}" (${caller.id}), not typed by the user. ` +
+                  `You have none of that thread's context beyond what follows; t3_any_thread_read can read it ` +
+                  `if you need it.]\n\n${input.message ?? ""}`,
                 attachments,
               },
             }),
@@ -106,6 +115,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         ),
       );
       const thread = result.projection.thread;
+      if (starts) yield* guard.record(scope.threadId, [thread.id]);
       const run = result.projection.runs.find((run) => run.userMessageId === messageId);
       return {
         threadId: thread.id,

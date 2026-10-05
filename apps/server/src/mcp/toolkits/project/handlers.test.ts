@@ -19,6 +19,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as AgentStartGuard from "../../AgentStartGuard.ts";
 import { ProjectHandlersLive } from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -30,6 +31,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     const modelSelection = { instanceId: providerInstanceId, model: "gpt-5" };
     const caller = {
       id: sourceThreadId,
+      title: "Plan",
       projectId,
       providerInstanceId,
       modelSelection,
@@ -40,8 +42,10 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       deletedAt: null,
     } as OrchestrationV2ThreadShell;
     let launchedSender: ThreadId | undefined;
+    let launchedText: string | undefined;
     const dependencies = Layer.mergeAll(
       NodeCrypto.layer,
+      AgentStartGuard.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment"),
         threadId: sourceThreadId,
@@ -56,6 +60,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (input) => {
           launchedSender = input.initialMessage?.senderThreadId;
+          launchedText = input.initialMessage?.text;
           return Effect.succeed({
             threadId: input.threadId,
             projection: {
@@ -81,6 +86,10 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
     expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
     expect(launchedSender).toBe(sourceThreadId);
+    expect(launchedText).toMatch(
+      /^\[Started by the agent in thread "Plan" \(source-thread\), not typed by the user\./,
+    );
+    expect(launchedText?.endsWith("\n\nReview the change")).toBe(true);
   }),
 );
 
@@ -104,6 +113,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
     const dependencies = Layer.mergeAll(
       NodeCrypto.layer,
+      AgentStartGuard.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment"),
         threadId: sourceThreadId,
@@ -192,6 +202,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     };
     const dependencies = Layer.mergeAll(
       NodeCrypto.layer,
+      AgentStartGuard.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment"),
         threadId: sourceThreadId,

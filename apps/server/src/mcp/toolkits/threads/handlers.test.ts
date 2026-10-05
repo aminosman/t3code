@@ -615,34 +615,6 @@ it.effect("reads around a search hit, archived threads included, and clips long 
   }),
 );
 
-it.effect("creates a thread in the caller's project with the caller's modes", () =>
-  Effect.gen(function* () {
-    const { dispatched, layer } = yield* makeHarness;
-    const result = yield* call("t3_thread_create", { title: "  Follow up  " }).pipe(
-      Effect.provide(layer),
-    );
-    expect(result.isError).toBe(false);
-    const commands = yield* Ref.get(dispatched);
-    expect(commands).toHaveLength(1);
-    expect(commands[0]).toMatchObject({
-      type: "thread.create",
-      projectId: homeProjectId,
-      title: "Follow up",
-      modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-    });
-    expect(result.structuredContent).toMatchObject({
-      projectId: homeProjectId,
-      title: "Follow up",
-      started: false,
-      model: { instanceId: "codex", model: "gpt-5-codex" },
-    });
-  }),
-);
-
 it.effect("lists the models that can be used now, marking the caller's provider", () =>
   Effect.gen(function* () {
     const { layer } = yield* makeHarness;
@@ -679,99 +651,6 @@ it.effect("lists the models that can be used now, marking the caller's provider"
     expect(all.structuredContent).toMatchObject({
       providers: [{}, {}, { instanceId: "grok", usable: false, unusableBecause: "not signed in" }],
     });
-  }),
-);
-
-it.effect("starts a fresh thread on a chosen model, and says who sent the first message", () =>
-  Effect.gen(function* () {
-    const { dispatched, layer } = yield* makeHarness;
-    const result = yield* call("t3_thread_create", {
-      title: "Review: history search",
-      prompt: "Review apps/server/src/historySearch for bugs. Read-only.",
-      model: { instanceId: "claudeAgent", model: "claudeAgent-large", options: { effort: "high" } },
-    }).pipe(Effect.provide(layer));
-    expect(result.isError).toBe(false);
-    expect(result.structuredContent).toMatchObject({
-      started: true,
-      model: { instanceId: "claudeAgent", model: "claudeAgent-large" },
-    });
-    const commands = yield* Ref.get(dispatched);
-    expect(commands.map((command) => command.type)).toEqual(["thread.create", "message.dispatch"]);
-    const chosen = {
-      instanceId: "claudeAgent",
-      model: "claudeAgent-large",
-      options: [{ id: "effort", value: "high" }],
-    };
-    expect(commands[0]).toMatchObject({ modelSelection: chosen, runtimeMode: "full-access" });
-    expect(commands[1]).toMatchObject({
-      modelSelection: chosen,
-      senderThreadId: callerThreadId,
-      attachments: [],
-      dispatchMode: { type: "start_immediately" },
-    });
-    const start = commands[1] as Extract<
-      OrchestrationV2ServerCommand,
-      { type: "message.dispatch" }
-    >;
-    expect(start.threadId).toBe((commands[0] as { threadId: ThreadId }).threadId);
-    expect(start.text).toContain('Started by the agent in thread "caller"');
-    expect(start.text).toContain("Review apps/server/src/historySearch for bugs.");
-  }),
-);
-
-it.effect("refuses a model that is not set up, and names what is", () =>
-  Effect.gen(function* () {
-    const { dispatched, layer } = yield* makeHarness;
-    const attempt = (model: Record<string, unknown>) =>
-      call("t3_thread_create", { title: "x", prompt: "y", model }).pipe(Effect.provide(layer));
-
-    const noProvider = yield* attempt({ instanceId: "gemini", model: "pro" });
-    expect(noProvider.isError).toBe(true);
-    expect(text(noProvider)).toContain("codex, claudeAgent, grok");
-    const signedOut = yield* attempt({ instanceId: "grok", model: "grok-large" });
-    expect(text(signedOut)).toContain("not signed in");
-    const noModel = yield* attempt({ instanceId: "codex", model: "gpt-9" });
-    expect(text(noModel)).toContain("codex-large");
-    const badOption = yield* attempt({
-      instanceId: "codex",
-      model: "codex-large",
-      options: { effort: "ludicrous" },
-    });
-    expect(text(badOption)).toContain("medium, high");
-    expect(yield* Ref.get(dispatched)).toHaveLength(0);
-  }),
-);
-
-it.effect("lets one thread start a handful an hour, and a chain go four layers deep", () =>
-  Effect.gen(function* () {
-    const { dispatched, layer } = yield* makeHarness;
-    yield* Effect.gen(function* () {
-      const start = (as?: ThreadId) =>
-        call("t3_thread_create", { title: "Review", prompt: "look" }, new Set(["threads"]), as);
-      const spawnedBy = (result: { readonly structuredContent?: unknown }) =>
-        (result.structuredContent as { threadId: ThreadId }).threadId;
-      // A started thread may start its own, down to four layers below the user.
-      let child = spawnedBy(yield* start());
-      for (let layer = 2; layer <= 4; layer++) {
-        const next = yield* start(child);
-        expect(next.isError).toBe(false);
-        child = spawnedBy(next);
-      }
-      const fifth = yield* start(child);
-      expect(fifth.isError).toBe(true);
-      expect(text(fifth)).toContain("4 layers");
-
-      for (let index = 0; index < 4; index++) expect((yield* start()).isError).toBe(false);
-      const sixth = yield* start();
-      expect(sixth.isError).toBe(true);
-      expect(text(sixth)).toContain("ask the user");
-      // An empty thread spends nothing and is not counted.
-      expect((yield* call("t3_thread_create", { title: "Later" })).isError).toBe(false);
-      yield* TestClock.adjust("61 minutes");
-      expect((yield* start()).isError).toBe(false);
-    }).pipe(Effect.provide(layer));
-    const commands = yield* Ref.get(dispatched);
-    expect(commands.filter((command) => command.type === "message.dispatch")).toHaveLength(9);
   }),
 );
 

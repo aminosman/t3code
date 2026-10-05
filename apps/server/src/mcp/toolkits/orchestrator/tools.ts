@@ -29,6 +29,7 @@ import {
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
+import * as AgentStartGuard from "../../AgentStartGuard.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -37,6 +38,8 @@ const dependencies = [
   McpInvocationContext.McpInvocationContext,
   OrchestratorMcpService.OrchestratorMcpService,
 ];
+// Roost: the tools that set agents working count against AgentStartGuard's limits.
+const startDependencies = [...dependencies, AgentStartGuard.AgentStartGuard];
 const threadMetadataDependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadMetadataMcpService.ThreadMetadataMcpService,
@@ -62,7 +65,7 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: startDependencies,
 })
   .annotate(Tool.Title, "Delegate a child task")
   .annotate(Tool.Destructive, true)
@@ -75,7 +78,7 @@ const TaskStatusTool = Tool.make("task_status", {
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: startDependencies,
 })
   .annotate(Tool.Title, "Get delegated task status")
   .annotate(Tool.Readonly, false)
@@ -151,7 +154,7 @@ export const CreateThreadsTool = Tool.make("create_threads", {
   success: OrchestratorMcpCreateThreadsResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: startDependencies,
 })
   .annotate(Tool.Title, "Create T3 threads")
   .annotate(Tool.Destructive, true)

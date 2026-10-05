@@ -25,6 +25,7 @@ import { PreviewControlsHandlersLive } from "./toolkits/previewControls/handlers
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import { EnvironmentHandlersLive } from "./toolkits/environment/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import * as AgentStartGuard from "./AgentStartGuard.ts";
 import { ProjectHandlersLive } from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import { AttachmentHandlersLive } from "./toolkits/attachment/handlers.ts";
@@ -664,6 +665,9 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
 
 export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(OrchestratorToolkit).pipe(
   Layer.provide(OrchestratorToolkitHandlersLive),
+  // Shared with the project toolkit: layers are memoized by reference, so both
+  // count starts against one set of limits.
+  Layer.provide(AgentStartGuard.layer),
   Layer.provide(OrchestratorMcpService.layer),
   Layer.provide(ThreadMetadataMcpService.layer),
 );
@@ -687,6 +691,7 @@ const EnvironmentRegistrationLive = McpServer.toolkit(EnvironmentToolkit).pipe(
 
 const ProjectRegistrationLive = McpServer.toolkit(ProjectToolkit).pipe(
   Layer.provide(ProjectHandlersLive),
+  Layer.provide(AgentStartGuard.layer),
 );
 
 const AttachmentRegistrationLive = McpServer.toolkit(AttachmentToolkit).pipe(
