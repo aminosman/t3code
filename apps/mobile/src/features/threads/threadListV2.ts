@@ -171,6 +171,26 @@ export function threadHasUnseenCompletion(
   return completedAtMs > lastVisitedAtMs;
 }
 
+/**
+ * The flat Thread List v2 is the default on every app variant; the Settings →
+ * Legacy toggle opts a device back into the grouped legacy list. Preferences
+ * persist as sparse patches, so `undefined` genuinely means "never chosen".
+ *
+ * `preferencesLoaded` guards the startup window: preferences load
+ * asynchronously, and rendering one list before the stored choice arrives would
+ * remount the whole thing a tick later. While loading, hold the default — that
+ * is where every device without an explicit legacy opt-in lands anyway.
+ */
+export function resolveThreadListV2Enabled(input: {
+  readonly legacyPreference: boolean | undefined;
+  readonly preferencesLoaded: boolean;
+}): boolean {
+  if (!input.preferencesLoaded) {
+    return true;
+  }
+  return input.legacyPreference !== true;
+}
+
 export function resolveThreadListV2Status(
   thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
 ): ThreadListV2Status {

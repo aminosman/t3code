@@ -136,7 +136,7 @@ export function MaterialThreadListToolbar(props: {
           <AndroidAnchoredMenu actions={props.filterActions} onPressAction={props.onFilterAction}>
             {(open) => (
               <MaterialFloatingActionButton
-                label="Filter threads"
+                label="Filter and sort threads"
                 icon={filterIcon}
                 onPress={open}
               />
