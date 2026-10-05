@@ -12,7 +12,7 @@ made, labeled with what he meant:
 The model under test gets the instructions every Roost agent gets
 (buildRuntimeInstructions + upstream's orchestration block) and the real MCP
 tool schemas, both loaded from this checkout, plus a shell and file reader.
-Tools that only look things up answer with stubs, for up to four rounds; the
+Tools that only look things up answer with stubs, for up to eight rounds; the
 first agent-starting call is the answer, and a reply with none is "here".
 
   python3 scripts/spawn-routing-eval.py --cases cases.json \
@@ -40,6 +40,8 @@ import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+# Rounds of stubbed tool calls before a run with no agent started counts as "here".
+ROUNDS = 8
 SERVER = ROOT / "apps" / "server"
 
 SPAWN_LABEL = {
@@ -180,16 +182,24 @@ def stub_result(name: str) -> str:
     if name == "t3_project_create":
         return json.dumps({"projectId": "project-new", "title": "new project", "created": True})
     if name in ("bash", "read_file"):
-        return "(output omitted in this evaluation; assume the checkout is as described)"
+        return "(ran; the output matches what the conversation so far describes)"
     return "(no further results in this evaluation)"
 
 
+# The cases are single messages lifted from long threads. What they point at
+# ("this change", "C3", a pasted analysis) was in the real conversation; told
+# nothing, a careful model stops to ask for it, which measures the excerpt,
+# not the routing.
+CONTEXT_NOTE = (
+    "(Everything this message refers to — the change, the plan, the list, the pasted "
+    "analysis, the earlier findings — is in the conversation above and you know it in full. "
+    "Act on the message.)"
+)
+
+
 def user_message(case: dict) -> str:
-    return (
-        f"[Earlier in this thread — {case['context']}]\n\n{case['request']}"
-        if case.get("context")
-        else case["request"]
-    )
+    earlier = f"[Earlier in this thread — {case['context']}]\n\n" if case.get("context") else ""
+    return f"{earlier}{CONTEXT_NOTE}\n\n{case['request']}"
 
 
 def run_anthropic(model: str, system: str, tools: list[dict], case: dict) -> dict:
@@ -200,7 +210,7 @@ def run_anthropic(model: str, system: str, tools: list[dict], case: dict) -> dic
         for t in tools
     ]
     trace = []
-    for _ in range(4):
+    for _ in range(ROUNDS):
         reply = post(
             "https://api.anthropic.com/v1/messages",
             {"x-api-key": key, "anthropic-version": "2023-06-01"},
@@ -222,7 +232,7 @@ def run_anthropic(model: str, system: str, tools: list[dict], case: dict) -> dic
                 for call in calls
             ],
         })
-    return {"tool": None, "text": "(still looking after four rounds)", "trace": trace}
+    return {"tool": None, "text": f"(still looking after {ROUNDS} rounds)", "trace": trace}
 
 
 def run_openai(model: str, system: str, tools: list[dict], case: dict) -> dict:
@@ -233,7 +243,7 @@ def run_openai(model: str, system: str, tools: list[dict], case: dict) -> dict:
     ]
     items: list = [{"role": "user", "content": user_message(case)}]
     trace = []
-    for _ in range(4):
+    for _ in range(ROUNDS):
         reply = post(
             "https://api.openai.com/v1/responses",
             {"authorization": f"Bearer {key}"},
@@ -257,7 +267,7 @@ def run_openai(model: str, system: str, tools: list[dict], case: dict) -> dict:
             {"type": "function_call_output", "call_id": call["call_id"], "output": stub_result(call["name"])}
             for call in calls
         ]
-    return {"tool": None, "text": "(still looking after four rounds)", "trace": trace}
+    return {"tool": None, "text": f"(still looking after {ROUNDS} rounds)", "trace": trace}
 
 
 def run_openrouter(model: str, system: str, tools: list[dict], case: dict) -> dict:
@@ -269,7 +279,7 @@ def run_openrouter(model: str, system: str, tools: list[dict], case: dict) -> di
     ]
     messages: list = [{"role": "system", "content": system}, {"role": "user", "content": user_message(case)}]
     trace = []
-    for _ in range(4):
+    for _ in range(ROUNDS):
         reply = post(
             "https://openrouter.ai/api/v1/chat/completions",
             {"authorization": f"Bearer {key}"},
@@ -290,7 +300,7 @@ def run_openrouter(model: str, system: str, tools: list[dict], case: dict) -> di
             {"role": "tool", "tool_call_id": call["id"], "content": stub_result(call["function"]["name"])}
             for call in calls
         ]
-    return {"tool": None, "text": "(still looking after four rounds)", "trace": trace}
+    return {"tool": None, "text": f"(still looking after {ROUNDS} rounds)", "trace": trace}
 
 
 def answer_label(result: dict) -> str:
