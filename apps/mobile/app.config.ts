@@ -17,6 +17,14 @@ const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 
+// A fork shipping its own binaries (Roost's TestFlight builds) publishes OTAs
+// to its own EAS project. EAS builds send the channel from eas.json; a local
+// archive has no such step, so the channel is baked in as a request header.
+const easOwner = repoEnv.T3CODE_EAS_OWNER?.trim() || "pingdotgg";
+const easProjectId =
+  repoEnv.T3CODE_EAS_PROJECT_ID?.trim() ?? "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
+const updatesChannel = repoEnv.T3CODE_UPDATES_CHANNEL?.trim();
+
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
@@ -244,9 +252,10 @@ const config: ExpoConfig = {
   userInterfaceStyle: "automatic",
   updates: {
     enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    ...(easProjectId ? { url: `https://u.expo.dev/${easProjectId}` } : {}),
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
+    ...(updatesChannel ? { requestHeaders: { "expo-channel-name": updatesChannel } } : {}),
   },
   ios: {
     icon: variant.assets.iosIcon,
@@ -506,11 +515,9 @@ const config: ExpoConfig = {
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    },
+    ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },
-  owner: "pingdotgg",
+  owner: easOwner,
 };
 
 export default config;
