@@ -7,6 +7,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
 import { initializeV2Database } from "../initializeV2Database.ts";
+import { repairImportedThreadCreators } from "../roostImportedThreadCreators.ts";
 import * as ServerConfig from "../../config.ts";
 
 // Size the -wal file is cut back to on the first commit after a WAL reset.
@@ -23,6 +24,7 @@ const setup = Layer.effectDiscard(
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();
+    yield* repairImportedThreadCreators;
   }),
 );
 

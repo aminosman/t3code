@@ -4,6 +4,7 @@ import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
+  BotIcon,
   ChevronRightIcon,
   FolderPlusIcon,
   Globe2Icon,
@@ -837,6 +838,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </a>
           ) : null}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          {/* Roost: a thread an agent started, as against one the user opened. */}
+          {thread.source.createdBy === "agent" ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    className="inline-flex shrink-0 text-sidebar-muted-foreground/70"
+                    data-testid={`thread-agent-started-${thread.id}`}
+                    aria-label="Started by an agent"
+                  >
+                    <BotIcon className="size-3" />
+                  </span>
+                }
+              />
+              <TooltipPopup side="top">Started by an agent</TooltipPopup>
+            </Tooltip>
+          ) : null}
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}
