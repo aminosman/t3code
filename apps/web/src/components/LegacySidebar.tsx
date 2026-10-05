@@ -33,6 +33,12 @@ import {
   useProjectSectionEditStore,
   type ProjectSectionLayout,
 } from "./LegacySidebar.sections";
+import {
+  flattenOwnedThreads,
+  groupOwnedThreads,
+  type OwnedThreadRow,
+  useOwnedThreadExpansionStore,
+} from "./LegacySidebar.ownedThreads";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -332,6 +338,11 @@ function buildThreadJumpLabelMap(input: {
 
 interface SidebarThreadRowProps {
   thread: SidebarThreadSummary;
+  /** How many owners up; 0 for a thread at the top of the list. */
+  ownedDepth: number;
+  /** Owned children in the list; 0 draws no chevron. */
+  ownedChildCount: number;
+  ownedExpanded: boolean;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
   openPullRequestsInRightPanel: boolean;
@@ -400,6 +411,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     openPrLink,
     onFileDropThreads,
     thread,
+    ownedDepth,
+    ownedChildCount,
+    ownedExpanded,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
@@ -717,6 +731,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     [attemptArchiveThread, threadRef],
   );
 
+  const handleToggleOwnedChildren = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      useOwnedThreadExpansionStore.getState().setExpanded(thread.id, !ownedExpanded);
+    },
+    [ownedExpanded, thread.id],
+  );
+
   return (
     <SidebarMenuSubItem
       ref={rowRef}
@@ -749,7 +772,30 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
+        style={ownedDepth > 0 ? { paddingLeft: `${0.5 + ownedDepth * 0.875}rem` } : undefined}
       >
+        {ownedChildCount > 0 ? (
+          <button
+            type="button"
+            aria-label={
+              ownedExpanded
+                ? `Hide ${ownedChildCount} owned threads`
+                : `Show ${ownedChildCount} owned threads`
+            }
+            aria-expanded={ownedExpanded}
+            data-testid={`thread-owned-toggle-${thread.id}`}
+            className="-ml-1 flex h-4 shrink-0 items-center gap-0.5 rounded-sm px-0.5 text-sidebar-muted-foreground hover:text-sidebar-foreground"
+            onClick={handleToggleOwnedChildren}
+            onPointerDown={stopPropagationOnPointerDown}
+          >
+            <ChevronRightIcon
+              className={cn("size-3 transition-transform", ownedExpanded && "rotate-90")}
+            />
+            {!ownedExpanded ? (
+              <span className="text-[10px] tabular-nums">{ownedChildCount}</span>
+            ) : null}
+          </button>
+        ) : null}
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
           {prStatus && pr && (
             <Tooltip>
@@ -975,7 +1021,7 @@ interface SidebarProjectThreadListProps {
   hasOverflowingThreads: boolean;
   hiddenThreadStatus: ThreadStatusPill | null;
   orderedProjectThreadKeys: readonly string[];
-  renderedThreads: readonly SidebarThreadSummary[];
+  renderedThreads: readonly OwnedThreadRow<SidebarThreadSummary>[];
   showEmptyThreadState: boolean;
   shouldShowThreadPanel: boolean;
   isThreadListExpanded: boolean;
@@ -1081,12 +1127,15 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         </SidebarMenuSubItem>
       ) : null}
       {shouldShowThreadPanel &&
-        renderedThreads.map((thread) => {
+        renderedThreads.map(({ thread, depth, childCount, expanded }) => {
           const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
           return (
             <SidebarThreadRow
               key={threadKey}
               thread={thread}
+              ownedDepth={depth}
+              ownedChildCount={childCount}
+              ownedExpanded={expanded}
               orderedProjectThreadKeys={orderedProjectThreadKeys}
               isActive={activeRouteThreadKey === threadKey}
               openPullRequestsInRightPanel={openPullRequestsInRightPanel}
@@ -1288,6 +1337,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
   sidebarThreadByKeyRef.current = sidebarThreadByKey;
   const projectThreads = sidebarThreads;
+  const ownedExpandedByThreadId = useOwnedThreadExpansionStore((state) => state.expandedByThreadId);
   const projectPreferenceKeys = useMemo(() => projectExpansionPreferenceKeys(project), [project]);
   const projectExpanded = useUiStateStore((state) =>
     resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
@@ -1413,25 +1463,29 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const hasOverflowingThreads = visibleProjectThreads.length > sidebarThreadPreviewCount;
+    // Owned threads sit under their owner, so the preview counts only the
+    // threads at the top of the list.
+    const { topLevel, childrenByOwner } = groupOwnedThreads(visibleProjectThreads);
+    const hasOverflowingThreads = topLevel.length > sidebarThreadPreviewCount;
     const previewThreads =
       isThreadListExpanded || !hasOverflowingThreads
-        ? visibleProjectThreads
-        : visibleProjectThreads.slice(0, sidebarThreadPreviewCount);
-    const visibleThreadKeys = new Set(
-      [...previewThreads, ...(pinnedCollapsedThread ? [pinnedCollapsedThread] : [])].map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-    );
-    const renderedThreads = pinnedCollapsedThread
-      ? [pinnedCollapsedThread]
-      : visibleProjectThreads.filter((thread) =>
-          visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-        );
-    const hiddenThreads = visibleProjectThreads.filter(
-      (thread) =>
-        !visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-    );
+        ? topLevel
+        : topLevel.slice(0, sidebarThreadPreviewCount);
+    const activeThreadId =
+      visibleProjectThreads.find(
+        (thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeRouteThreadKey,
+      )?.id ?? null;
+    const renderedThreads: OwnedThreadRow<SidebarThreadSummary>[] = pinnedCollapsedThread
+      ? [{ thread: pinnedCollapsedThread, depth: 0, childCount: 0, expanded: false }]
+      : flattenOwnedThreads({
+          roots: previewThreads,
+          childrenByOwner,
+          expandedByThreadId: ownedExpandedByThreadId,
+          activeThreadId,
+        });
+    const shownThreadIds = new Set(previewThreads.map((thread) => thread.id));
+    const hiddenThreads = topLevel.filter((thread) => !shownThreadIds.has(thread.id));
     return {
       hasOverflowingThreads,
       hiddenThreadStatus: resolveProjectStatusIndicator(
@@ -1442,7 +1496,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       shouldShowThreadPanel: projectExpanded || pinnedCollapsedThread !== null,
     };
   }, [
+    activeRouteThreadKey,
     isThreadListExpanded,
+    ownedExpandedByThreadId,
     pinnedCollapsedThread,
     projectExpanded,
     projectThreads,
@@ -3710,6 +3766,7 @@ export default function LegacySidebar() {
     ],
     [projectSectionLayout],
   );
+  const ownedExpandedByThreadId = useOwnedThreadExpansionStore((state) => state.expandedByThreadId);
   const visibleSidebarThreadKeys = useMemo(
     () =>
       displayedProjects.flatMap((project) => {
@@ -3737,17 +3794,32 @@ export default function LegacySidebar() {
           return [];
         }
         const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-        const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
+        // The same rows the project draws: owned threads under their owner.
+        const { topLevel, childrenByOwner } = groupOwnedThreads(projectThreads);
+        const hasOverflowingThreads = topLevel.length > sidebarThreadPreviewCount;
         const previewThreads =
           isThreadListExpanded || !hasOverflowingThreads
-            ? projectThreads
-            : projectThreads.slice(0, sidebarThreadPreviewCount);
-        const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
+            ? topLevel
+            : topLevel.slice(0, sidebarThreadPreviewCount);
+        const renderedThreads = pinnedCollapsedThread
+          ? [pinnedCollapsedThread]
+          : flattenOwnedThreads({
+              roots: previewThreads,
+              childrenByOwner,
+              expandedByThreadId: ownedExpandedByThreadId,
+              activeThreadId:
+                projectThreads.find(
+                  (thread) =>
+                    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                    activeThreadKey,
+                )?.id ?? null,
+            }).map((row) => row.thread);
         return renderedThreads.map((thread) =>
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         );
       }),
     [
+      ownedExpandedByThreadId,
       sidebarThreadSortOrder,
       sidebarThreadPreviewCount,
       expandedThreadListsByProject,
