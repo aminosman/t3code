@@ -9,6 +9,10 @@ import {
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
+  createProjectSection,
+  deleteProjectSection,
+  moveProjectSection,
+  moveProjectsToSection,
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
@@ -23,6 +27,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKey: null,
+    projectSections: [],
+    projectSectionByProjectKey: {},
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -197,6 +203,8 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      projectSections: [],
+      projectSectionByProjectKey: {},
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -319,6 +327,8 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      projectSections: [],
+      projectSectionByProjectKey: {},
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -362,5 +372,57 @@ describe("uiStateStore persistence", () => {
     ) as PersistedUiState;
     expect(resolveProjectExpanded(persisted.projectExpandedById ?? {}, ["unknown"])).toBe(true);
     expect(persisted).not.toHaveProperty("threadPanelOpen");
+  });
+});
+
+describe("project sections", () => {
+  it("creates a section holding the given projects and moves them between sections", () => {
+    const created = createProjectSection(makeUiState(), { id: "work", name: " Work " }, ["a", "b"]);
+    expect(created.projectSections).toEqual([{ id: "work", name: "Work", collapsed: false }]);
+    expect(created.projectSectionByProjectKey).toEqual({ a: "work", b: "work" });
+
+    const withHome = createProjectSection(created, { id: "home", name: "Home" });
+    const moved = moveProjectsToSection(withHome, ["b"], "home");
+    expect(moved.projectSectionByProjectKey).toEqual({ a: "work", b: "home" });
+    expect(moveProjectsToSection(moved, ["b"], "home")).toBe(moved);
+    expect(moveProjectsToSection(moved, ["b"], "missing")).toBe(moved);
+    expect(moveProjectsToSection(moved, ["a"], null).projectSectionByProjectKey).toEqual({
+      b: "home",
+    });
+  });
+
+  it("returns a deleted section's projects to the unsectioned list", () => {
+    const state = createProjectSection(
+      createProjectSection(makeUiState(), { id: "work", name: "Work" }, ["a"]),
+      { id: "home", name: "Home" },
+      ["b"],
+    );
+    const deleted = deleteProjectSection(state, "work");
+    expect(deleted.projectSections.map((section) => section.id)).toEqual(["home"]);
+    expect(deleted.projectSectionByProjectKey).toEqual({ b: "home" });
+  });
+
+  it("moves a section up and down within bounds", () => {
+    const state = createProjectSection(
+      createProjectSection(makeUiState(), { id: "work", name: "Work" }),
+      { id: "home", name: "Home" },
+    );
+    expect(moveProjectSection(state, "home", -1).projectSections.map((s) => s.id)).toEqual([
+      "home",
+      "work",
+    ]);
+    expect(moveProjectSection(state, "home", 1)).toBe(state);
+  });
+
+  it("drops memberships that point at a section that no longer exists", () => {
+    const parsed = parsePersistedState({
+      projectSections: [
+        { id: "work", name: "Work", collapsed: true },
+        { id: "work", name: "Duplicate", collapsed: false },
+      ],
+      projectSectionByProjectKey: { a: "work", b: "gone" },
+    });
+    expect(parsed.projectSections).toEqual([{ id: "work", name: "Work", collapsed: true }]);
+    expect(parsed.projectSectionByProjectKey).toEqual({ a: "work" });
   });
 });

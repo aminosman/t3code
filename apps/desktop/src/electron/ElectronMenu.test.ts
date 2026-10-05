@@ -85,6 +85,53 @@ describe("ElectronMenu", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect("resolves a submenu pick and marks the checked choice", () =>
+    Effect.gen(function* () {
+      buildFromTemplateMock.mockImplementation(
+        (template: Electron.MenuItemConstructorOptions[]) => ({
+          popup: () => {
+            const submenu = template[0]?.submenu as Electron.MenuItemConstructorOptions[];
+            submenu[1]?.click?.(
+              {} as Electron.MenuItem,
+              {} as Electron.BrowserWindow,
+              {} as KeyboardEvent,
+            );
+          },
+        }),
+      );
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      const selectedItemId = yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [
+          {
+            id: "section:submenu",
+            label: "Move to section",
+            children: [
+              { id: "section:work", label: "Work", checked: true },
+              { id: "section:home", label: "Home", checked: false },
+              { id: "section:new", label: "New section…", separatorBefore: true },
+            ],
+          },
+        ],
+        position: Option.none(),
+      });
+
+      assert.equal(Option.getOrNull(selectedItemId), "section:home");
+      const submenu = buildFromTemplateMock.mock.calls[0]?.[0][0]
+        .submenu as Electron.MenuItemConstructorOptions[];
+      assert.deepEqual(
+        submenu.map((item) => [item.type ?? "normal", item.label, item.checked]),
+        [
+          ["checkbox", "Work", true],
+          ["checkbox", "Home", false],
+          ["separator", undefined, undefined],
+          ["normal", "New section…", undefined],
+        ],
+      );
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("resolves with none when the menu closes without a click", () =>
     Effect.gen(function* () {
       let popupOptions: Electron.PopupOptions | undefined;

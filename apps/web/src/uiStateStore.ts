@@ -31,6 +31,17 @@ export interface PersistedUiState {
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
+  projectSections?: ProjectSection[];
+  projectSectionByProjectKey?: Record<string, string>;
+}
+
+/** A user-made heading in the sidebar's project list. Membership is keyed by
+ * physical project order keys, like `projectOrder`, so a logical project
+ * follows its members through regrouping. */
+export interface ProjectSection {
+  id: string;
+  name: string;
+  collapsed: boolean;
 }
 
 export interface UiProjectState {
@@ -40,6 +51,8 @@ export interface UiProjectState {
   // projects". Lives here so routes that unmount the sidebar (Settings)
   // cannot reset the filter.
   sidebarProjectScopeKey: string | null;
+  projectSections: ProjectSection[];
+  projectSectionByProjectKey: Record<string, string>;
 }
 
 export interface UiThreadState {
@@ -62,6 +75,8 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   sidebarProjectScopeKey: null,
+  projectSections: [],
+  projectSectionByProjectKey: {},
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -117,6 +132,38 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   );
 }
 
+function sanitizeProjectSections(value: unknown): ProjectSection[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const sections: ProjectSection[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const { id, name, collapsed } = entry as Partial<ProjectSection>;
+    if (typeof id !== "string" || id.length === 0 || seen.has(id)) continue;
+    seen.add(id);
+    sections.push({
+      id,
+      name: typeof name === "string" && name.trim().length > 0 ? name : "Section",
+      collapsed: collapsed === true,
+    });
+  }
+  return sections;
+}
+
+function sanitizeProjectSectionMembership(
+  value: unknown,
+  sections: readonly ProjectSection[],
+): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  const sectionIds = new Set(sections.map((section) => section.id));
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] =>
+        entry[0].length > 0 && typeof entry[1] === "string" && sectionIds.has(entry[1]),
+    ),
+  );
+}
+
 function isPullRequestMergeMethod(value: unknown): value is PullRequestMergeMethod {
   return value === "merge" || value === "squash" || value === "rebase";
 }
@@ -144,10 +191,16 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     parsed.projectOrder === undefined
       ? sanitizeStringArray(parsed.projectOrderCwds).map(legacyProjectCwdPreferenceKey)
       : sanitizeStringArray(parsed.projectOrder);
+  const projectSections = sanitizeProjectSections(parsed.projectSections);
 
   return {
     projectExpandedById,
     projectOrder,
+    projectSections,
+    projectSectionByProjectKey: sanitizeProjectSectionMembership(
+      parsed.projectSectionByProjectKey,
+      projectSections,
+    ),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -226,6 +279,8 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        projectSections: state.projectSections,
+        projectSectionByProjectKey: state.projectSectionByProjectKey,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
@@ -423,6 +478,99 @@ export function reorderProjects(
   };
 }
 
+export function createProjectSection(
+  state: UiState,
+  section: { id: string; name: string },
+  projectKeys: readonly string[] = [],
+): UiState {
+  if (state.projectSections.some((existing) => existing.id === section.id)) return state;
+  return moveProjectsToSection(
+    {
+      ...state,
+      projectSections: [
+        ...state.projectSections,
+        { id: section.id, name: section.name.trim() || "Section", collapsed: false },
+      ],
+    },
+    projectKeys,
+    section.id,
+  );
+}
+
+function updateProjectSection(
+  state: UiState,
+  sectionId: string,
+  patch: Partial<Omit<ProjectSection, "id">>,
+): UiState {
+  let changed = false;
+  const projectSections = state.projectSections.map((section) => {
+    if (section.id !== sectionId) return section;
+    const next = { ...section, ...patch };
+    if (next.name === section.name && next.collapsed === section.collapsed) return section;
+    changed = true;
+    return next;
+  });
+  return changed ? { ...state, projectSections } : state;
+}
+
+export function renameProjectSection(state: UiState, sectionId: string, name: string): UiState {
+  const trimmed = name.trim();
+  return trimmed.length === 0 ? state : updateProjectSection(state, sectionId, { name: trimmed });
+}
+
+export function setProjectSectionCollapsed(
+  state: UiState,
+  sectionId: string,
+  collapsed: boolean,
+): UiState {
+  return updateProjectSection(state, sectionId, { collapsed });
+}
+
+/** Removing a section returns its projects to the unsectioned list. */
+export function deleteProjectSection(state: UiState, sectionId: string): UiState {
+  if (!state.projectSections.some((section) => section.id === sectionId)) return state;
+  return {
+    ...state,
+    projectSections: state.projectSections.filter((section) => section.id !== sectionId),
+    projectSectionByProjectKey: Object.fromEntries(
+      Object.entries(state.projectSectionByProjectKey).filter(([, id]) => id !== sectionId),
+    ),
+  };
+}
+
+export function moveProjectSection(state: UiState, sectionId: string, offset: -1 | 1): UiState {
+  const index = state.projectSections.findIndex((section) => section.id === sectionId);
+  const target = index + offset;
+  if (index < 0 || target < 0 || target >= state.projectSections.length) return state;
+  const projectSections = [...state.projectSections];
+  [projectSections[index], projectSections[target]] = [
+    projectSections[target]!,
+    projectSections[index]!,
+  ];
+  return { ...state, projectSections };
+}
+
+/** `sectionId` null takes the projects out of any section. */
+export function moveProjectsToSection(
+  state: UiState,
+  projectKeys: readonly string[],
+  sectionId: string | null,
+): UiState {
+  if (sectionId !== null && !state.projectSections.some((section) => section.id === sectionId)) {
+    return state;
+  }
+  const changed = projectKeys.filter(
+    (key) => (state.projectSectionByProjectKey[key] ?? null) !== sectionId,
+  );
+  if (changed.length === 0) return state;
+  const projectSectionByProjectKey = { ...state.projectSectionByProjectKey };
+  for (const key of changed) {
+    if (sectionId === null) delete projectSectionByProjectKey[key];
+    else projectSectionByProjectKey[key] = sectionId;
+  }
+  return { ...state, projectSectionByProjectKey };
+}
+
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
@@ -436,6 +584,15 @@ interface UiStateStore extends UiState {
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
   ) => void;
+  createProjectSection: (
+    section: { id: string; name: string },
+    projectKeys?: readonly string[],
+  ) => void;
+  renameProjectSection: (sectionId: string, name: string) => void;
+  setProjectSectionCollapsed: (sectionId: string, collapsed: boolean) => void;
+  deleteProjectSection: (sectionId: string) => void;
+  moveProjectSection: (sectionId: string, offset: -1 | 1) => void;
+  moveProjectsToSection: (projectKeys: readonly string[], sectionId: string | null) => void;
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
@@ -457,6 +614,17 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
     ),
+  createProjectSection: (section, projectKeys) =>
+    set((state) => createProjectSection(state, section, projectKeys)),
+  renameProjectSection: (sectionId, name) =>
+    set((state) => renameProjectSection(state, sectionId, name)),
+  setProjectSectionCollapsed: (sectionId, collapsed) =>
+    set((state) => setProjectSectionCollapsed(state, sectionId, collapsed)),
+  deleteProjectSection: (sectionId) => set((state) => deleteProjectSection(state, sectionId)),
+  moveProjectSection: (sectionId, offset) =>
+    set((state) => moveProjectSection(state, sectionId, offset)),
+  moveProjectsToSection: (projectKeys, sectionId) =>
+    set((state) => moveProjectsToSection(state, projectKeys, sectionId)),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

@@ -24,10 +24,19 @@ import {
 } from "./ThreadStatusIndicators";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
+import {
+  layoutProjectSections,
+  projectSectionDropId,
+  resolveProjectDropSection,
+  resolveProjectSectionId,
+  UNSECTIONED_DROP_ID,
+  useProjectSectionEditStore,
+  type ProjectSectionLayout,
+} from "./LegacySidebar.sections";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { useShallow } from "zustand/react/shallow";
 import {
   DndContext,
@@ -38,10 +47,16 @@ import {
   closestCorners,
   pointerWithin,
   useSensor,
+  useDroppable,
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  type SortingStrategy,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -100,6 +115,7 @@ import { previewEnvironment } from "../state/preview";
 import {
   legacyProjectCwdPreferenceKey,
   resolveProjectExpanded,
+  type ProjectSection,
   useUiStateStore,
 } from "../uiStateStore";
 import {
@@ -1151,7 +1167,7 @@ interface SidebarProjectItemProps {
   dragInProgressRef: React.RefObject<boolean>;
   suppressProjectClickAfterDragRef: React.RefObject<boolean>;
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
-  isManualProjectSorting: boolean;
+  projectDragEnabled: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
 }
 
@@ -1173,7 +1189,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     dragInProgressRef,
     suppressProjectClickAfterDragRef,
     suppressProjectClickForContextMenuRef,
-    isManualProjectSorting,
+    projectDragEnabled,
     dragHandleProps,
   } = props;
   const environmentMachine = project.allRemoteMembersAreWsl
@@ -1763,10 +1779,49 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           });
         });
 
+        const {
+          projectSections,
+          projectSectionByProjectKey,
+          createProjectSection,
+          moveProjectsToSection,
+        } = useUiStateStore.getState();
+        const memberKeys = project.memberProjects.map((member) => member.physicalProjectKey);
+        const currentSectionId = resolveProjectSectionId(project, projectSectionByProjectKey);
+        actionHandlers.set("section:new", () => {
+          const id = randomUUID();
+          createProjectSection({ id, name: "New section" }, memberKeys);
+          useProjectSectionEditStore.getState().setEditingSectionId(id);
+        });
+        actionHandlers.set("section:none", () => moveProjectsToSection(memberKeys, null));
+        for (const section of projectSections) {
+          actionHandlers.set(`section:${section.id}`, () =>
+            moveProjectsToSection(memberKeys, section.id),
+          );
+        }
+
         const clicked = await api.contextMenu.show(
           [
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
+            {
+              id: "section:submenu",
+              label: "Move to section",
+              children: [
+                ...projectSections.map((section) => ({
+                  id: `section:${section.id}`,
+                  label: section.name,
+                  checked: section.id === currentSectionId,
+                })),
+                ...(currentSectionId !== null
+                  ? [{ id: "section:none", label: "No section", separatorBefore: true }]
+                  : []),
+                {
+                  id: "section:new",
+                  label: "New section…",
+                  separatorBefore: projectSections.length > 0 && currentSectionId === null,
+                },
+              ],
+            },
             buildTargetedItem("copy-path", "Copy Path"),
             { id: "project-settings", label: "Project settings", icon: "settings" },
             buildTargetedItem("delete", "Remove", {
@@ -1792,9 +1847,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       isMobile,
       openProjectGroupingDialog,
       openProjectRenameDialog,
-      project.groupedProjectCount,
-      project.memberProjects,
-      project.projectKey,
+      project,
       router,
       setOpenMobile,
       suppressProjectClickForContextMenuRef,
@@ -2371,10 +2424,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     <>
       <div className="group/project-header relative">
         <SidebarMenuButton
-          ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
-          className={isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : undefined}
-          {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
-          {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
+          ref={projectDragEnabled ? dragHandleProps?.setActivatorNodeRef : undefined}
+          className={projectDragEnabled ? "cursor-grab active:cursor-grabbing" : undefined}
+          {...(projectDragEnabled && dragHandleProps ? dragHandleProps.attributes : {})}
+          {...(projectDragEnabled && dragHandleProps ? dragHandleProps.listeners : {})}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
           onClick={handleProjectButtonClick}
           onKeyDown={handleProjectButtonKeyDown}
@@ -2833,6 +2886,139 @@ function ProjectSortMenu({
   );
 }
 
+const stationarySortingStrategy: SortingStrategy = () => null;
+
+function ProjectSectionHeader({
+  section,
+  projectCount,
+  isFirst,
+  isLast,
+}: {
+  section: ProjectSection;
+  projectCount: number;
+  isFirst: boolean;
+  isLast: boolean;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: projectSectionDropId(section.id) });
+  const setCollapsed = useUiStateStore((store) => store.setProjectSectionCollapsed);
+  const renameSection = useUiStateStore((store) => store.renameProjectSection);
+  const moveSection = useUiStateStore((store) => store.moveProjectSection);
+  const deleteSection = useUiStateStore((store) => store.deleteProjectSection);
+  const editing = useProjectSectionEditStore((store) => store.editingSectionId === section.id);
+  const setEditingSectionId = useProjectSectionEditStore((store) => store.setEditingSectionId);
+  const [draftName, setDraftName] = useState(section.name);
+
+  const startEditing = useCallback(() => {
+    setDraftName(section.name);
+    setEditingSectionId(section.id);
+  }, [section.id, section.name, setEditingSectionId]);
+  const finishEditing = useCallback(
+    (commit: boolean) => {
+      if (commit) renameSection(section.id, draftName);
+      setEditingSectionId(null);
+    },
+    [draftName, renameSection, section.id, setEditingSectionId],
+  );
+
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      void (async () => {
+        const api = readLocalApi();
+        if (!api) return;
+        const clicked = await api.contextMenu.show(
+          [
+            { id: "rename", label: "Rename section" },
+            { id: "up", label: "Move up", disabled: isFirst, separatorBefore: true },
+            { id: "down", label: "Move down", disabled: isLast },
+            {
+              id: "delete",
+              label: "Delete section",
+              icon: "trash",
+              destructive: true,
+              separatorBefore: true,
+            },
+          ],
+          { x: event.clientX, y: event.clientY },
+        );
+        if (clicked === "rename") startEditing();
+        else if (clicked === "up") moveSection(section.id, -1);
+        else if (clicked === "down") moveSection(section.id, 1);
+        else if (clicked === "delete") deleteSection(section.id);
+      })();
+    },
+    [deleteSection, isFirst, isLast, moveSection, section.id, startEditing],
+  );
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "group/section-header flex h-7 items-center gap-1 rounded-md pl-1 pr-2 text-xs font-medium text-sidebar-muted-foreground/80",
+        isOver && "bg-accent ring-1 ring-primary/40",
+      )}
+      onContextMenu={handleContextMenu}
+    >
+      {editing ? (
+        <>
+          <ChevronRightIcon
+            className={cn("size-3.5 shrink-0 text-icon-muted", !section.collapsed && "rotate-90")}
+          />
+          <input
+            autoFocus
+            aria-label="Section name"
+            className="min-w-0 flex-1 rounded-sm border border-input bg-transparent px-1 text-xs text-foreground outline-none"
+            value={draftName}
+            onChange={(event) => setDraftName(event.target.value)}
+            onFocus={(event) => event.currentTarget.select()}
+            onBlur={() => finishEditing(true)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") finishEditing(true);
+              else if (event.key === "Escape") finishEditing(false);
+            }}
+          />
+        </>
+      ) : (
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-1 text-left hover:text-sidebar-foreground"
+          aria-expanded={!section.collapsed}
+          onClick={() => setCollapsed(section.id, !section.collapsed)}
+          onDoubleClick={startEditing}
+        >
+          <ChevronRightIcon
+            className={cn(
+              "size-3.5 shrink-0 text-icon-muted transition-transform duration-150",
+              !section.collapsed && "rotate-90",
+            )}
+          />
+          <span className="truncate">{section.name}</span>
+          <span className="shrink-0 tabular-nums text-sidebar-muted-foreground/50">
+            {projectCount}
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Shown while dragging when every project is in a section, so one can be
+ * taken out again. */
+function ProjectSectionDropZone() {
+  const { setNodeRef, isOver } = useDroppable({ id: UNSECTIONED_DROP_ID });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "mb-1 rounded-md border border-dashed border-sidebar-border px-2 py-1.5 text-xs text-sidebar-muted-foreground/70",
+        isOver && "border-primary/60 bg-accent",
+      )}
+    >
+      Drop here to take out of its section
+    </div>
+  );
+}
+
 function SortableProjectItem({
   projectId,
   disabled = false,
@@ -2883,6 +3069,9 @@ interface SidebarProjectsContentProps {
   updateSettings: ReturnType<typeof useUpdateClientSettings>;
   openAddProject: () => void;
   isManualProjectSorting: boolean;
+  projectDragEnabled: boolean;
+  projectDragActive: boolean;
+  projectSectionLayout: ProjectSectionLayout<SidebarProjectSnapshot>;
   projectDnDSensors: ReturnType<typeof useSensors>;
   projectCollisionDetection: CollisionDetection;
   handleProjectDragStart: (event: DragStartEvent) => void;
@@ -2926,6 +3115,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     updateSettings,
     openAddProject,
     isManualProjectSorting,
+    projectDragEnabled,
+    projectDragActive,
+    projectSectionLayout,
     projectDnDSensors,
     projectCollisionDetection,
     handleProjectDragStart,
@@ -2970,6 +3162,46 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       updateSettings({ sidebarThreadPreviewCount: count });
     },
     [updateSettings],
+  );
+
+  // Outside manual sorting a drag only changes a project's section, so the
+  // rows must not shuffle under it.
+  const renderSortableProjects = (projects: readonly SidebarProjectSnapshot[]) => (
+    <SidebarMenu>
+      <SortableContext
+        items={projects.map((project) => project.projectKey)}
+        strategy={isManualProjectSorting ? verticalListSortingStrategy : stationarySortingStrategy}
+      >
+        {projects.map((project) => (
+          <SortableProjectItem key={project.projectKey} projectId={project.projectKey}>
+            {(dragHandleProps) => (
+              <SidebarProjectItem
+                project={project}
+                isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
+                activeRouteThreadKey={
+                  activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                }
+                openPullRequestsInRightPanel={openPullRequestsInRightPanel}
+                newThreadShortcutLabel={newThreadShortcutLabel}
+                handleNewThread={handleNewThread}
+                archiveThread={archiveThread}
+                deleteThread={deleteThread}
+                markThreadUnread={markThreadUnread}
+                threadJumpLabelByKey={threadJumpLabelByKey}
+                attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+                expandThreadListForProject={expandThreadListForProject}
+                collapseThreadListForProject={collapseThreadListForProject}
+                dragInProgressRef={dragInProgressRef}
+                suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+                suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+                projectDragEnabled
+                dragHandleProps={dragHandleProps}
+              />
+            )}
+          </SortableProjectItem>
+        ))}
+      </SortableContext>
+    </SidebarMenu>
   );
 
   return (
@@ -3047,7 +3279,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </div>
         </div>
 
-        {isManualProjectSorting ? (
+        {projectDragEnabled ? (
           <DndContext
             sensors={projectDnDSensors}
             collisionDetection={projectCollisionDetection}
@@ -3056,43 +3288,28 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             onDragEnd={handleProjectDragEnd}
             onDragCancel={handleProjectDragCancel}
           >
-            <SidebarMenu>
-              <SortableContext
-                items={sortedProjects.map((project) => project.projectKey)}
-                strategy={verticalListSortingStrategy}
-              >
-                {sortedProjects.map((project) => (
-                  <SortableProjectItem key={project.projectKey} projectId={project.projectKey}>
-                    {(dragHandleProps) => (
-                      <SidebarProjectItem
-                        project={project}
-                        isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-                        activeRouteThreadKey={
-                          activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                        }
-                        openPullRequestsInRightPanel={openPullRequestsInRightPanel}
-                        newThreadShortcutLabel={newThreadShortcutLabel}
-                        handleNewThread={handleNewThread}
-                        archiveThread={archiveThread}
-                        deleteThread={deleteThread}
-                        markThreadUnread={markThreadUnread}
-                        threadJumpLabelByKey={threadJumpLabelByKey}
-                        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                        expandThreadListForProject={expandThreadListForProject}
-                        collapseThreadListForProject={collapseThreadListForProject}
-                        dragInProgressRef={dragInProgressRef}
-                        suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                        suppressProjectClickForContextMenuRef={
-                          suppressProjectClickForContextMenuRef
-                        }
-                        isManualProjectSorting={isManualProjectSorting}
-                        dragHandleProps={dragHandleProps}
-                      />
-                    )}
-                  </SortableProjectItem>
-                ))}
-              </SortableContext>
-            </SidebarMenu>
+            {projectSectionLayout.unsectioned.length > 0 ? (
+              renderSortableProjects(projectSectionLayout.unsectioned)
+            ) : projectDragActive ? (
+              <ProjectSectionDropZone />
+            ) : null}
+            {projectSectionLayout.sections.map(({ section, projects: sectionProjects }, index) => (
+              <div key={section.id} className="mt-1">
+                <ProjectSectionHeader
+                  section={section}
+                  projectCount={sectionProjects.length}
+                  isFirst={index === 0}
+                  isLast={index === projectSectionLayout.sections.length - 1}
+                />
+                {section.collapsed ? null : sectionProjects.length > 0 ? (
+                  renderSortableProjects(sectionProjects)
+                ) : (
+                  <div className="px-2 py-1 text-xs text-sidebar-muted-foreground/60">
+                    Drag projects here
+                  </div>
+                )}
+              </div>
+            ))}
           </DndContext>
         ) : (
           <SidebarMenu ref={attachProjectListAutoAnimateRef}>
@@ -3117,7 +3334,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 dragInProgressRef={dragInProgressRef}
                 suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
                 suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-                isManualProjectSorting={isManualProjectSorting}
+                projectDragEnabled={false}
                 dragHandleProps={null}
               />
             ))}
@@ -3138,6 +3355,10 @@ export default function LegacySidebar() {
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
+  const projectSections = useUiStateStore((store) => store.projectSections);
+  const projectSectionByProjectKey = useUiStateStore((store) => store.projectSectionByProjectKey);
+  const moveProjectsToSection = useUiStateStore((store) => store.moveProjectsToSection);
+  const [projectDragActive, setProjectDragActive] = useState(false);
   const navigate = useNavigate();
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
@@ -3362,40 +3583,63 @@ export default function LegacySidebar() {
     return closestCorners(args);
   }, []);
 
+  const projectDragEnabled = sidebarProjectSortOrder === "manual" || projectSections.length > 0;
+
   const handleProjectDragEnd = useCallback(
     (event: DragEndEvent) => {
-      if (sidebarProjectSortOrder !== "manual") {
-        dragInProgressRef.current = false;
-        return;
-      }
       dragInProgressRef.current = false;
+      setProjectDragActive(false);
+      if (!projectDragEnabled) return;
       const { active, over } = event;
-      if (!over || active.id === over.id) return;
+      if (!over) return;
       const activeProject = sidebarProjects.find((project) => project.projectKey === active.id);
-      const overProject = sidebarProjects.find((project) => project.projectKey === over.id);
-      if (!activeProject || !overProject) return;
+      if (!activeProject) return;
       const activeMemberKeys = activeProject.memberProjects.map(
         (member) => member.physicalProjectKey,
       );
+      const targetSectionId = resolveProjectDropSection(
+        String(over.id),
+        sidebarProjects,
+        projectSectionByProjectKey,
+      );
+      if (
+        targetSectionId !== undefined &&
+        targetSectionId !== resolveProjectSectionId(activeProject, projectSectionByProjectKey)
+      ) {
+        moveProjectsToSection(activeMemberKeys, targetSectionId);
+      }
+      if (sidebarProjectSortOrder !== "manual" || active.id === over.id) return;
+      const overProject = sidebarProjects.find((project) => project.projectKey === over.id);
+      if (!overProject) return;
       const overMemberKeys = overProject.memberProjects.map((member) => member.physicalProjectKey);
       reorderProjects(orderedProjects.map(getProjectOrderKey), activeMemberKeys, overMemberKeys);
     },
-    [orderedProjects, sidebarProjectSortOrder, reorderProjects, sidebarProjects],
+    [
+      moveProjectsToSection,
+      orderedProjects,
+      projectDragEnabled,
+      projectSectionByProjectKey,
+      sidebarProjectSortOrder,
+      reorderProjects,
+      sidebarProjects,
+    ],
   );
 
   const handleProjectDragStart = useCallback(
     (_event: DragStartEvent) => {
-      if (sidebarProjectSortOrder !== "manual") {
+      if (!projectDragEnabled) {
         return;
       }
       dragInProgressRef.current = true;
       suppressProjectClickAfterDragRef.current = true;
+      setProjectDragActive(true);
     },
-    [sidebarProjectSortOrder],
+    [projectDragEnabled],
   );
 
   const handleProjectDragCancel = useCallback((_event: DragCancelEvent) => {
     dragInProgressRef.current = false;
+    setProjectDragActive(false);
   }, []);
 
   const animatedProjectListsRef = useRef(new WeakSet<HTMLElement>());
@@ -3452,9 +3696,23 @@ export default function LegacySidebar() {
     visibleThreads,
   ]);
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
+  const projectSectionLayout = useMemo(
+    () => layoutProjectSections(sortedProjects, projectSections, projectSectionByProjectKey),
+    [projectSectionByProjectKey, projectSections, sortedProjects],
+  );
+  // Projects in the order they appear, without those in collapsed sections.
+  const displayedProjects = useMemo(
+    () => [
+      ...projectSectionLayout.unsectioned,
+      ...projectSectionLayout.sections.flatMap(({ section, projects: sectionProjects }) =>
+        section.collapsed ? [] : sectionProjects,
+      ),
+    ],
+    [projectSectionLayout],
+  );
   const visibleSidebarThreadKeys = useMemo(
     () =>
-      sortedProjects.flatMap((project) => {
+      displayedProjects.flatMap((project) => {
         const projectThreads = sortThreads(
           (threadsByProjectKey.get(project.projectKey) ?? []).filter(
             (thread) => thread.archivedAt === null,
@@ -3495,7 +3753,7 @@ export default function LegacySidebar() {
       expandedThreadListsByProject,
       projectExpandedById,
       routeThreadKey,
-      sortedProjects,
+      displayedProjects,
       threadsByProjectKey,
     ],
   );
@@ -3789,6 +4047,9 @@ export default function LegacySidebar() {
         updateSettings={updateSettings}
         openAddProject={openAddProjectCommandPalette}
         isManualProjectSorting={isManualProjectSorting}
+        projectDragEnabled={projectDragEnabled}
+        projectDragActive={projectDragActive}
+        projectSectionLayout={projectSectionLayout}
         projectDnDSensors={projectDnDSensors}
         projectCollisionDetection={projectCollisionDetection}
         handleProjectDragStart={handleProjectDragStart}
