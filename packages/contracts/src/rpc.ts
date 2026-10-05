@@ -266,6 +266,16 @@ import {
   PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
 import {
+  TuiInboxControlInput,
+  TuiInboxError,
+  TuiInboxEvent,
+  TuiInboxHost,
+  TuiInboxHostEvent,
+  TuiInboxPost,
+  TuiInboxSendInput,
+  TuiInboxSendResult,
+} from "./tuiInbox.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   ServerConfig,
@@ -418,6 +428,13 @@ export const WS_METHODS = {
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
+
+  // tui inbox (Roost): phone ↔ the Mac's voice assistant
+  tuiInboxConnect: "tuiInbox.connect",
+  tuiInboxPost: "tuiInbox.post",
+  tuiInboxSend: "tuiInbox.send",
+  tuiInboxSubscribe: "tuiInbox.subscribe",
+  tuiInboxControl: "tuiInbox.control",
 
   // Device methods
   deviceConfigure: "device.configure",
@@ -1425,6 +1442,36 @@ const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFoc
   error: EnvironmentAuthorizationError,
 });
 
+const WsTuiInboxConnectRpc = Rpc.make(WS_METHODS.tuiInboxConnect, {
+  payload: TuiInboxHost,
+  success: TuiInboxHostEvent,
+  error: Schema.Union([TuiInboxError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsTuiInboxPostRpc = Rpc.make(WS_METHODS.tuiInboxPost, {
+  payload: TuiInboxPost,
+  error: Schema.Union([TuiInboxError, EnvironmentAuthorizationError]),
+});
+
+const WsTuiInboxSendRpc = Rpc.make(WS_METHODS.tuiInboxSend, {
+  payload: TuiInboxSendInput,
+  success: TuiInboxSendResult,
+  error: Schema.Union([TuiInboxError, EnvironmentAuthorizationError]),
+});
+
+const WsTuiInboxSubscribeRpc = Rpc.make(WS_METHODS.tuiInboxSubscribe, {
+  payload: Schema.Struct({}),
+  success: TuiInboxEvent,
+  error: Schema.Union([TuiInboxError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsTuiInboxControlRpc = Rpc.make(WS_METHODS.tuiInboxControl, {
+  payload: TuiInboxControlInput,
+  error: Schema.Union([TuiInboxError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -1829,6 +1876,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
+  WsTuiInboxConnectRpc,
+  WsTuiInboxPostRpc,
+  WsTuiInboxSendRpc,
+  WsTuiInboxSubscribeRpc,
+  WsTuiInboxControlRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,

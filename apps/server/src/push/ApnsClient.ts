@@ -37,6 +37,8 @@ export interface ApnsNotification {
   readonly data: Record<string, string>;
   /** Coalesces updates about the same thread into one notification. */
   readonly collapseId?: string;
+  /** A notification category the app registered, for action buttons. */
+  readonly category?: string;
 }
 
 export class ApnsDeliveryError extends Schema.TaggedError<ApnsDeliveryError>()(
@@ -190,6 +192,7 @@ export const make = Effect.sync(() => {
             alert: { title: notification.title, body: notification.body },
             sound: "default",
             "interruption-level": "active",
+            ...(notification.category ? { category: notification.category } : {}),
           },
           ...notification.data,
         });

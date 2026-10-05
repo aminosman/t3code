@@ -1010,10 +1010,35 @@ const make = Effect.gen(function* () {
       return { ...next, voice };
     });
 
+  /**
+   * Roost lost its APNs key between Sep 9 and Sep 27 2026: settings.json was
+   * rewritten without its `push` block (an older build that did not know the
+   * key wrote it back), and the next write here read the defaulted block as a
+   * clear and deleted the secret. Push stayed silent for weeks. So a key is
+   * only removed when one was in effect and the write cleared it, and a write
+   * that resets the whole block to defaults keeps the configured one.
+   */
   const persistPushSecret = (
-    next: ServerSettings,
+    current: ServerSettings,
+    requested: ServerSettings,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     Effect.gen(function* () {
+      const isDefaultPush = (push: ServerSettings["push"]) =>
+        !push.enabled &&
+        push.authKey.length === 0 &&
+        push.keyId.length === 0 &&
+        push.teamId.length === 0 &&
+        push.bundleId.length === 0;
+      const keyInEffect = current.push.authKey.length > 0 || current.push.authKeyRedacted === true;
+      let next = requested;
+      if (keyInEffect && isDefaultPush(requested.push)) {
+        yield* Effect.logWarning("settings: a write reset push to defaults; keeping the APNs key");
+        next = { ...requested, push: current.push };
+      }
+      if (next.push.authKey.length === 0 && !keyInEffect) {
+        const { authKeyRedacted: _omit, ...push } = next.push;
+        return { ...next, push };
+      }
       if (next.push.authKey.length > 0) {
         yield* secretStore
           .set(PUSH_APNS_AUTH_KEY_SECRET_NAME, textEncoder.encode(next.push.authKey))
@@ -1302,7 +1327,7 @@ const make = Effect.gen(function* () {
         const updated = yield* update(current);
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const withOwnSecrets = yield* persistVoiceSecret(persisted.settings).pipe(
-          Effect.flatMap(persistPushSecret),
+          Effect.flatMap((settings) => persistPushSecret(current, settings)),
         );
         const next = yield* normalizeServerSettings(withOwnSecrets);
         const materialized = yield* Effect.uninterruptibleMask(() =>

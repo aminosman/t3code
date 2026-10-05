@@ -1643,6 +1643,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(roundTripped.push.authKey, "-----BEGIN PRIVATE KEY-----apns-secret");
       assert.equal(roundTripped.push.bundleId, "co.example.other");
 
+      // A write that resets the whole block to defaults (an older build
+      // writing settings back without `push`) keeps the configured key.
+      const reset = yield* serverSettings.updateSettings({
+        push: { enabled: false, authKey: "", keyId: "", teamId: "", bundleId: "" },
+      });
+      assert.equal(reset.push.authKey, "-----BEGIN PRIVATE KEY-----apns-secret");
+      assert.equal(reset.push.bundleId, "co.example.other");
+
       // Clearing the key removes the secret and the redaction marker.
       const cleared = yield* serverSettings.updateSettings({
         push: { authKey: "", authKeyRedacted: false },

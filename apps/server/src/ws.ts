@@ -175,6 +175,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as TuiInbox from "./tuiInbox/TuiInbox.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -1121,6 +1122,7 @@ const makeWsRpcLayer = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const tuiInbox = yield* TuiInbox.TuiInbox;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -3430,6 +3432,26 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.tuiInboxConnect]: (input) =>
+          observeRpcStreamEffect(WS_METHODS.tuiInboxConnect, tuiInbox.connect(input), {
+            "rpc.aggregate": "tui-inbox",
+          }),
+        [WS_METHODS.tuiInboxPost]: (input) =>
+          observeRpcEffect(WS_METHODS.tuiInboxPost, tuiInbox.post(input), {
+            "rpc.aggregate": "tui-inbox",
+          }),
+        [WS_METHODS.tuiInboxSend]: (input) =>
+          observeRpcEffect(WS_METHODS.tuiInboxSend, tuiInbox.send(input), {
+            "rpc.aggregate": "tui-inbox",
+          }),
+        [WS_METHODS.tuiInboxSubscribe]: (_input) =>
+          observeRpcStreamEffect(WS_METHODS.tuiInboxSubscribe, tuiInbox.subscribe, {
+            "rpc.aggregate": "tui-inbox",
+          }),
+        [WS_METHODS.tuiInboxControl]: (input) =>
+          observeRpcEffect(WS_METHODS.tuiInboxControl, tuiInbox.control(input), {
+            "rpc.aggregate": "tui-inbox",
+          }),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,
@@ -3721,6 +3743,7 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const tuiInbox = yield* TuiInbox.TuiInbox;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
@@ -3779,6 +3802,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
+              // One inbox for the server's life: tui's stream and the phone's share it.
+              Layer.provide(Layer.succeed(TuiInbox.TuiInbox, tuiInbox)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),

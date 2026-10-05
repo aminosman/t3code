@@ -24,6 +24,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ApnsClient from "./ApnsClient.ts";
+import { readApnsCredentials } from "./apnsCredentials.ts";
 import * as PushDeviceRegistry from "./PushDeviceRegistry.ts";
 
 /**
@@ -74,32 +75,11 @@ export const make = Effect.gen(function* () {
 
   const phaseByThread = new Map<ThreadId, AgentAwarenessPhase | null>();
 
-  const readCredentials = Effect.gen(function* () {
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchTag("ServerSettingsError", (cause) =>
-        Effect.logWarning("push: failed to read settings", { cause }).pipe(Effect.as(undefined)),
-      ),
-    );
-    const push = settings?.push;
-    if (
-      !push?.enabled ||
-      push.authKey.length === 0 ||
-      push.keyId.length === 0 ||
-      push.teamId.length === 0 ||
-      push.bundleId.length === 0
-    ) {
-      return null;
-    }
-    return {
-      teamId: push.teamId,
-      keyId: push.keyId,
-      privateKey: push.authKey,
-      bundleId: push.bundleId,
-    } satisfies ApnsClient.ApnsCredentials;
-  });
-
   const notifyThread = Effect.fn("PushNotifier.notifyThread")(function* (threadId: ThreadId) {
-    const credentials = yield* readCredentials;
+    const registered = yield* registry.list;
+    const credentials = yield* readApnsCredentials({ devicesWaiting: registered.length }).pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, settingsService),
+    );
     if (credentials === null) {
       return;
     }
