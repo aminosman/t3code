@@ -20,15 +20,15 @@ describe("buildRuntimeInstructions", () => {
     expect(instructions).toContain("not the present state of the code");
   });
 
-  it("routes a fresh look to delegate_task and separate work to t3_thread_launch", () => {
+  it("routes by ownership: owned work to delegate_task, work that stands alone to t3_thread_launch", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
     expect(instructions).toContain("<fresh_threads>");
-    expect(instructions).toMatch(/A fresh mind on this work[^\n]*: delegate_task\./);
-    expect(instructions).toMatch(
-      /Separate work the user wants as its own thread[^\n]*: t3_thread_launch/,
-    );
+    expect(instructions).toContain("does this thread own the work");
+    expect(instructions).toMatch(/- Owned: delegate_task\./);
+    expect(instructions).toMatch(/- Not owned: t3_thread_launch\./);
+    expect(instructions).toContain("When it is genuinely unclear, choose owned");
     expect(instructions).toContain("pick a different provider than the one you run on");
-    expect(instructions).toContain("Do not use either to split up ordinary work");
+    expect(instructions).toContain("Do not start either to split up ordinary work");
     expect(instructions).toContain("say when you start one and why");
     expect(instructions).not.toContain("t3_thread_create");
   });

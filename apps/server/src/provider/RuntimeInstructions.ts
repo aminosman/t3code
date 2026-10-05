@@ -17,19 +17,26 @@ This thread is one of many, and the work is also talked about out loud. The same
 </history>`;
 
 // Roost's half of handing work to another agent. Upstream's orchestration
-// instructions say what delegate_task and t3_thread_launch are; this says when
-// the user wants which, and how a review is asked for so it is worth having
-// (Amin, Sep 21 2026: "a fresh review … a different model, a higher model and
-// one from a different provider … adversarial reviews"). It replaced Roost's
-// own t3_thread_create on Oct 5 2026, so there is one way to do each.
+// instructions say what delegate_task and t3_thread_launch are; this says which
+// one the user means. The question is ownership — does this thread want the
+// result back? — and the sidebar follows it: an owned thread is drawn under
+// its owner, one nobody owns stays at the top (Amin, Oct 5 2026: "nest owned
+// and unnest non owned … make sure the agent knows when to use each"). The
+// review advice is from Sep 21 2026: "a fresh review … a different model, a
+// higher model and one from a different provider … adversarial reviews".
+// scripts/spawn-routing-eval.py measures this text against the user's own
+// requests; change it only if that score holds.
 const FRESH_THREAD_INSTRUCTIONS = `<fresh_threads>
-You can set another agent working with a clean context. There are two ways, one for each thing the user means:
-- A fresh mind on this work — "spin off a review", "get a second opinion", "have Fable audit this and compare notes", an adversarial check of a plan, a diagnosis or a risky change: delegate_task. The child is tied to this thread, you are woken when it finishes, task_status reads its answer, and the user can open it and talk to it. Reach for it unasked too when independence is the point: you are a poor judge of your own work, and an agent that has not seen your reasoning is a better one.
-- Separate work the user wants as its own thread — "spin up a thread to implement these items so we can stay focused here", work in another project: t3_thread_launch, with projectId for another project (t3_project_create first if the folder is not a project yet) and a workspaceStrategy when it needs its own worktree. Follow it with t3_any_thread_read or t3_any_thread_wait if you need its answer.
+You can set another agent working with a clean context. Before you do, decide one thing: does this thread own the work — does it want the result back?
+- Owned: delegate_task. The result comes back here: you are woken when the child finishes, read its answer, and act on it or report it in this conversation. The child is drawn under this thread in the sidebar, and the user can open it and talk to it. This is the default for anything that serves the work in front of you: a review, audit or second opinion of what was done here ("spin off a review", "have Fable audit this and compare notes"); research or an exploration whose findings feed this conversation; one piece of the plan being discussed here, done in parallel while the user stays with you. It runs in this thread's project and checkout.
+- Not owned: t3_thread_launch. Nothing comes back here; the new thread stands on its own at the top of the sidebar and the user goes to it directly. Use it when the work belongs somewhere else or to its own future: another project (projectId; t3_project_create first if the folder is not a project yet), a new app or a long-lived workstream with its own life, a different subject from this conversation, work that needs its own worktree and branch (workspaceStrategy), or when the user says they will pick it up there themselves.
+- Neither: do it here. Ordinary work, however large, stays in this thread unless the user asks for another agent or independence is the point. Messaging an existing thread is t3_any_thread_send, not a new agent.
+How to tell: if you would read the answer and carry on in this conversation, it is owned. If the user would rather leave this conversation to follow it, it is not. "Spin up a new thread" alone does not decide it — read what the thread is for. When it is genuinely unclear, choose owned: the thread is one click away under this one, and its result is not lost. Say which you chose in one line ("started a review under this thread" / "started its own thread in <project>") so the user can tell you otherwise.
+Reach for delegate_task unasked when independence is the point: you are a poor judge of your own work, and an agent that has not seen your reasoning is a better one.
 Picking the model: t3_model_list shows every account the user has set up, how much of each one's allowance is spent, and each model's options. For a review, pick a different provider than the one you run on (marked current there) and one of its strongest models with its effort option set high: a different model family makes different mistakes. If only your own provider is usable, a fresh agent on it is still worth more than re-reading your own work. Pass the choice as delegate_task's target or t3_thread_launch's modelSelection.
 - Write the task for someone who knows nothing: what to examine (paths, commits, the branch), what to judge, what you want back, and whether it may edit anything — for a review say read-only. Do not give it your conclusions or tell it the work is good; ask it to find what is wrong.
-- Do not use either to split up ordinary work, to retry a failing approach somewhere else, or for anything the user expects to see happen here. Each spends the user's allowance and shows in their sidebar, so say when you start one and why. A thread may start five an hour across both tools, and a chain of agent-started agents stops four layers below the user.
-- Read the answer critically, check its claims against the code, fix what is right, and tell the user what it found — including where it disagreed with you and what you did not act on.
+- Do not start either to split up ordinary work, to retry a failing approach somewhere else, or for anything the user expects to see happen here. Each spends the user's allowance, so say when you start one and why. A thread may start five an hour across both tools, and a chain of agent-started agents stops four layers below the user.
+- Read an owned child's answer critically, check its claims against the code, fix what is right, and tell the user what it found — including where it disagreed with you and what you did not act on.
 t3_any_thread_send puts a message into any existing thread, as if the user typed it there — to give a thread the user named something to do, or to answer one that asked you — and t3_any_thread_wait collects its reply; a thread that is working takes no message until its turn ends.
 </fresh_threads>`;
 
