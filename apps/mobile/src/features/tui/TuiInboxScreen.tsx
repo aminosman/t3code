@@ -65,11 +65,17 @@ export function TuiInboxScreen({ route }: TuiInboxScreenProps) {
   // tapped, then the one talked to last.
   const [picked, setChosen] = useState<string | null>(null);
   const chosen = requested ?? picked ?? lastEnvironmentId;
-  const environment =
-    environments.find((candidate) => candidate.environmentId === chosen) ??
-    environments.find((candidate) => candidate.connected) ??
-    environments[0] ??
-    null;
+  // A push names the Mac that asked: if that one is not here, say so rather
+  // than talk to another Mac by mistake.
+  const missingRequested =
+    requested !== undefined &&
+    !environments.some((candidate) => candidate.environmentId === requested);
+  const environment = missingRequested
+    ? null
+    : (environments.find((candidate) => candidate.environmentId === chosen) ??
+      environments.find((candidate) => candidate.connected) ??
+      environments[0] ??
+      null);
   const environmentId = environment ? EnvironmentId.make(environment.environmentId) : null;
   useEffect(() => {
     if (environmentId) lastEnvironmentId = environmentId;
@@ -187,11 +193,13 @@ export function TuiInboxScreen({ route }: TuiInboxScreenProps) {
         ) : null}
 
         <Text className="px-4 pt-2 font-sans text-xs text-foreground-secondary">
-          {environment === null
-            ? "Add the Mac that runs tui under Settings › Environments."
-            : inbox.hostConnected
-              ? `tui is listening on ${environment.label}.`
-              : `tui isn't connected on ${environment.label}. Notes you send now wait 10 minutes for it.`}
+          {missingRequested
+            ? "The Mac that sent this isn't among your environments on this phone."
+            : environment === null
+              ? "Add the Mac that runs tui under Settings › Environments."
+              : inbox.hostConnected
+                ? `tui is listening on ${environment.label}.`
+                : `tui isn't connected on ${environment.label}. Notes you send now wait 10 minutes for it.`}
         </Text>
 
         <ScrollView

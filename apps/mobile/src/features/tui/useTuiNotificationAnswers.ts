@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useEffect } from "react";
 
 import { serverEnvironment } from "../../state/server";
@@ -19,11 +20,14 @@ export function useTuiNotificationAnswers(): void {
   });
   useEffect(() => {
     void registerTuiNotificationCategory();
-    setTuiNotificationAnswerHandler((answer) => {
-      void control({
+    setTuiNotificationAnswerHandler(async (answer) => {
+      const result = await control({
         environmentId: EnvironmentId.make(answer.environmentId),
         input: { type: "verdict", promptId: answer.promptId, verdict: answer.verdict },
       });
+      if (result._tag === "Success") return true;
+      // Answered elsewhere already, or tui gave up on it: nothing to retry.
+      return /already been answered/.test(String(squashAtomCommandFailure(result)));
     });
     return () => setTuiNotificationAnswerHandler(null);
   }, [control]);

@@ -30,14 +30,30 @@ describe("tui notification answers", () => {
     ).toBeNull();
   });
 
-  it("holds an answer from a cold launch until the handler is up", () => {
-    const answers: unknown[] = [];
+  it("holds an answer from a cold launch and retries until it is delivered", async () => {
+    vi.useFakeTimers();
+    const attempts: unknown[] = [];
+    let up = false;
     setTuiNotificationAnswerHandler(null);
     routeTuiNotificationAnswer(response("TUI_ALLOW", { tuiPromptId: "p2", environmentId: "e" }));
-    expect(answers).toHaveLength(0);
-    setTuiNotificationAnswerHandler((answer) => answers.push(answer));
-    expect(answers).toEqual([{ environmentId: "e", promptId: "p2", verdict: "up" }]);
+    expect(attempts).toHaveLength(0);
+    // The socket is not up yet: the first try fails and is kept.
+    setTuiNotificationAnswerHandler(async (answer) => {
+      attempts.push(answer);
+      return up;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toHaveLength(1);
+    up = true;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(attempts).toEqual([
+      { environmentId: "e", promptId: "p2", verdict: "up", heldAt: expect.any(Number) },
+      { environmentId: "e", promptId: "p2", verdict: "up", heldAt: expect.any(Number) },
+    ]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(attempts).toHaveLength(2);
     setTuiNotificationAnswerHandler(null);
+    vi.useRealTimers();
   });
 
   it("deep-links a tui push to the tui screen for its environment", () => {

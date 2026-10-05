@@ -172,3 +172,36 @@ it.effect("tells the phone tui is away rather than dropping a verdict", () =>
     }),
   ),
 );
+
+it.effect("tells a replaced tui it was superseded and delivers one event per chunk", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const inbox = yield* makeInbox;
+      yield* inbox.send({ clientMessageId: "w1", text: "one" });
+      yield* inbox.send({ clientMessageId: "w2", text: "two" });
+      const chunks: number[] = [];
+      const first: TuiInboxHostEvent[] = [];
+      yield* (yield* inbox.connect({ clientId: "tui-a" })).pipe(
+        Stream.chunks,
+        Stream.runForEach((chunk) =>
+          Effect.sync(() => {
+            chunks.push(chunk.length);
+            first.push(...chunk);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      yield* take(yield* inbox.connect({ clientId: "tui-b" }), 1);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      expect(first.map((event) => event.type)).toEqual([
+        "connected",
+        "utterance",
+        "utterance",
+        "superseded",
+      ]);
+      expect(chunks.every((size) => size === 1)).toBe(true);
+    }),
+  ),
+);

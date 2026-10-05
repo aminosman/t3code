@@ -1031,7 +1031,13 @@ const make = Effect.gen(function* () {
         push.bundleId.length === 0;
       const keyInEffect = current.push.authKey.length > 0 || current.push.authKeyRedacted === true;
       let next = requested;
-      if (keyInEffect && isDefaultPush(requested.push)) {
+      // An explicit clear (`authKeyRedacted: false`) is honoured even when
+      // it resets everything else too.
+      if (
+        keyInEffect &&
+        isDefaultPush(requested.push) &&
+        requested.push.authKeyRedacted !== false
+      ) {
         yield* Effect.logWarning("settings: a write reset push to defaults; keeping the APNs key");
         next = { ...requested, push: current.push };
       }

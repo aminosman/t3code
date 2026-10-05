@@ -169,8 +169,13 @@ export const make = Effect.gen(function* () {
             yield* Queue.offer(queue, { type: "connected", connectionId });
             const previous = host;
             host = { clientId: registration.clientId, connectionId, queue };
-            // A second tui (a relaunch, an update) replaces the first.
-            if (previous) yield* Queue.end(previous.queue);
+            // A second tui (a relaunch, an update) replaces the first, and
+            // the first is told so: it must not reconnect and take the
+            // stream back, or two copies steal it from each other forever.
+            if (previous) {
+              yield* Queue.offer(previous.queue, { type: "superseded" });
+              yield* Queue.end(previous.queue);
+            }
             const cutoff = (yield* Clock.currentTimeMillis) - WAITING_TTL_MS;
             const fresh = waiting.filter((held) => held.at >= cutoff);
             waiting = [];
@@ -186,7 +191,10 @@ export const make = Effect.gen(function* () {
             return queue;
           }),
           releaseHost,
-        ).pipe(Effect.map((queue) => Stream.fromQueue(queue))),
+          // One event per Chunk: Effect drains a queue in batches, and a
+          // reconnect with several voice notes waiting would otherwise be
+          // one frame past the client's message cap.
+        ).pipe(Effect.map((queue) => Stream.fromQueue(queue).pipe(Stream.rechunk(1)))),
       ),
     );
 

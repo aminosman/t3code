@@ -18,10 +18,32 @@ export interface TuiNotificationAnswer {
   readonly verdict: "up" | "down";
 }
 
-type Handler = (answer: TuiNotificationAnswer) => void;
+/** Resolves true once the answer reached the environment. */
+type Handler = (answer: TuiNotificationAnswer) => Promise<boolean>;
 
 let handler: Handler | null = null;
-const held: TuiNotificationAnswer[] = [];
+const held: Array<TuiNotificationAnswer & { readonly heldAt: number }> = [];
+/** tui waits three minutes for a card from the phone; no point trying longer. */
+const ANSWER_TTL_MS = 3 * 60 * 1000;
+let retry: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Sends what is held, keeping what did not go: on a cold launch from the
+ * notification the environment's socket is still coming up, and the first
+ * attempts fail.
+ */
+async function flush(): Promise<void> {
+  retry = null;
+  const current = handler;
+  if (!current) return;
+  const now = Date.now();
+  const pending = held.splice(0).filter((answer) => now - answer.heldAt < ANSWER_TTL_MS);
+  for (const answer of pending) {
+    const delivered = await current(answer).catch(() => false);
+    if (!delivered) held.push(answer);
+  }
+  if (held.length > 0 && retry === null) retry = setTimeout(() => void flush(), 2000);
+}
 
 function dataOf(response: Notifications.NotificationResponse): Record<string, unknown> {
   const data = response.notification.request.content.data;
@@ -50,15 +72,15 @@ export function tuiAnswerFromResponse(
 export function routeTuiNotificationAnswer(response: Notifications.NotificationResponse): boolean {
   const answer = tuiAnswerFromResponse(response);
   if (answer === null) return false;
-  if (handler) handler(answer);
-  else held.push(answer);
+  if (!held.some((h) => h.promptId === answer.promptId))
+    held.push({ ...answer, heldAt: Date.now() });
+  void flush();
   return true;
 }
 
 export function setTuiNotificationAnswerHandler(next: Handler | null): void {
   handler = next;
-  if (!next) return;
-  for (const answer of held.splice(0)) next(answer);
+  if (next) void flush();
 }
 
 let registered = false;

@@ -1076,6 +1076,9 @@ export function createServerEnvironmentAtoms<R, E>(
     tuiInbox: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:tui-inbox",
       tag: WS_METHODS.tuiInboxSubscribe,
+      // Drop the stream as soon as the screen goes: an open subscription
+      // tells the server the phone is watching, which holds back pushes.
+      idleTtlMs: 0,
       transform: (stream) => stream.pipe(Stream.scan(EMPTY_TUI_INBOX, reduceTuiInbox)),
     }),
     /** Live scheduled-task list: snapshot on subscribe, fresh list after every server-side change. */

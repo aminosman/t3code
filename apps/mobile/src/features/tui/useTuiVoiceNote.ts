@@ -40,8 +40,12 @@ export function useTuiVoiceNote() {
   const stopRef = useRef<(() => Promise<TuiVoiceNote | null>) | null>(null);
   // A note stopped by the time limit, waiting for the finger to lift.
   const autoStopped = useRef<Promise<TuiVoiceNote | null> | null>(null);
+  // One recorder transition at a time: a press while the last note is
+  // still stopping would prepare the recorder under its shutdown.
+  const busy = useRef<Promise<unknown> | null>(null);
 
   const start = useCallback(async (): Promise<boolean> => {
+    if (busy.current) await busy.current.catch(() => undefined);
     setError(null);
     const permission = await requestRecordingPermissionsAsync();
     if (!permission.granted) {
@@ -105,8 +109,22 @@ export function useTuiVoiceNote() {
   const finish = useCallback(async (): Promise<TuiVoiceNote | null> => {
     const pending = autoStopped.current;
     autoStopped.current = null;
-    return pending ?? stop();
+    const stopping = pending ?? stop();
+    busy.current = stopping;
+    try {
+      return await stopping;
+    } finally {
+      if (busy.current === stopping) busy.current = null;
+    }
   }, [stop]);
+
+  // Leaving the screen mid-note stops the mic and drops the note.
+  useEffect(
+    () => () => {
+      void stopRef.current?.();
+    },
+    [],
+  );
 
   return { recording, error, start, finish, clearError: () => setError(null) };
 }

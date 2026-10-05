@@ -1651,6 +1651,22 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(reset.push.authKey, "-----BEGIN PRIVATE KEY-----apns-secret");
       assert.equal(reset.push.bundleId, "co.example.other");
 
+      // A reset that says it is clearing (`authKeyRedacted: false`) is honoured.
+      const wiped = yield* serverSettings.updateSettings({
+        push: {
+          enabled: false,
+          authKey: "",
+          authKeyRedacted: false,
+          keyId: "",
+          teamId: "",
+          bundleId: "",
+        },
+      });
+      assert.equal(wiped.push.authKey, "");
+      yield* serverSettings.updateSettings({
+        push: { authKey: "-----BEGIN PRIVATE KEY-----apns-secret", keyId: "KEY1234567" },
+      });
+
       // Clearing the key removes the secret and the redaction marker.
       const cleared = yield* serverSettings.updateSettings({
         push: { authKey: "", authKeyRedacted: false },

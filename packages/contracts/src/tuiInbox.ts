@@ -89,6 +89,8 @@ export const TuiInboxHostEvent = Schema.Union([
     verdict: TuiInboxVerdict,
   }),
   Schema.Struct({ type: Schema.Literal("stop") }),
+  /** Another tui took the stream; this one should not reconnect on its own. */
+  Schema.Struct({ type: Schema.Literal("superseded") }),
 ]);
 export type TuiInboxHostEvent = typeof TuiInboxHostEvent.Type;
 
