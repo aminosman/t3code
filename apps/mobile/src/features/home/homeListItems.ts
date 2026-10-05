@@ -1,3 +1,4 @@
+import { flattenOwnedThreads, groupOwnedThreads } from "@t3tools/client-runtime/state/ownedThreads";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -32,6 +33,11 @@ export interface HomeThreadListItem {
   readonly key: string;
   readonly thread: EnvironmentThreadShell;
   readonly isLast: boolean;
+  /** Roost: how many owners up; 0 for a thread at the top of its project. */
+  readonly ownedDepth: number;
+  /** Owned children of this thread in the group; 0 draws no toggle. */
+  readonly ownedChildCount: number;
+  readonly ownedExpanded: boolean;
 }
 
 export interface HomePendingTaskListItem {
@@ -106,7 +112,10 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
       return (
         previous.type === "thread" &&
         previous.thread === item.thread &&
-        previous.isLast === item.isLast
+        previous.isLast === item.isLast &&
+        previous.ownedDepth === item.ownedDepth &&
+        previous.ownedChildCount === item.ownedChildCount &&
+        previous.ownedExpanded === item.ownedExpanded
       );
     case "show-more":
       return (
@@ -125,6 +134,12 @@ export function buildHomeListLayout(input: {
    * When searching, pagination is suspended so every match stays visible.
    */
   readonly showAllThreads?: boolean;
+  /**
+   * Roost: owners the user opened or closed by hand. A thread another thread
+   * owns (a delegate_task child, a provider subagent) is drawn under its owner;
+   * an owner opens by itself while a child works or waits on the user.
+   */
+  readonly ownedExpandedByThreadId?: Readonly<Record<string, boolean>>;
 }): HomeListLayout {
   const items: HomeListItem[] = [];
   const stickyHeaderIndices: number[] = [];
@@ -146,14 +161,18 @@ export function buildHomeListLayout(input: {
       continue;
     }
 
-    const totalCount = group.threads.length;
+    // Owned threads sit under their owner, so pagination counts only the
+    // threads at the top of the project.
+    const { topLevel, childrenByOwner } = groupOwnedThreads(group.threads);
+    const topLevelIds = new Set(topLevel.map((thread) => thread.id));
+    const totalCount = topLevel.length;
     // Default to the group's recent-activity window (last few days, or a small
     // fallback for stale projects), capped at the initial page size. Until the
     // user taps "Show more", older threads stay hidden to save vertical space;
     // "Show less" resets visibleCount to the initial constant, which lands back
     // here at the recency baseline.
     const baselineCount = Math.min(
-      group.recentThreads.length,
+      group.recentThreads.filter((thread) => topLevelIds.has(thread.id)).length,
       HOME_INITIAL_VISIBLE_THREADS,
       totalCount,
     );
@@ -165,7 +184,12 @@ export function buildHomeListLayout(input: {
             : baselineCount,
           totalCount,
         );
-    const visibleThreads = group.threads.slice(0, visibleCount);
+    const visibleThreads = flattenOwnedThreads({
+      roots: topLevel.slice(0, visibleCount),
+      childrenByOwner,
+      expandedByThreadId: input.ownedExpandedByThreadId ?? {},
+      activeThreadId: null,
+    });
     const hiddenCount = totalCount - visibleCount;
     const hasShowMoreRow = !input.showAllThreads && totalCount > baselineCount;
 
@@ -182,12 +206,15 @@ export function buildHomeListLayout(input: {
       });
     }
 
-    for (const [threadIndex, thread] of visibleThreads.entries()) {
+    for (const [threadIndex, row] of visibleThreads.entries()) {
       items.push({
         type: "thread",
-        key: `thread:${thread.environmentId}:${thread.id}`,
-        thread,
+        key: `thread:${row.thread.environmentId}:${row.thread.id}`,
+        thread: row.thread,
         isLast: threadIndex === visibleThreads.length - 1 && !hasShowMoreRow,
+        ownedDepth: row.depth,
+        ownedChildCount: row.childCount,
+        ownedExpanded: row.expanded,
       });
     }
 

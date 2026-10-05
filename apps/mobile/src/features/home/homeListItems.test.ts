@@ -250,3 +250,65 @@ describe("buildHomeListLayout", () => {
     expect(layout.items[8]).toMatchObject({ type: "header", isFirst: false });
   });
 });
+
+describe("owned threads in the grouped list", () => {
+  // Roost: a thread another thread owns sits under it; paging counts the top.
+  function ownedGroup(): HomeThreadGroup {
+    const group = makeGroup("alpha", 8);
+    const owner = group.threads[0]!;
+    const own = (thread: EnvironmentThreadShell, status?: "running"): EnvironmentThreadShell => ({
+      ...thread,
+      lineage: {
+        parentThreadId: owner.id,
+        relationshipToParent: "subagent",
+        rootThreadId: owner.id,
+      },
+      ...(status
+        ? { runtime: { ...thread.runtime, status } as EnvironmentThreadShell["runtime"] }
+        : {}),
+    });
+    const threads = [
+      owner,
+      own(group.threads[1]!),
+      own(group.threads[2]!),
+      ...group.threads.slice(3),
+    ];
+    return { ...group, threads, recentThreads: threads };
+  }
+  const rows = (items: ReadonlyArray<HomeListItem>) =>
+    items.flatMap((item) =>
+      item.type === "thread"
+        ? [
+            `${"  ".repeat(item.ownedDepth)}${item.thread.id}${item.ownedChildCount ? ` (${item.ownedChildCount}${item.ownedExpanded ? "" : ", closed"})` : ""}`,
+          ]
+        : [],
+    );
+
+  it("folds owned threads under their owner, closed, and pages only the top", () => {
+    const layout = buildHomeListLayout({ groups: [ownedGroup()], displayStates: new Map() });
+    expect(rows(layout.items)).toEqual([
+      "alpha-thread-0 (2, closed)",
+      "alpha-thread-3",
+      "alpha-thread-4",
+      "alpha-thread-5",
+      "alpha-thread-6",
+      "alpha-thread-7",
+    ]);
+    expect(itemTypes(layout.items).includes("show-more")).toBe(false);
+  });
+
+  it("opens an owner the user opened", () => {
+    const group = ownedGroup();
+    const layout = buildHomeListLayout({
+      groups: [group],
+      displayStates: new Map(),
+      ownedExpandedByThreadId: { [group.threads[0]!.id]: true },
+    });
+    expect(rows(layout.items).slice(0, 4)).toEqual([
+      "alpha-thread-0 (2)",
+      "  alpha-thread-1",
+      "  alpha-thread-2",
+      "alpha-thread-3",
+    ]);
+  });
+});

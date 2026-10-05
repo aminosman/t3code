@@ -492,6 +492,13 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
 
+  // Roost: owners the user opened or closed by hand (threads they own nest under them).
+  const [ownedExpandedByThreadId, setOwnedExpandedByThreadId] = useState<
+    Readonly<Record<string, boolean>>
+  >({});
+  const toggleOwnedThreads = useCallback((thread: EnvironmentThreadShell, expanded: boolean) => {
+    setOwnedExpandedByThreadId((previous) => ({ ...previous, [thread.id]: expanded }));
+  }, []);
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const listLayout = useMemo(
     () =>
@@ -501,8 +508,15 @@ export function HomeScreen(props: HomeScreenProps) {
             groups: projectGroups,
             displayStates: effectiveGroupDisplayStates,
             showAllThreads: hasSearchQuery,
+            ownedExpandedByThreadId,
           }),
-    [threadListV2Enabled, projectGroups, effectiveGroupDisplayStates, hasSearchQuery],
+    [
+      threadListV2Enabled,
+      projectGroups,
+      effectiveGroupDisplayStates,
+      hasSearchQuery,
+      ownedExpandedByThreadId,
+    ],
   );
 
   const projectByKey = useMemo(() => {
@@ -1063,6 +1077,10 @@ export function HomeScreen(props: HomeScreenProps) {
               }
               environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
               isLast={item.isLast}
+              ownedDepth={item.ownedDepth}
+              ownedChildCount={item.ownedChildCount}
+              ownedExpanded={item.ownedExpanded}
+              onToggleOwnedThreads={toggleOwnedThreads}
               searchMatch={threadSearchMatchByKey.get(
                 threadSearchMatchKey({
                   environmentId: thread.environmentId,
@@ -1111,6 +1129,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.savedConnectionsById,
       threadSearchMatchByKey,
       titleRegenerationEnvironmentIds,
+      toggleOwnedThreads,
       updateGroupDisplay,
     ],
   );

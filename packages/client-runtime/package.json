@@ -139,6 +139,10 @@
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
     },
+    "./state/ownedThreads": {
+      "types": "./src/state/ownedThreads.ts",
+      "default": "./src/state/ownedThreads.ts"
+    },
     "./state/entities": {
       "types": "./src/state/entities.ts",
       "default": "./src/state/entities.ts"

@@ -936,6 +936,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {props.projectTitle ?? props.project?.title ?? ""}
         </Text>
         {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+        {/* Roost: a thread an agent started, as against one the user opened. */}
+        {thread.source.createdBy === "agent" ? (
+          <View accessibilityLabel="Started by an agent">
+            <SymbolView
+              name="sparkles"
+              size={11}
+              tintColorClassName={rowAppearance.mutedIconTintClassName}
+              type="monochrome"
+            />
+          </View>
+        ) : null}
         {pinnedRow ? (
           <SymbolView
             name="pin"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { flattenOwnedThreads, groupOwnedThreads } from "./LegacySidebar.ownedThreads";
+import { flattenOwnedThreads, groupOwnedThreads } from "./ownedThreads.ts";
 
 const thread = (
   id: string,

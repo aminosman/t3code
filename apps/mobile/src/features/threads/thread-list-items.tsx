@@ -496,6 +496,12 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
+  /** Roost: how many owners up in the grouped list; 0 or absent at the top. */
+  readonly ownedDepth?: number;
+  /** Owned children in the list; 0 or absent draws no toggle. */
+  readonly ownedChildCount?: number;
+  readonly ownedExpanded?: boolean;
+  readonly onToggleOwnedThreads?: (thread: EnvironmentThreadShell, expanded: boolean) => void;
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const { themeAppearance: colorScheme } = useAppearancePreferences();
@@ -587,6 +593,49 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     [handleArchive, handleDelete, handleRegenerateTitle, handleRename, onNewThreadOnBranch, thread],
   );
 
+  const ownedDepth = props.ownedDepth ?? 0;
+  const ownedChildCount = props.ownedChildCount ?? 0;
+  const ownedExpanded = props.ownedExpanded === true;
+  const onToggleOwnedThreads = props.onToggleOwnedThreads;
+  // Roost: an owner's toggle for the threads it owns, drawn under it.
+  const ownedToggle =
+    ownedChildCount > 0 && onToggleOwnedThreads ? (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          ownedExpanded
+            ? `Hide ${ownedChildCount} owned threads`
+            : `Show ${ownedChildCount} owned threads`
+        }
+        accessibilityState={{ expanded: ownedExpanded }}
+        hitSlop={10}
+        className="flex-row items-center gap-0.5"
+        onPress={() => onToggleOwnedThreads(thread, !ownedExpanded)}
+      >
+        <SymbolView
+          name={ownedExpanded ? "chevron.down" : "chevron.right"}
+          size={compact ? 12 : 10}
+          tintColorClassName="accent-icon-subtle"
+          type="monochrome"
+        />
+        {!ownedExpanded ? (
+          <Text className="text-xs tabular-nums text-foreground-muted">{ownedChildCount}</Text>
+        ) : null}
+      </Pressable>
+    ) : null;
+  // Roost: a thread an agent started, as against one the user opened.
+  const agentStartedMark =
+    thread.source.createdBy === "agent" ? (
+      <View accessibilityLabel="Started by an agent">
+        <SymbolView
+          name="sparkles"
+          size={compact ? 13 : 11}
+          tintColorClassName="accent-icon-subtle"
+          type="monochrome"
+        />
+      </View>
+    ) : null;
+  const ownedIndent = compact ? ownedDepth * 18 : ownedDepth * 14;
   const statusPill = status ? (
     <View className={`${status.pillClassName} rounded-full px-1.5 py-0.5`}>
       <Text className={`text-3xs font-t3-bold ${status.textClassName}`}>{status.label}</Text>
@@ -677,7 +726,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           onSelectThread(thread);
         }}
       >
-        <View className="pr-[18px] pt-[10px]" style={{ paddingLeft: THREAD_LIST_COMPACT_INSET }}>
+        <View
+          className="pr-[18px] pt-[10px]"
+          style={{ paddingLeft: THREAD_LIST_COMPACT_INSET + ownedIndent }}
+        >
           <View
             className={cn(
               "gap-[3px] pb-[10px]",
@@ -685,6 +737,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             )}
           >
             <View className="flex-row items-center justify-between gap-2">
+              {ownedToggle}
+              {agentStartedMark}
               <Text
                 className={cn(
                   "flex-1 text-lg font-t3-bold",
@@ -753,11 +807,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           minHeight: 64,
           justifyContent: "center",
           paddingHorizontal: 12,
+          paddingLeft: 12 + ownedIndent,
           paddingVertical: 10,
         }}
       >
         <View className="gap-[3px]">
           <View className="flex-row items-center justify-between gap-2">
+            {ownedToggle}
+            {agentStartedMark}
             <Text
               className={cn(
                 "flex-1 text-base font-t3-medium",
