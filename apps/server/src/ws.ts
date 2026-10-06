@@ -177,6 +177,7 @@ import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as TuiInbox from "./tuiInbox/TuiInbox.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
+import * as MeetingsProject from "./historySearch/MeetingsProject.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -1626,6 +1627,10 @@ const makeWsRpcLayer = (
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
+          // Roost: clients find the Meetings project by this root.
+          const meetingsWorkspaceRoot = yield* MeetingsProject.meetingsRoot.pipe(
+            Effect.orElseSucceed(() => null),
+          );
           const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
             externalLauncher.resolveAvailableEditors(),
           );
@@ -1677,6 +1682,7 @@ const makeWsRpcLayer = (
               onNone: () => ({}),
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
             }),
+            ...(meetingsWorkspaceRoot === null ? {} : { meetingsWorkspaceRoot }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
           };
         });
@@ -3475,6 +3481,22 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.historyMeetingRead,
             history.readMeeting(input).pipe(Effect.mapError(historyFailed)),
+            { "rpc.aggregate": "history" },
+          ),
+        [WS_METHODS.historyMeetingNotesWrite]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.historyMeetingNotesWrite,
+            history.writeMyNotes(input).pipe(Effect.mapError(historyFailed)),
+            { "rpc.aggregate": "history" },
+          ),
+        [WS_METHODS.historyMeetingsProject]: () =>
+          observeRpcEffect(
+            WS_METHODS.historyMeetingsProject,
+            MeetingsProject.ensureMeetingsProject.pipe(
+              Effect.provideService(ProjectService.ProjectService, projectService),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.mapError((error) => new HistoryApiError({ message: error.message })),
+            ),
             { "rpc.aggregate": "history" },
           ),
         [WS_METHODS.historyThreadMessages]: (input) =>

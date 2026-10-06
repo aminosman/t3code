@@ -300,12 +300,14 @@ const makeHarness = Effect.gen(function* () {
             `feedback ${input.found} ${input.searchId ?? "latest"} ${input.note ?? ""}`,
           ]).pipe(Effect.as(input.searchId ?? 7)),
         listMeetings: () => Effect.succeed([teamSync]),
+        writeMyNotes: () => Effect.void,
         readMeeting: (input) =>
           Effect.succeed(
             input.meetingId === teamSync.id
               ? {
                   meeting: teamSync,
                   notes: input.around === undefined ? "## Decisions\n- fix the login loop" : null,
+                  myNotes: null,
                   lines:
                     input.around === undefined
                       ? []

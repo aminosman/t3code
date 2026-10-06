@@ -279,6 +279,8 @@ import {
   HistoryApiError,
   HistoryMeetingListInput,
   HistoryMeetingListOutput,
+  HistoryMeetingNotesWriteInput,
+  HistoryMeetingsProject,
   HistoryMeetingReadInput,
   HistoryMeetingReadOutput,
   HistorySearchInput,
@@ -452,6 +454,8 @@ export const WS_METHODS = {
   historyMeetingList: "history.meetingList",
   historyMeetingRead: "history.meetingRead",
   historyThreadMessages: "history.threadMessages",
+  historyMeetingNotesWrite: "history.meetingNotesWrite",
+  historyMeetingsProject: "history.meetingsProject",
 
   // Device methods
   deviceConfigure: "device.configure",
@@ -1513,6 +1517,17 @@ const WsHistoryThreadMessagesRpc = Rpc.make(WS_METHODS.historyThreadMessages, {
   error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
 });
 
+const WsHistoryMeetingNotesWriteRpc = Rpc.make(WS_METHODS.historyMeetingNotesWrite, {
+  payload: HistoryMeetingNotesWriteInput,
+  error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
+});
+
+const WsHistoryMeetingsProjectRpc = Rpc.make(WS_METHODS.historyMeetingsProject, {
+  payload: Schema.Struct({}),
+  success: HistoryMeetingsProject,
+  error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -1926,6 +1941,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsHistoryMeetingListRpc,
   WsHistoryMeetingReadRpc,
   WsHistoryThreadMessagesRpc,
+  WsHistoryMeetingNotesWriteRpc,
+  WsHistoryMeetingsProjectRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,

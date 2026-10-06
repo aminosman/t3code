@@ -33,6 +33,8 @@ export interface Meeting {
   readonly people: ReadonlyArray<string>;
   readonly notes: string | null;
   readonly slides: string | null;
+  /** What the user typed during the meeting (notes.md). */
+  readonly typed: string | null;
   readonly lines: ReadonlyArray<TranscriptLine>;
 }
 
@@ -81,10 +83,17 @@ export const configuredDir = Effect.gen(function* () {
 });
 
 /** A folder name is the id, and the only part of a path a caller supplies. */
-const isMeetingId = (id: string) =>
+export const isMeetingId = (id: string) =>
   /^[\p{L}\p{N}][\p{L}\p{N}._ -]*$/u.test(id) && !id.includes("..");
 
-const INDEXED_FILES = ["summary.md", "transcript.md", "slides.md", "meta.json", "project.json"];
+const INDEXED_FILES = [
+  "summary.md",
+  "transcript.md",
+  "slides.md",
+  "notes.md",
+  "meta.json",
+  "project.json",
+];
 
 /**
  * Every meeting folder that has something to read, with a version that
@@ -160,6 +169,7 @@ export const load = (dir: string, id: string) =>
     const transcript = yield* readText(path.join(folder, "transcript.md"));
     if (notes === null && transcript === null) return null;
     const slides = yield* readText(path.join(folder, "slides.md"));
+    const typed = yield* readText(path.join(folder, "notes.md"));
     const meta = yield* readJson(path.join(folder, "meta.json"));
     const project = yield* readJson(path.join(folder, "project.json"));
 
@@ -186,6 +196,7 @@ export const load = (dir: string, id: string) =>
       people,
       notes: notes === null ? null : stripGeneratedBy(notes).trim() || null,
       slides: slides?.trim() || null,
+      typed: typed?.trim() || null,
       lines: transcript === null ? [] : parseTranscript(transcript),
     } satisfies Meeting;
   });
@@ -244,6 +255,8 @@ export const documents = (meeting: Meeting): ReadonlyArray<MeetingDocument> => {
     docs.push({ role: "notes", at: null, text: `${meeting.title}\n${rest}` });
     for (const item of items) docs.push({ role: item.role, at: null, text: item.text });
   }
+  // The user's own words count as notes: what they chose to write down.
+  if (meeting.typed !== null) docs.push({ role: "notes", at: null, text: meeting.typed });
   if (meeting.slides !== null) docs.push({ role: "slides", at: null, text: meeting.slides });
   let passage: Array<TranscriptLine> = [];
   let size = 0;

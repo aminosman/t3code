@@ -108,6 +108,8 @@ export const HistoryMeetingReadInput = Schema.Struct({
   around: Schema.optional(Schema.String),
   /** Minutes of transcript either side of `around`. Default 2. */
   minutes: Schema.optional(Schema.Number),
+  /** The notes and the whole transcript at once — for a meeting's page. */
+  whole: Schema.optional(Schema.Boolean),
 });
 export type HistoryMeetingReadInput = typeof HistoryMeetingReadInput.Type;
 
@@ -121,6 +123,8 @@ export const HistoryTranscriptLine = Schema.Struct({
 export const HistoryMeetingReadOutput = Schema.Struct({
   meeting: HistoryMeetingSummary,
   notes: Schema.NullOr(Schema.String),
+  /** What the user typed during the meeting (notes.md); null when nothing. */
+  myNotes: Schema.NullOr(Schema.String),
   lines: Schema.Array(HistoryTranscriptLine),
   hasEarlier: Schema.Boolean,
   hasLater: Schema.Boolean,
@@ -159,6 +163,20 @@ export const HistoryThreadMessagesOutput = Schema.Struct({
   hasNewer: Schema.Boolean,
 });
 export type HistoryThreadMessagesOutput = typeof HistoryThreadMessagesOutput.Type;
+
+/** The user's own notes for a meeting, typed on its page. */
+export const HistoryMeetingNotesWriteInput = Schema.Struct({
+  meetingId: TrimmedNonEmptyString,
+  text: Schema.String.check(Schema.isMaxLength(200_000)),
+});
+export type HistoryMeetingNotesWriteInput = typeof HistoryMeetingNotesWriteInput.Type;
+
+/** The project questions about meetings are asked in, made on first use. */
+export const HistoryMeetingsProject = Schema.Struct({
+  projectId: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+});
+export type HistoryMeetingsProject = typeof HistoryMeetingsProject.Type;
 
 export class HistoryApiError extends Schema.TaggedError<HistoryApiError>()("HistoryApiError", {
   message: Schema.String,

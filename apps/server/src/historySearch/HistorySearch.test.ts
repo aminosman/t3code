@@ -423,6 +423,26 @@ layer("HistorySearch", (it) => {
 
       assert.isNull(yield* search.readMeeting({ meetingId: "../../etc" }));
       assert.isNull(yield* search.readMeeting({ meetingId: "2030.01.01-0000" }));
+
+      // A meeting's page reads it whole, with what the user typed beside it.
+      assert.isNull(notes?.myNotes ?? null);
+      yield* search.writeMyNotes({
+        meetingId: "2026.09.21-1330",
+        text: "ask Mo about the audit\n",
+      });
+      const whole = yield* search.readMeeting({ meetingId: "2026.09.21-1330", whole: true });
+      assert.strictEqual(whole?.myNotes, "ask Mo about the audit\n");
+      assert.include(whole?.notes ?? "", "Follow up on Plaid by Friday");
+      assert.deepStrictEqual(
+        whole?.lines.map((line) => line.at),
+        ["8:51", "9:40", "12:37", "31:02"],
+      );
+      // Only into a meeting that exists, and never outside the folder.
+      const refused = yield* search
+        .writeMyNotes({ meetingId: "../escape", text: "x" })
+        .pipe(Effect.flip);
+      assert.include(refused.reason, "no meeting");
+      yield* search.writeMyNotes({ meetingId: "2026.09.21-1330", text: "" });
     }),
   );
 

@@ -208,12 +208,15 @@ export interface MeetingReadInput {
   readonly around?: string | undefined;
   /** Minutes of transcript either side of `around`. Default 2. */
   readonly minutes?: number | undefined;
+  /** The notes and the whole transcript at once. */
+  readonly whole?: boolean | undefined;
 }
 
 export interface MeetingReadOutput {
   readonly meeting: MeetingSummary;
   /** The written notes (summary, decisions, action items); null with `around`. */
   readonly notes: string | null;
+  readonly myNotes: string | null;
   readonly lines: ReadonlyArray<Meetings.TranscriptLine>;
   readonly hasEarlier: boolean;
   readonly hasLater: boolean;
@@ -244,6 +247,11 @@ export interface HistorySearchShape {
   readonly readMeeting: (
     input: MeetingReadInput,
   ) => Effect.Effect<MeetingReadOutput | null, HistorySearchError>;
+  /** Save what the user typed on a meeting's page (its notes.md). */
+  readonly writeMyNotes: (input: {
+    readonly meetingId: string;
+    readonly text: string;
+  }) => Effect.Effect<void, HistorySearchError>;
   /** The caller read a thread or meeting: tied to the search that led there, if one did. */
   readonly recordOpen: (input: {
     readonly callerThreadId: string;
@@ -1466,10 +1474,26 @@ const make = (options: HistorySearchOptions) =>
           notesPath: path.join(meetingsDir, meeting.id, "summary.md"),
           transcriptPath: path.join(meetingsDir, meeting.id, "transcript.md"),
         };
+        const typed = yield* fs
+          .readFileString(path.join(meetingsDir, meeting.id, "notes.md"))
+          .pipe(Effect.orElseSucceed(() => ""));
+        const myNotes = typed.trim().length > 0 ? typed : null;
+        if (input.whole === true) {
+          return {
+            meeting: summary,
+            notes: meeting.notes,
+            myNotes,
+            lines: meeting.lines,
+            hasEarlier: false,
+            hasLater: false,
+            ...paths,
+          };
+        }
         if (input.around === undefined) {
           return {
             meeting: summary,
             notes: meeting.notes,
+            myNotes,
             lines: [],
             hasEarlier: false,
             hasLater: meeting.lines.length > 0,
@@ -1489,6 +1513,7 @@ const make = (options: HistorySearchOptions) =>
         return {
           meeting: summary,
           notes: null,
+          myNotes,
           lines: inside,
           hasEarlier: meeting.lines.some((line) => line.seconds < centre - span),
           hasLater: meeting.lines.some((line) => line.seconds > centre + span),
@@ -1597,11 +1622,27 @@ const make = (options: HistorySearchOptions) =>
       Effect.mapError(failWith("could not read the thread")),
     );
 
+    const writeMyNotes: HistorySearchShape["writeMyNotes"] = Effect.fn(
+      "HistorySearch.writeMyNotes",
+    )(function* (input) {
+      const folder = path.join(meetingsDir, input.meetingId);
+      const exists = yield* fs.exists(folder).pipe(Effect.orElseSucceed(() => false));
+      if (!Meetings.isMeetingId(input.meetingId) || !exists) {
+        return yield* new HistorySearchError({ reason: `no meeting called ${input.meetingId}` });
+      }
+      yield* fs
+        .writeFileString(path.join(folder, "notes.md"), input.text)
+        .pipe(
+          Effect.mapError(() => new HistorySearchError({ reason: "could not save the notes" })),
+        );
+    });
+
     return HistorySearch.of({
       search,
       readMessages,
       listMeetings,
       readMeeting,
+      writeMyNotes,
       recordOpen,
       recordFeedback,
       refresh,

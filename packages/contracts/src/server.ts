@@ -643,6 +643,8 @@ export const ServerConfig = Schema.Struct({
    * and whose data dir is outside a Git checkout.
    */
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Roost: the folder tui records meetings into; the Meetings project is rooted there. */
+  meetingsWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
    * Folder that holds projects started from just a name. Present only on
    * servers that answer projects.createNew.
