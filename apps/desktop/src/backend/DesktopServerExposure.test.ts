@@ -144,25 +144,29 @@ const withHarness = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopServerExposure", () => {
-  it.effect("falls back to local-only without losing the requested network preference", () =>
-    withHarness(
-      emptyNetworkInterfaces,
-      Effect.gen(function* () {
-        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+  it.effect(
+    "launched before the network, a network-accessible server still binds every interface",
+    () =>
+      withHarness(
+        emptyNetworkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.setServerExposureMode("network-accessible");
+          yield* settings.setServerExposureMode("network-accessible");
 
-        const state = yield* serverExposure.configureFromSettings({ port: 4173 });
-        assert.equal(state.mode, "local-only");
-        assert.equal(state.endpointUrl, null);
-        assert.equal((yield* settings.get).serverExposureMode, "network-accessible");
+          // No address yet (Wi-Fi and Tailscale still coming up): bind all
+          // interfaces anyway, so the phone reaches it once they are up.
+          const state = yield* serverExposure.configureFromSettings({ port: 4173 });
+          assert.equal(state.mode, "network-accessible");
+          assert.equal(state.endpointUrl, null);
+          assert.equal((yield* settings.get).serverExposureMode, "network-accessible");
 
-        const backendConfig = yield* serverExposure.backendConfig;
-        assert.equal(backendConfig.bindHost, "127.0.0.1");
-        assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:4173/");
-      }),
-    ),
+          const backendConfig = yield* serverExposure.backendConfig;
+          assert.equal(backendConfig.bindHost, "0.0.0.0");
+          assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:4173/");
+        }),
+      ),
   );
 
   it.effect("returns a typed error when network access is explicitly unavailable", () =>

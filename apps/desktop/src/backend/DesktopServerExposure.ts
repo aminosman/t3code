@@ -364,6 +364,16 @@ function runtimeStateFromResolvedExposure(input: {
 }
 
 function resolveRuntimeState(input: {
+  /**
+   * At launch, a network-accessible server binds every interface even when
+   * no address is up yet, so it becomes reachable the moment Wi-Fi or
+   * Tailscale comes up. Falling back to loopback there left a Mac that
+   * launched before its network unreachable from the phone until Roost was
+   * restarted (Oct 6 2026: Roost started at 09:25 bound to 127.0.0.1 only,
+   * and the phone's tailnet URL failed all afternoon). Choosing the mode
+   * with no address still refuses, so the user is told.
+   */
+  readonly bindWithoutAddress?: boolean;
   readonly requestedMode: DesktopServerExposureMode;
   readonly settings: DesktopAppSettings.DesktopSettings;
   readonly port: number;
@@ -378,6 +388,7 @@ function resolveRuntimeState(input: {
     ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
   });
   const unavailable =
+    input.bindWithoutAddress !== true &&
     input.requestedMode === "network-accessible" &&
     requestedExposure.endpointUrl === null &&
     !Object.values(input.networkInterfaces).some((addresses) =>
@@ -443,6 +454,7 @@ export const make = Effect.gen(function* () {
       const settings = yield* desktopSettings.get;
       const currentNetworkInterfaces = yield* readNetworkInterfaces;
       const resolved = resolveRuntimeState({
+        bindWithoutAddress: true,
         requestedMode: settings.serverExposureMode,
         settings,
         port,
