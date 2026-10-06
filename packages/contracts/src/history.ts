@@ -178,6 +178,20 @@ export const HistoryMeetingsProject = Schema.Struct({
 });
 export type HistoryMeetingsProject = typeof HistoryMeetingsProject.Type;
 
+/** A question about meetings: a thread in the Meetings project, already sent. */
+export const HistoryAskMeetingsInput = Schema.Struct({
+  question: TrimmedNonEmptyString.check(Schema.isMaxLength(8000)),
+  /** Ask about this one meeting. */
+  meetingId: Schema.optional(Schema.String),
+});
+export type HistoryAskMeetingsInput = typeof HistoryAskMeetingsInput.Type;
+
+export const HistoryAskMeetingsResult = Schema.Struct({
+  projectId: TrimmedNonEmptyString,
+  threadId: TrimmedNonEmptyString,
+});
+export type HistoryAskMeetingsResult = typeof HistoryAskMeetingsResult.Type;
+
 export class HistoryApiError extends Schema.TaggedError<HistoryApiError>()("HistoryApiError", {
   message: Schema.String,
 }) {}

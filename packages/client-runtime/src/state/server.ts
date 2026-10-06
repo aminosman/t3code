@@ -1081,6 +1081,22 @@ export function createServerEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
       transform: (stream) => stream.pipe(Stream.scan(EMPTY_TUI_INBOX, reduceTuiInbox)),
     }),
+    // Roost meetings: the recorded meetings and the search over them (and threads).
+    meetingList: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:history:meeting-list",
+      tag: WS_METHODS.historyMeetingList,
+      staleTimeMs: 30_000,
+    }),
+    meetingRead: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:history:meeting-read",
+      tag: WS_METHODS.historyMeetingRead,
+      staleTimeMs: 10_000,
+    }),
+    historySearch: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:history:search",
+      tag: WS_METHODS.historySearch,
+      staleTimeMs: 30_000,
+    }),
     /** Live scheduled-task list: snapshot on subscribe, fresh list after every server-side change. */
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
@@ -1293,6 +1309,18 @@ export function createServerEnvironmentAtoms<R, E>(
     controlTui: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:tui-inbox:control",
       tag: WS_METHODS.tuiInboxControl,
+    }),
+    writeMeetingNotes: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:history:meeting-notes-write",
+      tag: WS_METHODS.historyMeetingNotesWrite,
+    }),
+    askMeetings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:history:ask-meetings",
+      tag: WS_METHODS.historyAskMeetings,
+    }),
+    ensureMeetingsProject: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:history:meetings-project",
+      tag: WS_METHODS.historyMeetingsProject,
     }),
     runScheduledTaskNow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:run-now",

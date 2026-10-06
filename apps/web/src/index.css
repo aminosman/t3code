@@ -2381,3 +2381,71 @@ code {
     }
   }
 }
+
+/* Roost Meetings — Granola's palette ("oats") and serif titles, scoped to the
+   meetings pages so the rest of the app keeps its own look. */
+.meetings-surface {
+  --mt-surface: #f7f7f2;
+  --mt-sunken: #f2f2ec;
+  --mt-raised: #ffffff;
+  --mt-ink: #292929;
+  --mt-ink-2: #72726e;
+  --mt-ink-2-strong: #4e4d4b;
+  --mt-ink-3: #a3a39b;
+  --mt-hairline: rgb(71 67 42 / 0.16);
+  --mt-hover: rgb(98 90 34 / 0.07);
+  --mt-accent: #5b6f00;
+  --mt-accent-tint: #e5eacd;
+  --mt-bars: #74bd00;
+  --mt-danger: #bd4a30;
+  --mt-bubble-them: #f0f0eb;
+  --mt-bubble-me: #dde5b8;
+  --mt-button: #292929;
+  --mt-button-ink: #ffffff;
+  --mt-tile-ink: #4e4d4b;
+  --mt-serif: ui-serif, "New York", "Iowan Old Style", Charter, Georgia, serif;
+  background: var(--mt-surface);
+  color: var(--mt-ink);
+}
+.dark .meetings-surface {
+  --mt-surface: #292929;
+  --mt-sunken: #212121;
+  --mt-raised: #313130;
+  --mt-ink: #fcfcf8;
+  --mt-ink-2: #9e9e99;
+  --mt-ink-2-strong: #c9c9c3;
+  --mt-ink-3: #7e7e79;
+  --mt-hairline: rgb(255 255 255 / 0.14);
+  --mt-hover: rgb(255 255 255 / 0.06);
+  --mt-accent: #9db531;
+  --mt-accent-tint: #3a4220;
+  --mt-danger: #e07a5f;
+  --mt-bubble-them: #3a3a38;
+  --mt-bubble-me: #46512a;
+  --mt-button: #fcfcf8;
+  --mt-button-ink: #292929;
+}
+.meetings-surface .mt-serif {
+  font-family: var(--mt-serif);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+.meetings-surface .mt-float {
+  box-shadow: 0 3px 10px rgb(0 0 0 / 0.07);
+}
+.meetings-surface .mt-lift {
+  box-shadow: 0 1px 1px rgb(0 0 0 / 0.08);
+}
+@keyframes mt-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.meetings-surface .mt-bar {
+  transform-origin: center;
+  animation: mt-bar 0.9s ease-in-out infinite;
+}

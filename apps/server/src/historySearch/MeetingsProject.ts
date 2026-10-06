@@ -4,14 +4,23 @@
 // runs among them, with the history tools that search them by words and by
 // meaning. Made on first use, never at startup: a server whose user records no
 // meetings never grows one.
-import { CommandId, ProjectId } from "@t3tools/contracts";
+import {
+  CommandId,
+  DEFAULT_MODEL,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Meetings from "./Meetings.ts";
 
 export class MeetingsProjectError extends Schema.TaggedError<MeetingsProjectError>()(
@@ -101,3 +110,50 @@ export const ensureMeetingsProject = Effect.gen(function* () {
   }
   return { projectId: bootstrapped.project.id, workspaceRoot };
 });
+
+/**
+ * A question about meetings, asked: a thread in the Meetings project with the
+ * question already sent, on the environment's default model. `meetingId`
+ * points the agent at one meeting ("ask about this meeting"). Every client
+ * asks this way — the web and phone Meetings pages, and tui's "ask anything
+ * about your meetings" — so the answer always lands in the same place.
+ */
+export const askMeetings = (input: {
+  readonly question: string;
+  readonly meetingId?: string | undefined;
+}) =>
+  Effect.gen(function* () {
+    const { projectId } = yield* ensureMeetingsProject;
+    const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings.pipe(
+      Effect.mapError((cause) => new MeetingsProjectError({ message: String(cause) })),
+    );
+    const resolved = resolveProjectSettings(settings, projectId).settings;
+    const crypto = yield* Crypto.Crypto;
+    const commandId = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) => new MeetingsProjectError({ message: String(cause) })),
+    );
+    const question = input.question.trim();
+    const text =
+      input.meetingId === undefined || !Meetings.isMeetingId(input.meetingId)
+        ? question
+        : `About the meeting [[${input.meetingId}]]: ${question}`;
+    const launched = yield* (yield* ThreadLaunch.ThreadLaunchService)
+      .launch({
+        commandId: CommandId.make(`meetings-ask:${commandId}`),
+        projectId,
+        title: question.length > 60 ? `${question.slice(0, 57)}…` : question,
+        generateTitle: true,
+        modelSelection: resolved.defaultModelSelection ?? {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: DEFAULT_MODEL,
+        },
+        runtimeMode: resolved.defaultRuntimeMode,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        workspaceStrategy: { type: "root" },
+        initialMessage: { text, attachments: [] },
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.mapError((error) => new MeetingsProjectError({ message: error.message })));
+    return { projectId, threadId: launched.threadId };
+  });

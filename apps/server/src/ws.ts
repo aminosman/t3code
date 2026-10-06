@@ -3499,6 +3499,17 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "history" },
           ),
+        [WS_METHODS.historyAskMeetings]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.historyAskMeetings,
+            MeetingsProject.askMeetings(input).pipe(
+              Effect.provideService(ProjectService.ProjectService, projectService),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ThreadLaunchService.ThreadLaunchService, threadLaunch),
+              Effect.mapError((error) => new HistoryApiError({ message: error.message })),
+            ),
+            { "rpc.aggregate": "history" },
+          ),
         [WS_METHODS.historyThreadMessages]: (input) =>
           observeRpcEffect(
             WS_METHODS.historyThreadMessages,

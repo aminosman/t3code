@@ -33,6 +33,8 @@ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as ChatMeetingsIndexRouteImport } from './routes/_chat.meetings.index'
+import { Route as ChatMeetingsMeetingIdRouteImport } from './routes/_chat.meetings.$meetingId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -156,6 +158,16 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatMeetingsIndexRoute = ChatMeetingsIndexRouteImport.update({
+  id: '/meetings/',
+  path: '/meetings/',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatMeetingsMeetingIdRoute = ChatMeetingsMeetingIdRouteImport.update({
+  id: '/meetings/$meetingId',
+  path: '/meetings/$meetingId',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -194,6 +206,8 @@ export interface FileRoutesByFullPath {
   '/settings/voice': typeof SettingsVoiceRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/meetings/$meetingId': typeof ChatMeetingsMeetingIdRoute
+  '/meetings/': typeof ChatMeetingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -221,6 +235,8 @@ export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/meetings/$meetingId': typeof ChatMeetingsMeetingIdRoute
+  '/meetings': typeof ChatMeetingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -250,6 +266,8 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/_chat/meetings/$meetingId': typeof ChatMeetingsMeetingIdRoute
+  '/_chat/meetings/': typeof ChatMeetingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -279,6 +297,8 @@ export interface FileRouteTypes {
     | '/settings/voice'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/meetings/$meetingId'
+    | '/meetings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -306,6 +326,8 @@ export interface FileRouteTypes {
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/meetings/$meetingId'
+    | '/meetings'
   id:
     | '__root__'
     | '/_chat'
@@ -334,6 +356,8 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/_chat/meetings/$meetingId'
+    | '/_chat/meetings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -516,6 +540,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/meetings/': {
+      id: '/_chat/meetings/'
+      path: '/meetings'
+      fullPath: '/meetings/'
+      preLoaderRoute: typeof ChatMeetingsIndexRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/meetings/$meetingId': {
+      id: '/_chat/meetings/$meetingId'
+      path: '/meetings/$meetingId'
+      fullPath: '/meetings/$meetingId'
+      preLoaderRoute: typeof ChatMeetingsMeetingIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -538,6 +576,8 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatMeetingsMeetingIdRoute: typeof ChatMeetingsMeetingIdRoute
+  ChatMeetingsIndexRoute: typeof ChatMeetingsIndexRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -545,6 +585,8 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatMeetingsMeetingIdRoute: ChatMeetingsMeetingIdRoute,
+  ChatMeetingsIndexRoute: ChatMeetingsIndexRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

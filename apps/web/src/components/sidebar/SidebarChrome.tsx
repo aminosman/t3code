@@ -1,11 +1,11 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, NotebookPenIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { usePullRequestsSupported } from "../../state/environments";
+import { useEnvironments, usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -125,6 +125,41 @@ function SidebarUtilityItem({
     </SidebarMenuItem>
   );
 }
+
+/** Whether a connected server records meetings (Roost: tui's meetings folder). */
+function useMeetingsAvailable(): boolean {
+  const { environments } = useEnvironments();
+  return environments.some(
+    (entry) => entry.connection.phase === "connected" && entry.serverConfig?.meetingsWorkspaceRoot,
+  );
+}
+
+/**
+ * Meetings as a place of its own, above the threads — not a project among
+ * projects. Shown only where a server records meetings.
+ */
+export const SidebarMeetingsEntry = memo(function SidebarMeetingsEntry() {
+  const available = useMeetingsAvailable();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const active = useLocation({ select: (location) => location.pathname.startsWith("/meetings") });
+  if (!available) return null;
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          isActive={active}
+          render={<Link to="/meetings" />}
+          onClick={() => {
+            if (isMobile) setOpenMobile(false);
+          }}
+        >
+          <NotebookPenIcon />
+          <span className="flex-1 truncate">Meetings</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+});
 
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
