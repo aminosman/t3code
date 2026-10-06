@@ -258,7 +258,7 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   }
 
   yield* Console.log(
-    request.type === "open-thread"
+    request.type === "open-thread" && "threadId" in response
       ? `Opened thread ${response.threadId} in T3 Code.`
       : `Opened ${workspaceRoot} in T3 Code.`,
   );

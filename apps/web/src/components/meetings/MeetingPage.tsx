@@ -14,6 +14,7 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { MeetingChat } from "./MeetingChat";
+import { RecordingControls } from "./RecordingControls";
 import { parseMeetingNotes, peopleLine, type MeetingNotesDocument } from "./meetingNotes";
 import { AskBar, Bars, meetingDate } from "./MeetingsParts";
 import { useMeetings } from "./useMeetings";
@@ -247,11 +248,12 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
           ) : null}
           {meeting ? (
             <>
-              {live ? (
-                <div className="mb-3 flex w-fit items-center gap-2 rounded-full border border-(--mt-hairline) bg-(--mt-raised) px-3 py-1 text-xs font-medium text-(--mt-accent)">
-                  <Bars live />
-                  Recording — the notes update as the meeting goes
-                </div>
+              {environmentId !== null ? (
+                <RecordingControls
+                  environmentId={environmentId}
+                  meeting={meeting.meeting}
+                  onSent={() => refresh()}
+                />
               ) : null}
               <h1 className="mt-serif mb-3 text-3xl leading-tight">{title}</h1>
               <div className="mb-7 flex flex-wrap gap-2">

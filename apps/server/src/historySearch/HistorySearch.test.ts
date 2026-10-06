@@ -6,6 +6,8 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -462,6 +464,20 @@ layer("HistorySearch", (it) => {
       );
       const live = yield* search.readMeeting({ meetingId: "2026.09.21-1330", whole: true });
       assert.isTrue(live?.meeting.live);
+      // No recording.json beside the marker: stopped, and being transcribed.
+      assert.strictEqual(live?.meeting.recording, "transcribing");
+      const folder = NodePath.join(meetingsDir, "2026.09.21-1330");
+      NodeFS.writeFileSync(NodePath.join(folder, "recording.json"), '{"state":"paused"}');
+      assert.strictEqual(
+        (yield* search.listMeetings({})).find((m) => m.id === "2026.09.21-1330")?.recording,
+        "paused",
+      );
+      NodeFS.writeFileSync(NodePath.join(folder, "recording.json"), '{"state":"recording"}');
+      assert.strictEqual(
+        (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.recording,
+        "recording",
+      );
+      NodeFS.rmSync(NodePath.join(folder, "recording.json"));
       assert.deepStrictEqual(live?.tuiHeard?.requests, ["look into SOC 2 auditors"]);
       assert.isTrue((yield* search.listMeetings({})).find((m) => m.id === "2026.09.21-1330")?.live);
       NodeFS.rmSync(NodePath.join(meetingsDir, "2026.09.21-1330", "transcript.live"));
@@ -469,6 +485,23 @@ layer("HistorySearch", (it) => {
       assert.isUndefined(
         (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.live,
       );
+
+      // Resume: offered for a meeting that ended within tui's six hours.
+      const metaPath = NodePath.join(meetingsDir, "2026.09.21-1330", "meta.json");
+      const meta = NodeFS.readFileSync(metaPath, "utf8");
+      // An hour before the test clock's now.
+      const endedAt = DateTime.formatIso(
+        DateTime.makeUnsafe((yield* Clock.currentTimeMillis) - 3_600_000),
+      );
+      NodeFS.writeFileSync(metaPath, `{"ended":"${endedAt}","duration_seconds":3120}`);
+      assert.isTrue(
+        (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.resumable,
+      );
+      NodeFS.writeFileSync(metaPath, '{"ended":"2026-09-21T14:22:00Z"}');
+      assert.isUndefined(
+        (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.resumable,
+      );
+      NodeFS.writeFileSync(metaPath, meta);
 
       // The meeting's chat: the thread its chat.json names, in a read and a listing.
       assert.isUndefined(whole?.meeting.chatThreadId);

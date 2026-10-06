@@ -86,6 +86,11 @@ export function DesktopAppActivationCoordinator() {
           params: buildThreadRouteParams(threadRef),
         });
       },
+      navigateToMeetings: async (meetingId) => {
+        await (meetingId === undefined
+          ? router.navigate({ to: "/meetings" })
+          : router.navigate({ to: "/meetings/$meetingId", params: { meetingId } }));
+      },
     }),
   );
 

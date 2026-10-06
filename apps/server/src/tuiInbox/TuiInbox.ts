@@ -300,6 +300,10 @@ export const make = Effect.gen(function* () {
       yield* Queue.offer(host.queue, { type: "stop" });
       return;
     }
+    if (input.type === "meeting") {
+      yield* Queue.offer(host.queue, input);
+      return;
+    }
     if (!openPrompts.has(input.promptId)) {
       return yield* new TuiInboxError({ message: "That question has already been answered." });
     }

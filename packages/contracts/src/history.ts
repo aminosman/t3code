@@ -90,6 +90,13 @@ export const HistoryMeetingSummary = Schema.Struct({
   people: Schema.Array(Schema.String),
   /** Being recorded now; its transcript and notes are updating live. */
   live: Schema.optional(Schema.Boolean),
+  /**
+   * What tui is doing with it (recording.json): recording, paused (the
+   * meeting still open), or — the recording over — transcribing it whole.
+   */
+  recording: Schema.optional(Schema.Literals(["recording", "paused", "transcribing"])),
+  /** Ended recently enough for tui to carry it on (Resume). */
+  resumable: Schema.optional(Schema.Boolean),
   /** The thread the user chats with this meeting in, once they have asked about it. */
   chatThreadId: Schema.optional(Schema.String),
 });

@@ -25,9 +25,19 @@ export const DesktopAppOpenThreadRequest = Schema.Struct({
 });
 export type DesktopAppOpenThreadRequest = typeof DesktopAppOpenThreadRequest.Type;
 
+/** Open Meetings, or one meeting's page (tui's "Meetings…": Roost is its meetings UI). */
+export const DesktopAppOpenMeetingsRequest = Schema.Struct({
+  version: Schema.Literal(DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION),
+  requestId: TrimmedNonEmptyString,
+  type: Schema.Literal("open-meetings"),
+  meetingId: Schema.optional(TrimmedNonEmptyString),
+});
+export type DesktopAppOpenMeetingsRequest = typeof DesktopAppOpenMeetingsRequest.Type;
+
 export const DesktopAppActivationRequest = Schema.Union([
   DesktopAppOpenWorkspaceRequest,
   DesktopAppOpenThreadRequest,
+  DesktopAppOpenMeetingsRequest,
 ]);
 export type DesktopAppActivationRequest = typeof DesktopAppActivationRequest.Type;
 
@@ -62,8 +72,18 @@ export const DesktopAppActivationFailure = Schema.Struct({
 });
 export type DesktopAppActivationFailure = typeof DesktopAppActivationFailure.Type;
 
+/** A page opened that is not a thread: Meetings. */
+export const DesktopAppActivationPageSuccess = Schema.Struct({
+  version: Schema.Literal(DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION),
+  requestId: TrimmedNonEmptyString,
+  ok: Schema.Literal(true),
+  opened: Schema.Literal("meetings"),
+});
+export type DesktopAppActivationPageSuccess = typeof DesktopAppActivationPageSuccess.Type;
+
 export const DesktopAppActivationResponse = Schema.Union([
   DesktopAppActivationSuccess,
+  DesktopAppActivationPageSuccess,
   DesktopAppActivationFailure,
 ]);
 export type DesktopAppActivationResponse = typeof DesktopAppActivationResponse.Type;

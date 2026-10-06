@@ -192,6 +192,11 @@ export interface ThreadMessagesOutput {
   readonly hasNewer: boolean;
 }
 
+/** meta.json's `ended`: when tui stopped recording the meeting. */
+const decodeMeetingEnded = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ ended: Schema.optional(Schema.String) })),
+);
+
 export interface MeetingSummary {
   readonly id: string;
   readonly title: string;
@@ -202,6 +207,10 @@ export interface MeetingSummary {
   readonly people: ReadonlyArray<string>;
   /** Being recorded now: tui is transcribing it live (transcript.live). */
   readonly live?: boolean;
+  /** recording.json's state; "transcribing" once it is gone and transcript.live is not. */
+  readonly recording?: "recording" | "paused" | "transcribing";
+  /** Ended within tui's resume window (meta.json's `ended`), and not live. */
+  readonly resumable?: boolean;
   /** The thread the user chats with this meeting in (chat.json). */
   readonly chatThreadId?: string;
 }
@@ -1517,6 +1526,38 @@ const make = (options: HistorySearchOptions) =>
       fs
         .exists(path.join(meetingsDir, id, "transcript.live"))
         .pipe(Effect.orElseSucceed(() => false));
+    // While it records or holds a meeting paused, tui says which in
+    // recording.json; after Stop the file is gone and the final pass runs.
+    const recordingOf = (id: string) =>
+      fs.readFileString(path.join(meetingsDir, id, "recording.json")).pipe(
+        Effect.map((text) => {
+          try {
+            const state = (JSON.parse(text) as { state?: unknown }).state;
+            return state === "recording" || state === "paused" ? state : null;
+          } catch {
+            return null;
+          }
+        }),
+        Effect.orElseSucceed(() => null),
+      );
+    const withRecording = (summary: MeetingSummary) =>
+      Effect.gen(function* () {
+        if (!(yield* isLive(summary.id))) return summary;
+        const state = yield* recordingOf(summary.id);
+        return { ...summary, live: true, recording: state ?? "transcribing" } as MeetingSummary;
+      });
+    // tui resumes a meeting that ended within six hours (MeetingRecorder.resumable).
+    const RESUME_HOURS = 6;
+    const isResumable = (id: string) =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const meta = yield* fs
+          .readFileString(path.join(meetingsDir, id, "meta.json"))
+          .pipe(Effect.flatMap(decodeMeetingEnded));
+        if (meta.ended === undefined) return false;
+        const age = now - Date.parse(meta.ended);
+        return age >= 0 && age <= RESUME_HOURS * 3_600_000;
+      }).pipe(Effect.orElseSucceed(() => false));
     // Roost's own record of the meeting's chat, beside the user's notes.md.
     const withChat = (summary: MeetingSummary) =>
       Meetings.readChatThreadId(meetingsDir, summary.id).pipe(
@@ -1557,10 +1598,7 @@ const make = (options: HistorySearchOptions) =>
         `;
         const summaries = rows.map(toMeetingSummary);
         return yield* Effect.forEach(summaries, (summary) =>
-          isLive(summary.id).pipe(
-            Effect.map((live) => (live ? { ...summary, live } : summary)),
-            Effect.flatMap(withChat),
-          ),
+          withRecording(summary).pipe(Effect.flatMap(withChat)),
         );
       },
       Effect.mapError(failWith("could not list meetings")),
@@ -1584,7 +1622,11 @@ const make = (options: HistorySearchOptions) =>
           projectTitle: meeting.projectTitle,
           people: meeting.people,
         };
-        const summary = yield* withChat(found);
+        const recorded = yield* withRecording(found);
+        const summary: MeetingSummary =
+          recorded.live !== true && (yield* isResumable(found.id))
+            ? { ...(yield* withChat(recorded)), resumable: true }
+            : yield* withChat(recorded);
         const paths = {
           notesPath: path.join(meetingsDir, meeting.id, "summary.md"),
           transcriptPath: path.join(meetingsDir, meeting.id, "transcript.md"),
@@ -1594,7 +1636,6 @@ const make = (options: HistorySearchOptions) =>
           .pipe(Effect.orElseSucceed(() => ""));
         const myNotes = typed.trim().length > 0 ? typed : null;
         const tuiHeard = yield* readTuiHeard(meeting.id);
-        if (yield* isLive(meeting.id)) Object.assign(summary, { live: true });
         if (input.whole === true) {
           return {
             meeting: summary,

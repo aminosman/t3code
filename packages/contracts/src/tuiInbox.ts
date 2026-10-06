@@ -53,7 +53,20 @@ export type TuiInboxSendResult = typeof TuiInboxSendResult.Type;
 export const TuiInboxVerdict = Schema.Literals(["up", "down"]);
 export type TuiInboxVerdict = typeof TuiInboxVerdict.Type;
 
-/** The phone answering a prompt, or stopping what tui is running. */
+/** Roost's meeting page driving tui's recorder. */
+export const TuiInboxMeetingAction = Schema.Literals(["pause", "resume", "stop"]);
+export type TuiInboxMeetingAction = typeof TuiInboxMeetingAction.Type;
+
+const TuiInboxMeetingCommand = Schema.Struct({
+  type: Schema.Literal("meeting"),
+  action: TuiInboxMeetingAction,
+  meetingId: Schema.optional(TrimmedNonEmptyString),
+});
+
+/**
+ * The phone answering a prompt or stopping what tui is running, or a
+ * meeting's page pausing, resuming or stopping its recording.
+ */
 export const TuiInboxControlInput = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("verdict"),
@@ -61,6 +74,7 @@ export const TuiInboxControlInput = Schema.Union([
     verdict: TuiInboxVerdict,
   }),
   Schema.Struct({ type: Schema.Literal("stop") }),
+  TuiInboxMeetingCommand,
 ]);
 export type TuiInboxControlInput = typeof TuiInboxControlInput.Type;
 
@@ -89,6 +103,7 @@ export const TuiInboxHostEvent = Schema.Union([
     verdict: TuiInboxVerdict,
   }),
   Schema.Struct({ type: Schema.Literal("stop") }),
+  TuiInboxMeetingCommand,
   /** Another tui took the stream; this one should not reconnect on its own. */
   Schema.Struct({ type: Schema.Literal("superseded") }),
 ]);

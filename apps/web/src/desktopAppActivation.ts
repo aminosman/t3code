@@ -42,6 +42,8 @@ export interface DesktopAppActivationDependencies {
     threadId: ThreadId,
   ) => (ScopedThreadRef & { readonly projectId: ProjectId }) | null;
   readonly navigateToThread: (threadRef: ScopedThreadRef) => Promise<void>;
+  /** Meetings, or one meeting's page. */
+  readonly navigateToMeetings: (meetingId: string | undefined) => Promise<void>;
 }
 
 function failure(
@@ -68,6 +70,18 @@ export async function handleDesktopAppActivationRequest(
 ): Promise<DesktopAppActivationResponse> {
   if (request.type === "open-thread") {
     return handleOpenThread(request, dependencies);
+  }
+  if (request.type === "open-meetings") {
+    try {
+      await dependencies.navigateToMeetings(request.meetingId);
+    } catch (error) {
+      return failure(
+        request.requestId,
+        "internal-error",
+        errorMessage(error, "T3 Code could not open Meetings."),
+      );
+    }
+    return { version: 1, requestId: request.requestId, ok: true, opened: "meetings" };
   }
   return handleOpenWorkspace(request, dependencies);
 }

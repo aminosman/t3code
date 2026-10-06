@@ -59,10 +59,22 @@ export function MeetingRow({ meeting }: { meeting: HistoryMeetingSummary }) {
         ) : null}
       </span>
       {meeting.live ? (
-        <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-(--mt-accent)">
-          <Bars live />
-          Recording
-        </span>
+        meeting.recording === "paused" ? (
+          <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-(--mt-ink-2-strong)">
+            <Bars live={false} />
+            Paused
+          </span>
+        ) : meeting.recording === "transcribing" ? (
+          <span className="flex shrink-0 items-center gap-1.5 text-xs text-(--mt-ink-2)">
+            <Bars live />
+            Transcribing
+          </span>
+        ) : (
+          <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-(--mt-accent)">
+            <Bars live />
+            Recording
+          </span>
+        )
       ) : (
         <span className="shrink-0 text-xs tabular-nums text-(--mt-ink-2)">
           {date?.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}

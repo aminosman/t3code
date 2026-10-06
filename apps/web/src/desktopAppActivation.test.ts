@@ -34,6 +34,7 @@ function dependencies(
     findThread: (id) =>
       id === threadId ? { environmentId, threadId, projectId: existingProjectId } : null,
     navigateToThread: vi.fn(async () => undefined),
+    navigateToMeetings: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -143,5 +144,27 @@ describe("desktop app activation", () => {
       message: "Project path is not available.",
     });
     expect(openThread).not.toHaveBeenCalled();
+  });
+});
+
+describe("desktop app open-meetings", () => {
+  it("opens Meetings, or one meeting's page", async () => {
+    const deps = dependencies();
+    const response = await handleDesktopAppActivationRequest(
+      {
+        version: 1,
+        requestId: "request-meetings",
+        type: "open-meetings",
+        meetingId: "2026.09.30-1335",
+      },
+      deps,
+    );
+    expect(deps.navigateToMeetings).toHaveBeenCalledWith("2026.09.30-1335");
+    expect(response).toEqual({
+      version: 1,
+      requestId: "request-meetings",
+      ok: true,
+      opened: "meetings",
+    });
   });
 });
