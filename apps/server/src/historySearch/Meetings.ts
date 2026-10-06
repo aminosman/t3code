@@ -37,7 +37,7 @@ export interface Meeting {
 }
 
 export interface MeetingDocument {
-  readonly role: "notes" | "transcript" | "slides";
+  readonly role: "notes" | "action" | "decision" | "transcript" | "slides";
   /** Where a transcript passage starts; null for notes and slides. */
   readonly at: string | null;
   readonly text: string;
@@ -108,7 +108,7 @@ export const scan = (dir: string) =>
         const modified = info.value.mtime._tag === "Some" ? info.value.mtime.value.getTime() : 0;
         stamps.push(`${file}:${modified}:${info.value.size}`);
       }
-      if (readable) found.push({ id: name, version: stamps.join("|") });
+      if (readable) found.push({ id: name, version: [CHUNKING, ...stamps].join("|") });
     }
     return found;
   });
@@ -191,6 +191,45 @@ export const load = (dir: string, id: string) =>
   });
 
 const PASSAGE_CHARS = 900;
+/** Bumped when what a meeting is cut into changes, so every meeting is redone. */
+const CHUNKING = "chunks:2";
+
+/**
+ * The notes, with each decision and action item taken out as a passage of its
+ * own: "what are my to-dos" asks for those, and a hit on one names the
+ * commitment rather than the whole page it sat in.
+ */
+export const splitNotes = (
+  notes: string,
+): {
+  readonly rest: string;
+  readonly items: ReadonlyArray<{ role: "action" | "decision"; text: string }>;
+} => {
+  const rest: Array<string> = [];
+  const items: Array<{ role: "action" | "decision"; text: string }> = [];
+  let section: "action" | "decision" | null = null;
+  for (const line of notes.split("\n")) {
+    const heading = /^#{1,6}\s+(.*)$/.exec(line.trim());
+    if (heading) {
+      const name = heading[1]!.toLowerCase();
+      section =
+        name.includes("action") ||
+        name.includes("to-do") ||
+        name.includes("todo") ||
+        name.includes("next step")
+          ? "action"
+          : name.includes("decision")
+            ? "decision"
+            : null;
+      if (section === null) rest.push(line);
+      continue;
+    }
+    const bullet = /^\s*[-*•]\s+(.*)$/.exec(line);
+    if (section !== null && bullet) items.push({ role: section, text: bullet[1]!.trim() });
+    else if (section === null) rest.push(line);
+  }
+  return { rest: rest.join("\n").trim(), items };
+};
 
 /**
  * What a meeting puts in the index: its notes whole, its slides whole, and its
@@ -201,7 +240,9 @@ const PASSAGE_CHARS = 900;
 export const documents = (meeting: Meeting): ReadonlyArray<MeetingDocument> => {
   const docs: Array<MeetingDocument> = [];
   if (meeting.notes !== null) {
-    docs.push({ role: "notes", at: null, text: `${meeting.title}\n${meeting.notes}` });
+    const { rest, items } = splitNotes(meeting.notes);
+    docs.push({ role: "notes", at: null, text: `${meeting.title}\n${rest}` });
+    for (const item of items) docs.push({ role: item.role, at: null, text: item.text });
   }
   if (meeting.slides !== null) docs.push({ role: "slides", at: null, text: meeting.slides });
   let passage: Array<TranscriptLine> = [];

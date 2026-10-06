@@ -19,6 +19,7 @@ import { ThreadManagementService } from "../orchestration-v2/ThreadManagementSer
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as Embedder from "./Embedder.ts";
 import * as HistorySearch from "./HistorySearch.ts";
+import * as Meetings from "./Meetings.ts";
 
 const meetingsDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "roost-meetings-"));
 const writeMeeting = (id: string, files: Record<string, string>) => {
@@ -348,6 +349,18 @@ layer("HistorySearch", (it) => {
       const usersOnly = yield* search.search({ query: "plaid audit", role: "user" });
       assert.isTrue(usersOnly.results.every((result) => result.kind === "thread"));
 
+      // A decision is a passage of its own, and a search can ask for just those.
+      const decided = yield* search.search({
+        query: "plaid",
+        sources: ["meetings"],
+        meetingParts: ["decision"],
+      });
+      assert.strictEqual(decided.results[0]?.hits[0]?.role, "decision");
+      assert.include(decided.results[0]?.hits[0]?.snippet ?? "", "Friday");
+      assert.isTrue(
+        decided.results.every((result) => result.hits.every((hit) => hit.role === "decision")),
+      );
+
       // A heading of its own is a better title than a folder name.
       const books = yield* search.search({ query: "quickbooks" });
       assert.strictEqual(books.results[0]?.title, "Bookkeeping sync");
@@ -530,8 +543,9 @@ it.effect("finds by meaning what shares no word with the question, and says whic
     yield* TestClock.adjust("21 seconds");
     const state = yield* search.refresh;
     assert.strictEqual(state.toEmbed, 0);
-    // Two user messages, and the fixture meetings: two sets of notes and one transcript passage.
-    assert.strictEqual(state.embedded, 2 + 3);
+    // Two user messages, and the fixture meetings: two sets of notes, the one
+    // decision taken out of them, and one transcript passage.
+    assert.strictEqual(state.embedded, 2 + 4);
 
     const found = yield* ask();
     assert.isTrue(found.meaning.active);
@@ -558,7 +572,7 @@ it.effect("finds by meaning what shares no word with the question, and says whic
     const vectors = yield* sql<{ readonly count: number }>`
       SELECT COUNT(*) AS "count" FROM roost_history_vectors
     `;
-    assert.strictEqual(vectors[0]?.count, 1 + 3);
+    assert.strictEqual(vectors[0]?.count, 1 + 4);
   }).pipe(
     Effect.provide(
       HistorySearch.layerWith({ meetingsDir }).pipe(
@@ -569,6 +583,21 @@ it.effect("finds by meaning what shares no word with the question, and says whic
     ),
   ),
 );
+
+it("takes each decision and action item out of the notes as a passage of its own", () => {
+  const { rest, items } = Meetings.splitNotes(
+    "Pricing for law firms.\n\n## Key points\n- $500 a month.\n\n## Decisions\n- Charge $500.\n\n" +
+      "## Action items\n- Mo: finish the Plaid application.\n- Amin: send the PRD.\n",
+  );
+  assert.deepStrictEqual(items, [
+    { role: "decision", text: "Charge $500." },
+    { role: "action", text: "Mo: finish the Plaid application." },
+    { role: "action", text: "Amin: send the PRD." },
+  ]);
+  assert.include(rest, "Key points");
+  assert.include(rest, "$500 a month.");
+  assert.notInclude(rest, "Plaid application");
+});
 
 it("keeps a vector's direction through a byte per dimension", () => {
   const a = fakeVector("billing invoice charges for the customers");

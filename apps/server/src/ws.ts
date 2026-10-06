@@ -1,4 +1,4 @@
-import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
+import { HistoryApiError, OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as NodeCrypto from "node:crypto";
@@ -176,6 +176,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as TuiInbox from "./tuiInbox/TuiInbox.ts";
+import * as HistorySearch from "./historySearch/HistorySearch.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -1123,6 +1124,9 @@ const makeWsRpcLayer = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const tuiInbox = yield* TuiInbox.TuiInbox;
+      const history = yield* HistorySearch.HistorySearch;
+      const historyFailed = (error: HistorySearch.HistorySearchError) =>
+        new HistoryApiError({ message: error.reason });
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -3452,6 +3456,33 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.tuiInboxControl, tuiInbox.control(input), {
             "rpc.aggregate": "tui-inbox",
           }),
+        [WS_METHODS.historySearch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.historySearch,
+            history.search(input).pipe(Effect.mapError(historyFailed)),
+            { "rpc.aggregate": "history" },
+          ),
+        [WS_METHODS.historyMeetingList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.historyMeetingList,
+            history.listMeetings(input).pipe(
+              Effect.map((meetings) => ({ meetings })),
+              Effect.mapError(historyFailed),
+            ),
+            { "rpc.aggregate": "history" },
+          ),
+        [WS_METHODS.historyMeetingRead]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.historyMeetingRead,
+            history.readMeeting(input).pipe(Effect.mapError(historyFailed)),
+            { "rpc.aggregate": "history" },
+          ),
+        [WS_METHODS.historyThreadMessages]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.historyThreadMessages,
+            history.readMessages(input).pipe(Effect.mapError(historyFailed)),
+            { "rpc.aggregate": "history" },
+          ),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,
@@ -3744,6 +3775,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const tuiInbox = yield* TuiInbox.TuiInbox;
+    const historySearch = yield* HistorySearch.HistorySearch;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
@@ -3804,6 +3836,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One inbox for the server's life: tui's stream and the phone's share it.
               Layer.provide(Layer.succeed(TuiInbox.TuiInbox, tuiInbox)),
+              // One index for the server's life, shared with the MCP tools.
+              Layer.provide(Layer.succeed(HistorySearch.HistorySearch, historySearch)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),

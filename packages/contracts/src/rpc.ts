@@ -276,6 +276,17 @@ import {
   TuiInboxSendResult,
 } from "./tuiInbox.ts";
 import {
+  HistoryApiError,
+  HistoryMeetingListInput,
+  HistoryMeetingListOutput,
+  HistoryMeetingReadInput,
+  HistoryMeetingReadOutput,
+  HistorySearchInput,
+  HistorySearchOutput,
+  HistoryThreadMessagesInput,
+  HistoryThreadMessagesOutput,
+} from "./history.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   ServerConfig,
@@ -435,6 +446,12 @@ export const WS_METHODS = {
   tuiInboxSend: "tuiInbox.send",
   tuiInboxSubscribe: "tuiInbox.subscribe",
   tuiInboxControl: "tuiInbox.control",
+
+  // history (Roost): the search agents use as t3_history_search, for clients
+  historySearch: "history.search",
+  historyMeetingList: "history.meetingList",
+  historyMeetingRead: "history.meetingRead",
+  historyThreadMessages: "history.threadMessages",
 
   // Device methods
   deviceConfigure: "device.configure",
@@ -1472,6 +1489,30 @@ const WsTuiInboxControlRpc = Rpc.make(WS_METHODS.tuiInboxControl, {
   error: Schema.Union([TuiInboxError, EnvironmentAuthorizationError]),
 });
 
+const WsHistorySearchRpc = Rpc.make(WS_METHODS.historySearch, {
+  payload: HistorySearchInput,
+  success: HistorySearchOutput,
+  error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
+});
+
+const WsHistoryMeetingListRpc = Rpc.make(WS_METHODS.historyMeetingList, {
+  payload: HistoryMeetingListInput,
+  success: HistoryMeetingListOutput,
+  error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
+});
+
+const WsHistoryMeetingReadRpc = Rpc.make(WS_METHODS.historyMeetingRead, {
+  payload: HistoryMeetingReadInput,
+  success: Schema.NullOr(HistoryMeetingReadOutput),
+  error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
+});
+
+const WsHistoryThreadMessagesRpc = Rpc.make(WS_METHODS.historyThreadMessages, {
+  payload: HistoryThreadMessagesInput,
+  success: Schema.NullOr(HistoryThreadMessagesOutput),
+  error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -1881,6 +1922,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsTuiInboxSendRpc,
   WsTuiInboxSubscribeRpc,
   WsTuiInboxControlRpc,
+  WsHistorySearchRpc,
+  WsHistoryMeetingListRpc,
+  WsHistoryMeetingReadRpc,
+  WsHistoryThreadMessagesRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,

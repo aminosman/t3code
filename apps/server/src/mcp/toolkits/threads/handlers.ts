@@ -206,6 +206,9 @@ const makeHandlers = Effect.gen(function* () {
       readonly sources?: ReadonlyArray<"threads" | "meetings"> | undefined;
       readonly projectId?: ProjectId | undefined;
       readonly role?: "user" | "assistant" | undefined;
+      readonly meetingParts?:
+        | ReadonlyArray<"notes" | "action" | "decision" | "transcript" | "slides">
+        | undefined;
       readonly since?: string | undefined;
       readonly includeCurrent?: boolean | undefined;
       readonly limit?: number | undefined;
@@ -216,6 +219,7 @@ const makeHandlers = Effect.gen(function* () {
           query: input.query,
           sources: input.sources,
           projectId: input.projectId,
+          meetingParts: input.meetingParts,
           role: input.role,
           since: input.since,
           limit: input.limit,

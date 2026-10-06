@@ -101,6 +101,13 @@ export const HistorySearchInput = Schema.Struct({
       "Threads only: just what the user wrote (what was asked for, corrections, decisions) or " +
       "just what agents wrote (what was found and done). Omit for both.",
   }),
+  meetingParts: Schema.optional(
+    Schema.Array(Schema.Literals(["notes", "action", "decision", "transcript", "slides"])),
+  ).annotate({
+    description:
+      "Meetings only: just these parts — action for action items and to-dos, decision for " +
+      "what was decided, notes for the rest of the written notes. Omit for everything.",
+  }),
   since: Schema.optional(IsoDateTime).annotate({
     description: "ISO date or timestamp; only what was written or recorded at or after it.",
   }),
@@ -129,7 +136,9 @@ export const HistorySearchHit = Schema.Struct({
       "around to read the conversation there. Null for notes and slides.",
   }),
   role: Schema.String.annotate({
-    description: "user, assistant or title; for a meeting: notes, transcript or slides.",
+    description:
+      "user, assistant or title; for a meeting: notes, action (an action item), decision, " +
+      "transcript or slides.",
   }),
   createdAt: Schema.NullOr(IsoDateTime),
   snippet: Schema.String.annotate({ description: "The matching passage; matches sit in «…»." }),

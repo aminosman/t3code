@@ -682,16 +682,6 @@ const makeRoutesLayer = Layer.mergeAll(
   // what dispatch can actually serve.
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
-    // The full-text index behind t3_history_search (threads and meetings): built
-    // at launch, then kept current by following thread events and the meetings
-    // folder.
-    Layer.provide(
-      HistorySearch.followLayer.pipe(
-        Layer.provideMerge(HistorySearch.layer),
-        // Matching by meaning: an embedding model on this Mac, through Ollama.
-        Layer.provide(Embedder.layerOllama),
-      ),
-    ),
   ),
   // Last, so no route layer can replace the server's one TracerDisabledWhen.
   untracedRequestsLayer,
@@ -701,6 +691,17 @@ const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PullRequestServiceLive),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(TuiInbox.layer),
+  // The index behind t3_history_search (threads and meetings), built at launch
+  // and kept current by following thread events and the meetings folder. One
+  // instance for both doors: agents reach it over MCP, clients (tui's meetings
+  // page) over the history.* RPC methods.
+  Layer.provide(
+    HistorySearch.followLayer.pipe(
+      Layer.provideMerge(HistorySearch.layer),
+      // Matching by meaning: an embedding model on this Mac, through Ollama.
+      Layer.provide(Embedder.layerOllama),
+    ),
+  ),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),
   Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),

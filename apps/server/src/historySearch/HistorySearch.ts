@@ -93,6 +93,10 @@ export interface HistorySearchInput {
   readonly projectId?: string | undefined;
   /** Threads only: what the user wrote, or what agents wrote. */
   readonly role?: "user" | "assistant" | undefined;
+  /** Meetings only: just these parts of a meeting. */
+  readonly meetingParts?:
+    | ReadonlyArray<"notes" | "action" | "decision" | "transcript" | "slides">
+    | undefined;
   /** ISO timestamp; only what was written or recorded at or after it. */
   readonly since?: string | undefined;
   /** Left out of the results: the thread asking already knows itself. */
@@ -939,6 +943,12 @@ const make = (options: HistorySearchOptions) =>
             : sql`COALESCE(t.project_id, g.project_id) = ${input.projectId}`;
         const roleFilter =
           input.role === undefined ? sql`1 = 1` : sql`s.role IN (${input.role}, 'title')`;
+        // Meetings only: just these parts (action items, decisions, …).
+        // Thread passages are untouched by it.
+        const partsFilter =
+          input.meetingParts === undefined || input.meetingParts.length === 0
+            ? sql`1 = 1`
+            : sql`(s.source <> 'meeting' OR ${sql.in("s.role", [...input.meetingParts])})`;
         const sinceFilter =
           input.since === undefined ? sql`1 = 1` : sql`(s.at IS NULL OR s.at >= ${input.since})`;
         const excludeFilter =
@@ -979,7 +989,7 @@ const make = (options: HistorySearchOptions) =>
               (s.source = 'thread' AND t.thread_id IS NOT NULL AND t.deleted_at IS NULL)
               OR (s.source = 'meeting' AND g.meeting_id IS NOT NULL)
             )
-            AND ${sourceFilter} AND ${projectFilter} AND ${roleFilter}
+            AND ${sourceFilter} AND ${projectFilter} AND ${roleFilter} AND ${partsFilter}
             AND ${sinceFilter} AND ${excludeFilter}
           ORDER BY bm25(roost_history_search)
           LIMIT ${HIT_POOL}
@@ -1049,7 +1059,7 @@ const make = (options: HistorySearchOptions) =>
                     (s.source = 'thread' AND t.thread_id IS NOT NULL AND t.deleted_at IS NULL)
                     OR (s.source = 'meeting' AND g.meeting_id IS NOT NULL)
                   )
-                  AND ${sourceFilter} AND ${projectFilter} AND ${roleFilter}
+                  AND ${sourceFilter} AND ${projectFilter} AND ${roleFilter} AND ${partsFilter}
                   AND ${sinceFilter} AND ${excludeFilter}
               `;
               meaningHits = rows
@@ -1118,7 +1128,7 @@ const make = (options: HistorySearchOptions) =>
           const weight =
             hit.role === "title"
               ? TITLE_WEIGHT
-              : hit.role === "notes"
+              : hit.role === "notes" || hit.role === "action" || hit.role === "decision"
                 ? NOTES_WEIGHT
                 : hit.role === "user"
                   ? USER_WEIGHT
