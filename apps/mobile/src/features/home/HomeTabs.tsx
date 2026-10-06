@@ -16,8 +16,20 @@ const TABS: ReadonlyArray<{ tab: HomeTab; icon: AppSymbolName; label: string }> 
 
 const TAB_WIDTH = 42;
 
-/** Room the floating capsule takes at the foot of every page. */
-export const TABS_CLEARANCE = 46;
+const TABS_HEIGHT = 34;
+
+/**
+ * Where the capsule sits: low, just over the home indicator, the way iOS
+ * places its own tab bars, rather than a full safe-area inset above it.
+ */
+export function tabsBottom(safeAreaBottom: number): number {
+  return Math.max(8, safeAreaBottom - 14);
+}
+
+/** Room a page leaves at its foot for the capsule and a small gap above it. */
+export function tabsFootprint(safeAreaBottom: number): number {
+  return tabsBottom(safeAreaBottom) + TABS_HEIGHT + 8;
+}
 
 /**
  * Three icons in one small floating capsule, 34 points tall, over all three

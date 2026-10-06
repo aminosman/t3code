@@ -23,7 +23,6 @@ import { useHomeThreadSelection } from "./home-thread-navigation";
 import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
-import { TABS_CLEARANCE } from "./HomeTabs";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 
 /**
@@ -163,9 +162,8 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
     );
   }
 
-  const renderList = (bottomClearance: number) => (
+  const renderList = () => (
     <HomeScreen
-      bottomClearance={bottomClearance}
       catalogState={catalogState}
       environments={environments}
       onAddConnection={() =>
@@ -241,7 +239,9 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
           onStartNewTask={startNewTask}
           onOpenSettings={openSettings}
         />
-        {renderList(TABS_CLEARANCE)}
+        {/* The list already leaves room at its foot for iOS's bottom toolbar,
+            which the pager does not show; the capsule sits in that room. */}
+        {renderList()}
       </View>
     );
   }
@@ -297,7 +297,7 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
           onThreadSortOrderChange={setThreadSortOrder}
         />
 
-        {renderList(0)}
+        {renderList()}
       </>
     </AndroidHomeFabLayout>
   );

@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { MeetingsScreen } from "../meetings/MeetingsScreen";
 import { ChatsRouteScreen } from "./ChatsRouteScreen";
-import { HOME_TABS, HomeTabs, type HomeTab } from "./HomeTabs";
+import { HOME_TABS, HomeTabs, tabsBottom, type HomeTab } from "./HomeTabs";
 import { ShelvesHomeScreen, useHomeData } from "./ShelvesHomeScreen";
 
 const HOME_INDEX = HOME_TABS.indexOf("home");
@@ -116,7 +116,7 @@ export function HomePager(props: { readonly page?: HomeTab }) {
         <View
           pointerEvents="box-none"
           className="absolute right-0 left-0 items-center"
-          style={{ bottom: insets.bottom + 6 }}
+          style={{ bottom: tabsBottom(insets.bottom) }}
         >
           <HomeTabs
             position={position}

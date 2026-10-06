@@ -22,16 +22,26 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useHomeThreadSelection } from "./home-thread-navigation";
 import { HomeDock, SERIF_FONT } from "./HomeDock";
-import { TABS_CLEARANCE, type HomeTab } from "./HomeTabs";
+import { tabsFootprint, type HomeTab } from "./HomeTabs";
 import { useMeetingsEnvironment } from "../meetings/use-meetings-environment";
 import {
   buildShelves,
+  SHELF_ORDER,
   shelfPreview,
   shelfStateLabel,
   shortAgo,
   type ShelfCard,
   type ShelfCardState,
+  type ShelfKind,
 } from "./shelves";
+
+const SHELF_TITLES: Record<ShelfKind, string> = {
+  needs: "Needs you",
+  working: "Working",
+  done: "Done",
+  failed: "Failed",
+  stopped: "Stopped",
+};
 import { useTuiEnvironment } from "./use-tui-environment";
 
 const CARD_WIDTH = 226;
@@ -235,7 +245,6 @@ function Shelf(props: {
   readonly title: string;
   readonly count: number;
   readonly working?: boolean;
-  readonly empty: string;
   readonly onSeeAll: () => void;
   readonly children: React.ReactNode;
 }) {
@@ -256,20 +265,16 @@ function Shelf(props: {
           <Text className="text-2xs text-foreground-tertiary">All →</Text>
         </Pressable>
       </View>
-      {props.count === 0 ? (
-        <Text className="px-5 pb-1 text-xs text-foreground-tertiary">{props.empty}</Text>
-      ) : (
-        <ScrollView
-          horizontal
-          contentInsetAdjustmentBehavior="never"
-          showsHorizontalScrollIndicator={false}
-          decelerationRate="fast"
-          snapToInterval={CARD_WIDTH + 9}
-          contentContainerStyle={{ paddingHorizontal: 14, gap: 9 }}
-        >
-          {props.children}
-        </ScrollView>
-      )}
+      <ScrollView
+        horizontal
+        contentInsetAdjustmentBehavior="never"
+        showsHorizontalScrollIndicator={false}
+        decelerationRate="fast"
+        snapToInterval={CARD_WIDTH + 9}
+        contentContainerStyle={{ paddingHorizontal: 14, gap: 9 }}
+      >
+        {props.children}
+      </ScrollView>
     </View>
   );
 }
@@ -294,9 +299,7 @@ export function useHomeData() {
         : null,
     ).data?.meetings ?? [];
   const liveMeeting = meetings.find((meeting) => meeting.live) ?? null;
-  const needsYou = shelves.other.some(
-    (card) => card.state === "needs-input" || card.state === "needs-approval",
-  );
+  const needsYou = shelves.needs.length > 0;
   return {
     now,
     shelves,
@@ -343,6 +346,10 @@ export function ShelvesHomeScreen(props: {
         meetingId: meeting.id,
       });
   };
+  // One row per status; a status with nothing in it takes no room.
+  const visibleShelves = SHELF_ORDER.filter(
+    (kind) => shelves[kind].length > 0 || (kind === "working" && liveMeeting !== null),
+  );
   const cardFor = (card: ShelfCard) => (
     <ShelfCardView
       key={`${card.thread.environmentId}:${card.thread.id}`}
@@ -361,7 +368,7 @@ export function ShelvesHomeScreen(props: {
         className="flex-1"
         contentContainerStyle={{
           paddingTop: insets.top + 6,
-          paddingBottom: insets.bottom + TABS_CLEARANCE + 150,
+          paddingBottom: tabsFootprint(insets.bottom) + 140,
         }}
         keyboardDismissMode="interactive"
       >
@@ -417,34 +424,25 @@ export function ShelvesHomeScreen(props: {
           </View>
         </View>
 
-        <Shelf
-          title="Working"
-          working
-          count={shelves.working.length + (liveMeeting ? 1 : 0)}
-          empty="Nothing running right now."
-          onSeeAll={() => go("chats")}
-        >
-          {liveMeeting ? (
-            <LiveMeetingCard meeting={liveMeeting} onPress={() => openMeeting(liveMeeting)} />
-          ) : null}
-          {shelves.working.map(cardFor)}
-        </Shelf>
-        <Shelf
-          title="Done"
-          count={shelves.done.length}
-          empty="Nothing finished in the last three days."
-          onSeeAll={() => go("chats")}
-        >
-          {shelves.done.map(cardFor)}
-        </Shelf>
-        <Shelf
-          title="Everything else"
-          count={shelves.other.length}
-          empty="Nothing waiting on you."
-          onSeeAll={() => go("chats")}
-        >
-          {shelves.other.map(cardFor)}
-        </Shelf>
+        {visibleShelves.length === 0 ? (
+          <Text className="px-5 pt-6 text-sm text-foreground-tertiary">
+            Nothing yet. Say what you want done below.
+          </Text>
+        ) : null}
+        {visibleShelves.map((kind) => (
+          <Shelf
+            key={kind}
+            title={SHELF_TITLES[kind]}
+            working={kind === "working"}
+            count={shelves[kind].length + (kind === "working" && liveMeeting ? 1 : 0)}
+            onSeeAll={() => go("chats")}
+          >
+            {kind === "working" && liveMeeting ? (
+              <LiveMeetingCard meeting={liveMeeting} onPress={() => openMeeting(liveMeeting)} />
+            ) : null}
+            {shelves[kind].map(cardFor)}
+          </Shelf>
+        ))}
       </ScrollView>
 
       <KeyboardStickyView
@@ -456,7 +454,7 @@ export function ShelvesHomeScreen(props: {
           // Page-coloured under the composer so cards never show between it and the tabs.
           className="bg-screen pt-2"
           pointerEvents="box-none"
-          style={{ paddingBottom: composing ? 8 : insets.bottom + TABS_CLEARANCE }}
+          style={{ paddingBottom: composing ? 8 : tabsFootprint(insets.bottom) }}
         >
           <HomeDock
             liveMeeting={liveMeeting}

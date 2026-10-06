@@ -2,12 +2,20 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 
 /**
- * The home screen's three shelves: what is working, what is done, and
- * everything else (what needs the user first, then what stopped). Each
- * thread lands on exactly one shelf; subagent threads never get a card of
- * their own and are counted on the thread that started them.
+ * The home screen's shelves, one per status: what needs the user, what is
+ * working, what is done, what failed and what stopped. Each thread lands on
+ * exactly one shelf; subagent threads never get a card of their own and are
+ * counted on the thread that started them.
  */
-export type ShelfKind = "working" | "done" | "other";
+export type ShelfKind = "needs" | "working" | "done" | "failed" | "stopped";
+
+export const SHELF_ORDER: ReadonlyArray<ShelfKind> = [
+  "needs",
+  "working",
+  "done",
+  "failed",
+  "stopped",
+];
 
 export type ShelfCardState =
   | "working"
@@ -31,11 +39,7 @@ export interface ShelfCard {
   readonly activityAt: string;
 }
 
-export interface Shelves {
-  readonly working: ReadonlyArray<ShelfCard>;
-  readonly done: ReadonlyArray<ShelfCard>;
-  readonly other: ReadonlyArray<ShelfCard>;
-}
+export type Shelves = Readonly<Record<ShelfKind, ReadonlyArray<ShelfCard>>>;
 
 /** Cards per shelf; the rest are one swipe away in Chats. */
 export const SHELF_LIMIT = 12;
@@ -68,23 +72,23 @@ export function shelfCardState(thread: EnvironmentThreadShell): ShelfCardState {
 }
 
 export function shelfOf(state: ShelfCardState): ShelfKind {
-  if (state === "working" || state === "connecting") return "working";
-  if (state === "done") return "done";
-  return "other";
+  switch (state) {
+    case "needs-approval":
+    case "needs-input":
+    case "plan-ready":
+      return "needs";
+    case "working":
+    case "connecting":
+      return "working";
+    case "done":
+      return "done";
+    case "error":
+      return "failed";
+    case "stopped":
+    case "new":
+      return "stopped";
+  }
 }
-
-/** Needs the user first, then what broke, then what simply stopped. */
-const OTHER_RANK: Record<ShelfCardState, number> = {
-  "needs-approval": 0,
-  "needs-input": 0,
-  "plan-ready": 1,
-  error: 2,
-  stopped: 3,
-  new: 4,
-  working: 5,
-  connecting: 5,
-  done: 5,
-};
 
 function activityAt(thread: EnvironmentThreadShell): string {
   return thread.latestRun?.completedAt ?? thread.latestUserMessageAt ?? thread.updatedAt;
@@ -138,9 +142,13 @@ export function buildShelves(
     agents.set(threadKey(root), entry);
   }
 
-  const working: ShelfCard[] = [];
-  const done: ShelfCard[] = [];
-  const other: ShelfCard[] = [];
+  const shelves: Record<ShelfKind, ShelfCard[]> = {
+    needs: [],
+    working: [],
+    done: [],
+    failed: [],
+    stopped: [],
+  };
   for (const thread of threads) {
     if (isSubagent(thread) || thread.archivedAt !== null || thread.deletedAt !== null) continue;
     if (isSnoozed(thread, now)) continue;
@@ -148,9 +156,7 @@ export function buildShelves(
     const team = agents.get(threadKey(thread));
     // A thread whose agents are still at work is working, whatever its own turn says.
     const state: ShelfCardState =
-      shelfOf(ownState) !== "working" && ownState === "done" && (team?.working ?? 0) > 0
-        ? "working"
-        : ownState;
+      ownState === "done" && (team?.working ?? 0) > 0 ? "working" : ownState;
     const card: ShelfCard = {
       thread,
       state,
@@ -159,20 +165,19 @@ export function buildShelves(
       activityAt: activityAt(thread),
     };
     const shelf = shelfOf(state);
-    if (shelf === "working") working.push(card);
-    else if (shelf === "done") {
-      if (now - Date.parse(card.activityAt) <= DONE_WINDOW_MS) done.push(card);
-    } else if (!isSettled(thread)) other.push(card);
+    if (shelf === "done") {
+      if (now - Date.parse(card.activityAt) <= DONE_WINDOW_MS) shelves.done.push(card);
+    } else if (shelf === "working" || shelf === "needs" || !isSettled(thread)) {
+      // Settling a failed or stopped thread puts it away.
+      shelves[shelf].push(card);
+    }
   }
 
-  working.sort(byRecent);
-  done.sort(byRecent);
-  other.sort((a, b) => OTHER_RANK[a.state] - OTHER_RANK[b.state] || byRecent(a, b));
-  return {
-    working: working.slice(0, SHELF_LIMIT),
-    done: done.slice(0, SHELF_LIMIT),
-    other: other.slice(0, SHELF_LIMIT),
-  };
+  const result = {} as Record<ShelfKind, ReadonlyArray<ShelfCard>>;
+  for (const kind of SHELF_ORDER) {
+    result[kind] = shelves[kind].sort(byRecent).slice(0, SHELF_LIMIT);
+  }
+  return result;
 }
 
 export function shelfStateLabel(state: ShelfCardState): string {

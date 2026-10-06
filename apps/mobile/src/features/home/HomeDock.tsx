@@ -93,7 +93,7 @@ export function HomeDock(props: {
 
   return (
     <GlassSurface
-      className="mx-2.5 overflow-hidden rounded-[26px] border border-border"
+      className="mx-2.5 overflow-hidden rounded-[18px] border border-border"
       fallbackClassName="bg-card"
     >
       <View className="gap-2 px-3.5 pt-3 pb-2.5">

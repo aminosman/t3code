@@ -74,7 +74,9 @@ describe("buildShelves", () => {
     );
     expect(shelves.working.map((card) => card.thread.title)).toEqual(["working"]);
     expect(shelves.done.map((card) => card.thread.title)).toEqual(["done"]);
-    expect(shelves.other.map((card) => card.thread.title)).toEqual(["asks", "failed"]);
+    expect(shelves.needs.map((card) => card.thread.title)).toEqual(["asks"]);
+    expect(shelves.failed.map((card) => card.thread.title)).toEqual(["failed"]);
+    expect(shelves.stopped).toEqual([]);
   });
 
   it("counts subagents on the thread that started them, at any depth, and gives them no card", () => {
@@ -86,7 +88,7 @@ describe("buildShelves", () => {
       ],
       NOW,
     );
-    const all = [...shelves.working, ...shelves.done, ...shelves.other];
+    const all = Object.values(shelves).flat();
     expect(all.map((card) => card.thread.title)).toEqual(["parent"]);
     // Its own turn finished, but an agent under it is still at work.
     expect(shelves.working[0]?.agentCount).toBe(2);
@@ -103,7 +105,7 @@ describe("buildShelves", () => {
       ],
       NOW,
     );
-    expect([...shelves.working, ...shelves.done, ...shelves.other]).toEqual([]);
+    expect(Object.values(shelves).flat()).toEqual([]);
   });
 
   it("orders each shelf newest first", () => {

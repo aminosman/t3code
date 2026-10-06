@@ -13,8 +13,9 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SERIF_FONT } from "../home/HomeDock";
-import { TABS_CLEARANCE } from "../home/HomeTabs";
+import { tabsFootprint } from "../home/HomeTabs";
 import { meetingDayLabel, meetingTime } from "./meeting-notes";
+import { PhoneMeetingsHeader } from "./PhoneMeetingParts";
 import { useMeetingsEnvironment } from "./use-meetings-environment";
 
 const TILE_COLORS = ["#FBEFB8", "#E4E4DE", "#F8DDF0", "#D9ECF7", "#E2F0C9", "#F6E1CF"];
@@ -126,22 +127,25 @@ export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
         contentInsetAdjustmentBehavior={embedded ? "never" : "automatic"}
         contentContainerStyle={{
           paddingTop: embedded ? insets.top + 6 : 0,
-          paddingBottom: insets.bottom + 110 + (embedded ? TABS_CLEARANCE : 0),
+          paddingBottom: (embedded ? tabsFootprint(insets.bottom) : insets.bottom) + 80,
         }}
         ListHeaderComponent={
-          embedded ? (
-            <View className="px-5 pb-1">
-              <Text className="font-t3-bold text-2xs uppercase tracking-[0.5px] text-foreground-muted">
-                Recorded on your Mac
-              </Text>
-              <Text
-                className="mt-0.5 text-[32px] leading-[38px]"
-                style={{ fontFamily: SERIF_FONT }}
-              >
-                Meetings
-              </Text>
-            </View>
-          ) : undefined
+          <>
+            {embedded ? (
+              <View className="px-5 pb-1">
+                <Text className="font-t3-bold text-2xs uppercase tracking-[0.5px] text-foreground-muted">
+                  On this phone and your Mac
+                </Text>
+                <Text
+                  className="mt-0.5 text-[32px] leading-[38px]"
+                  style={{ fontFamily: SERIF_FONT }}
+                >
+                  Meetings
+                </Text>
+              </View>
+            ) : null}
+            <PhoneMeetingsHeader />
+          </>
         }
         stickySectionHeadersEnabled={false}
         refreshControl={
@@ -186,17 +190,19 @@ export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
             // In the pager the strip under the box is page-coloured, so rows
             // do not show between it and the tabs.
             className={embedded ? "bg-screen pt-2" : undefined}
-            style={{ paddingBottom: insets.bottom + 4 + (embedded ? TABS_CLEARANCE : 0) }}
+            style={{ paddingBottom: embedded ? tabsFootprint(insets.bottom) : insets.bottom + 4 }}
             pointerEvents="box-none"
           >
             <GlassSurface
-              className="mx-2.5 overflow-hidden rounded-[24px] border border-border"
+              className="mx-2.5 overflow-hidden rounded-[18px] border border-border"
               fallbackClassName="bg-card"
             >
-              <View className="flex-row items-end gap-2 py-2 pr-2 pl-4">
+              <View className="flex-row items-center gap-2 py-1.5 pr-1.5 pl-4">
                 <TextInput
                   accessibilityLabel="Ask about your meetings"
-                  className="max-h-32 flex-1 py-2 font-sans text-base text-foreground"
+                  className="max-h-32 flex-1 font-sans text-base text-foreground"
+                  // iOS pads a multiline field unevenly on its own; set both sides.
+                  style={{ paddingTop: 8, paddingBottom: 8 }}
                   multiline
                   placeholder="Ask anything about your meetings"
                   placeholderTextColorClassName="accent-placeholder"
