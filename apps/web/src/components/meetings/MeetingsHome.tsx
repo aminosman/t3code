@@ -107,7 +107,7 @@ export function MeetingsHome() {
 
   if (environmentId === null || root === null) {
     return (
-      <div className="meetings-surface flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
+      <div className="meetings-surface flex h-full w-full min-w-0 flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
         <NotebookPenIcon className="size-8 text-(--mt-ink-3)" />
         <p className="mt-serif text-2xl">No meetings yet</p>
         <p className="max-w-sm text-sm text-(--mt-ink-2)">
@@ -119,7 +119,7 @@ export function MeetingsHome() {
   }
 
   return (
-    <div className="meetings-surface relative flex h-full flex-col overflow-y-auto">
+    <div className="meetings-surface relative flex h-full w-full min-w-0 flex-1 flex-col overflow-y-auto">
       <div className="mx-auto w-full max-w-[680px] flex-1 px-8 pt-11 pb-6">
         <div className="mb-6 flex items-end justify-between gap-4">
           <h1 className="mt-serif text-3xl leading-none">Meetings</h1>
@@ -152,7 +152,15 @@ export function MeetingsHome() {
             {search.data ? (
               <p className="mb-2 text-xs font-medium text-(--mt-ink-2-strong)">
                 {search.data.results.length} meeting{search.data.results.length === 1 ? "" : "s"}
-                {search.data.meaning.active ? " · by words and meaning" : " · by words"}
+                {search.data.terms.length === 0
+                  ? " · newest first"
+                  : search.data.meaning.active
+                    ? " · by words and meaning"
+                    : " · by words"}
+              </p>
+            ) : search.error ? (
+              <p className="text-sm text-(--mt-ink-2)">
+                Search needs a word or two to look for — or ask your agent above.
               </p>
             ) : (
               <p className="text-sm text-(--mt-ink-2)">Searching…</p>

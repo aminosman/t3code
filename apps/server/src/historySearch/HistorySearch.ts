@@ -931,6 +931,74 @@ const make = (options: HistorySearchOptions) =>
     const searchCore = Effect.fn("HistorySearch.search")(
       function* (input: HistorySearchInput) {
         const asked = queryTerms(input.query);
+        // "My to-dos", "decisions": the parts asked for, and no words left to
+        // match — the newest of those parts, meeting by meeting.
+        if (
+          asked.length === 0 &&
+          input.meetingParts !== undefined &&
+          input.meetingParts.length > 0
+        ) {
+          yield* sync;
+          const rows = yield* sql<{
+            readonly containerId: string;
+            readonly role: string;
+            readonly text: string;
+          }>`
+            SELECT container_id AS "containerId", role, text FROM roost_history_search
+            WHERE source = 'meeting' AND ${sql.in("role", [...input.meetingParts])}
+              AND ${input.since === undefined ? sql`1 = 1` : sql`(at IS NULL OR at >= ${input.since})`}
+            ORDER BY container_id DESC, rowid
+            LIMIT 400
+          `;
+          const byMeeting = new Map<string, Array<{ role: string; text: string }>>();
+          for (const row of rows) {
+            const list = byMeeting.get(row.containerId) ?? [];
+            list.push({ role: row.role, text: row.text });
+            byMeeting.set(row.containerId, list);
+          }
+          const ids = [...byMeeting.keys()].slice(0, clamp(input.limit, 8, 25) || 8);
+          const summaries = new Map(
+            (ids.length === 0 ? [] : yield* meetingRows(ids)).map((summary) => [
+              summary.id,
+              summary,
+            ]),
+          );
+          return {
+            searchId: null,
+            terms: [],
+            meaning: {
+              active: false,
+              embedded: 0,
+              pending: 0,
+              reason: "listed by part, not matched",
+            },
+            results: ids.map((id, index) => {
+              const passages = byMeeting.get(id) ?? [];
+              const summary = summaries.get(id);
+              return {
+                kind: "meeting" as const,
+                id,
+                title: summary?.title ?? id,
+                projectId: summary?.projectId ?? null,
+                projectTitle: summary?.projectTitle ?? null,
+                date: summary?.startedAt ?? null,
+                archivedAt: null,
+                score: Math.max(1, 100 - index * 4),
+                matchedBy: "words" as const,
+                matchedTerms: 0,
+                hitCount: passages.length,
+                hits: passages.slice(0, 6).map((passage) => ({
+                  matchedBy: "words" as const,
+                  messageId: null,
+                  at: null,
+                  role: passage.role,
+                  createdAt: null,
+                  snippet: passage.text,
+                })),
+              };
+            }),
+          };
+        }
         if (asked.length === 0) {
           return yield* new HistorySearchError({
             reason: "the query holds no searchable words; name the thing you are looking for",

@@ -188,7 +188,10 @@ export const load = (dir: string, id: string) =>
       id,
       // The notes' own heading is "Meeting Notes" every time; the window the
       // call ran in ("Meet - Ficra Team Sync") says which meeting it was.
-      title: windowTitle ?? ownHeading(notes) ?? id,
+      // The notes' own heading first: written by the user's agent it names the
+      // meeting ("Ficra sync: MVP scope, $500 LOIs"); the call's window title
+      // ("Meet - Ficra Team Sync") when the notes have none worth using.
+      title: ownHeading(notes) ?? windowTitle ?? id,
       startedAt: str(meta?.["started"]),
       durationSeconds: typeof duration === "number" ? Math.round(duration) : null,
       projectId: str(project?.["projectId"]),
@@ -203,7 +206,7 @@ export const load = (dir: string, id: string) =>
 
 const PASSAGE_CHARS = 900;
 /** Bumped when what a meeting is cut into changes, so every meeting is redone. */
-const CHUNKING = "chunks:2";
+const CHUNKING = "chunks:3";
 
 /**
  * The notes, with each decision and action item taken out as a passage of its

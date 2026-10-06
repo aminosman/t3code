@@ -166,7 +166,7 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
   );
 
   return (
-    <div className="meetings-surface relative flex h-full flex-col overflow-y-auto">
+    <div className="meetings-surface relative flex h-full w-full min-w-0 flex-1 flex-col overflow-y-auto">
       <div className="sticky top-0 z-10 flex items-center justify-between bg-(--mt-surface)/90 px-5 py-3 backdrop-blur">
         <Link
           to="/meetings"

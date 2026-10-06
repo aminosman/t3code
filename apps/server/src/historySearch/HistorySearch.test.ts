@@ -361,6 +361,13 @@ layer("HistorySearch", (it) => {
         decided.results.every((result) => result.hits.every((hit) => hit.role === "decision")),
       );
 
+      // Nothing left to match once the part is named: the newest of that part.
+      const listed = yield* search.search({ query: "my", meetingParts: ["decision"] });
+      assert.deepStrictEqual(
+        listed.results.map((result) => [result.id, result.hits[0]?.snippet]),
+        [["2026.09.21-1330", "Follow up on Plaid by Friday."]],
+      );
+
       // A heading of its own is a better title than a folder name.
       const books = yield* search.search({ query: "quickbooks" });
       assert.strictEqual(books.results[0]?.title, "Bookkeeping sync");
