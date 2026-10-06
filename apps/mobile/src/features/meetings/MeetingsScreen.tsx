@@ -13,6 +13,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SERIF_FONT } from "../home/HomeDock";
+import { TABS_CLEARANCE } from "../home/HomeTabs";
 import { meetingDayLabel, meetingTime } from "./meeting-notes";
 import { useMeetingsEnvironment } from "./use-meetings-environment";
 
@@ -69,7 +70,8 @@ function MeetingRow(props: {
  * Meetings recorded by Roost on the Mac, by day, newest first, and a box to
  * ask about them (the answer is a thread in the Meetings project).
  */
-export function MeetingsScreen() {
+export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
+  const embedded = props.embedded === true;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const environmentId = useMeetingsEnvironment();
@@ -115,12 +117,32 @@ export function MeetingsScreen() {
 
   return (
     <View className="flex-1 bg-screen">
-      <NativeStackScreenOptions options={{ title: "Meetings", headerLargeTitle: true }} />
+      {embedded ? null : (
+        <NativeStackScreenOptions options={{ title: "Meetings", headerLargeTitle: true }} />
+      )}
       <SectionList
         sections={sections}
         keyExtractor={(meeting) => meeting.id}
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{ paddingBottom: insets.bottom + 110 }}
+        contentInsetAdjustmentBehavior={embedded ? "never" : "automatic"}
+        contentContainerStyle={{
+          paddingTop: embedded ? insets.top + 6 : 0,
+          paddingBottom: insets.bottom + 110 + (embedded ? TABS_CLEARANCE : 0),
+        }}
+        ListHeaderComponent={
+          embedded ? (
+            <View className="px-5 pb-1">
+              <Text className="font-t3-bold text-2xs uppercase tracking-[0.5px] text-foreground-muted">
+                Recorded on your Mac
+              </Text>
+              <Text
+                className="mt-0.5 text-[32px] leading-[38px]"
+                style={{ fontFamily: SERIF_FONT }}
+              >
+                Meetings
+              </Text>
+            </View>
+          ) : undefined
+        }
         stickySectionHeadersEnabled={false}
         refreshControl={
           <RefreshControl
@@ -160,7 +182,13 @@ export function MeetingsScreen() {
           style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
           offset={{ closed: 0, opened: insets.bottom - 8 }}
         >
-          <View style={{ paddingBottom: insets.bottom + 4 }} pointerEvents="box-none">
+          <View
+            // In the pager the strip under the box is page-coloured, so rows
+            // do not show between it and the tabs.
+            className={embedded ? "bg-screen pt-2" : undefined}
+            style={{ paddingBottom: insets.bottom + 4 + (embedded ? TABS_CLEARANCE : 0) }}
+            pointerEvents="box-none"
+          >
             <GlassSurface
               className="mx-2.5 overflow-hidden rounded-[24px] border border-border"
               fallbackClassName="bg-card"

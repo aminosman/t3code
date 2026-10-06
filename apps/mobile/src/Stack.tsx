@@ -55,7 +55,7 @@ import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
-import { ChatsRouteScreen, HomeRouteScreen } from "./features/home/HomeRouteScreen";
+import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
 import { MeetingScreen } from "./features/meetings/MeetingScreen";
 import { MeetingsScreen } from "./features/meetings/MeetingsScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
@@ -688,15 +688,6 @@ const RootStackConfig = createNativeStackNavigator({
         ...GLASS_HEADER_OPTIONS,
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
-        ...getCompactBrandHeaderOptions(),
-      },
-    }),
-    Chats: createNativeStackScreen({
-      screen: ChatsRouteScreen,
-      linking: "chats",
-      options: {
-        ...GLASS_HEADER_OPTIONS,
-        contentStyle: { backgroundColor: "transparent" },
         ...getCompactBrandHeaderOptions(),
       },
     }),

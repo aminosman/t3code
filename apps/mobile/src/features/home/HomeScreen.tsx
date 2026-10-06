@@ -97,6 +97,8 @@ import { useMaterialFabScroll } from "./MaterialFabScrollContext";
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
 interface HomeScreenProps {
+  /** Extra room at the foot of the list, for an overlay such as the home tabs. */
+  readonly bottomClearance?: number;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -1327,9 +1329,11 @@ export function HomeScreen(props: HomeScreenProps) {
               scrollEventThrottle={16}
               contentContainerStyle={{
                 paddingBottom:
-                  Platform.OS === "ios"
+                  (props.bottomClearance ?? 0) +
+                  (Platform.OS === "ios"
                     ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
-                    : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? fabClearance : 88),
+                    : Math.max(insets.bottom, 16) +
+                      (Platform.OS === "android" ? fabClearance : 88)),
               }}
             />
           </SwipeableScrollGateProvider>
@@ -1381,9 +1385,10 @@ export function HomeScreen(props: HomeScreenProps) {
               // reflected in insets while contentInsetAdjustmentBehavior is
               // "never".
               paddingBottom:
-                Platform.OS === "ios"
+                (props.bottomClearance ?? 0) +
+                (Platform.OS === "ios"
                   ? Math.max(insets.bottom, 24) + 24 + iosBottomToolbarClearance
-                  : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? fabClearance : 88),
+                  : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? fabClearance : 88)),
             }}
             scrollIndicatorInsets={
               Platform.OS === "ios"
