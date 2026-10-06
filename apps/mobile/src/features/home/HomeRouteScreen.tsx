@@ -18,6 +18,7 @@ import { checkForAppUpdateOnLaunch, startAppUpdateForegroundRecheck } from "../u
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
+import { ShelvesHomeScreen } from "./ShelvesHomeScreen";
 import { useHomeListOptions } from "./home-list-options";
 import { useHomeThreadSelection } from "./home-thread-navigation";
 import { buildHomeProjectScopes } from "./homeThreadList";
@@ -25,9 +26,24 @@ import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 
-/* ─── Route screen ───────────────────────────────────────────────────── */
+/* ─── Route screens ──────────────────────────────────────────────────── */
 
+/**
+ * Home: the shelves (working, done, everything else) on a phone. In split
+ * layouts the persistent sidebar is the thread list, so Home stays the
+ * thread list's empty detail pane there.
+ */
 export function HomeRouteScreen() {
+  const { layout } = useAdaptiveWorkspaceLayout();
+  useEffect(() => {
+    void checkForAppUpdateOnLaunch();
+    startAppUpdateForegroundRecheck();
+  }, []);
+  return layout.usesSplitView ? <ChatsRouteScreen /> : <ShelvesHomeScreen />;
+}
+
+/** Chats: every thread, grouped by project — one swipe left of Home. */
+export function ChatsRouteScreen() {
   const { width: windowWidth } = useWindowDimensions();
   const { layout, panes } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
@@ -51,11 +67,6 @@ export function HomeRouteScreen() {
     },
     [navigation],
   );
-
-  useEffect(() => {
-    void checkForAppUpdateOnLaunch();
-    startAppUpdateForegroundRecheck();
-  }, []);
 
   const {
     archiveThread,
