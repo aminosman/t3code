@@ -1,10 +1,8 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
 
 import { toastManager } from "~/components/ui/toast";
@@ -12,7 +10,6 @@ import { useActiveEnvironmentId, useProjects, useThreadShells } from "~/state/en
 import { useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { buildThreadRouteParams } from "~/threadRoutes";
 
 const samePath = (a: string, b: string) => a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
 
@@ -26,7 +23,6 @@ export function useMeetings() {
   const activeEnvironmentId = useActiveEnvironmentId();
   const projects = useProjects();
   const threadShells = useThreadShells();
-  const navigate = useNavigate();
   const askCommand = useAtomCommand(serverEnvironment.askMeetings, { reportFailure: false });
   const [asking, setAsking] = useState(false);
 
@@ -64,15 +60,33 @@ export function useMeetings() {
     [project, threadShells],
   );
 
-  /** Ask; the answer is a thread in the Meetings project, opened at once. */
+  /**
+   * Ask; the answer is a thread in the Meetings project, shown in the chat
+   * panel beside the page. Asked of a meeting, it continues that meeting's
+   * chat (or starts it over, `fresh`); `threadId` follows up a chat across
+   * all meetings. Resolves to the thread, null on failure.
+   */
   const ask = useCallback(
-    async (question: string, meetingId?: string) => {
+    async (
+      question: string,
+      options?: {
+        readonly meetingId?: string;
+        readonly fresh?: boolean;
+        /** Follow up this chat. */
+        readonly threadId?: string | null;
+      },
+    ): Promise<string | null> => {
       const text = question.trim();
-      if (text.length === 0 || environmentId === null || asking) return;
+      if (text.length === 0 || environmentId === null || asking) return null;
       setAsking(true);
       const result = await askCommand({
         environmentId,
-        input: { question: text, ...(meetingId === undefined ? {} : { meetingId }) },
+        input: {
+          question: text,
+          ...(options?.meetingId === undefined ? {} : { meetingId: options.meetingId }),
+          ...(options?.fresh === true ? { fresh: true } : {}),
+          ...(options?.threadId ? { threadId: options.threadId } : {}),
+        },
       });
       setAsking(false);
       if (result._tag === "Failure") {
@@ -84,16 +98,11 @@ export function useMeetings() {
             description: error instanceof Error ? error.message : "An error occurred.",
           });
         }
-        return;
+        return null;
       }
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(
-          scopeThreadRef(environmentId, result.value.threadId as never),
-        ),
-      });
+      return result.value.threadId;
     },
-    [askCommand, asking, environmentId, navigate],
+    [askCommand, asking, environmentId],
   );
 
   return { environmentId, root, project, asks, ask, asking };

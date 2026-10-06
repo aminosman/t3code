@@ -202,6 +202,8 @@ export interface MeetingSummary {
   readonly people: ReadonlyArray<string>;
   /** Being recorded now: tui is transcribing it live (transcript.live). */
   readonly live?: boolean;
+  /** The thread the user chats with this meeting in (chat.json). */
+  readonly chatThreadId?: string;
 }
 
 export interface MeetingReadInput {
@@ -1515,6 +1517,15 @@ const make = (options: HistorySearchOptions) =>
       fs
         .exists(path.join(meetingsDir, id, "transcript.live"))
         .pipe(Effect.orElseSucceed(() => false));
+    // Roost's own record of the meeting's chat, beside the user's notes.md.
+    const withChat = (summary: MeetingSummary) =>
+      Meetings.readChatThreadId(meetingsDir, summary.id).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.map((chatThreadId) =>
+          chatThreadId === null ? summary : { ...summary, chatThreadId },
+        ),
+      );
     const readTuiHeard = (id: string) =>
       fs.readFileString(path.join(meetingsDir, id, "live-actions.json")).pipe(
         Effect.map((text) => {
@@ -1546,7 +1557,10 @@ const make = (options: HistorySearchOptions) =>
         `;
         const summaries = rows.map(toMeetingSummary);
         return yield* Effect.forEach(summaries, (summary) =>
-          isLive(summary.id).pipe(Effect.map((live) => (live ? { ...summary, live } : summary))),
+          isLive(summary.id).pipe(
+            Effect.map((live) => (live ? { ...summary, live } : summary)),
+            Effect.flatMap(withChat),
+          ),
         );
       },
       Effect.mapError(failWith("could not list meetings")),
@@ -1560,7 +1574,7 @@ const make = (options: HistorySearchOptions) =>
         );
         if (meeting === null) return null;
         const indexed = yield* meetingRows([meeting.id]).pipe(Effect.orElseSucceed(() => []));
-        const summary: MeetingSummary = indexed[0] ?? {
+        const found: MeetingSummary = indexed[0] ?? {
           id: meeting.id,
           title: meeting.title,
           startedAt: meeting.startedAt,
@@ -1570,6 +1584,7 @@ const make = (options: HistorySearchOptions) =>
           projectTitle: meeting.projectTitle,
           people: meeting.people,
         };
+        const summary = yield* withChat(found);
         const paths = {
           notesPath: path.join(meetingsDir, meeting.id, "summary.md"),
           transcriptPath: path.join(meetingsDir, meeting.id, "transcript.md"),

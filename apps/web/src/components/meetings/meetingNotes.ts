@@ -144,3 +144,29 @@ export function peopleLine(people: ReadonlyArray<string>): string {
       text.length === 0 ? `${unnamed} voice${unnamed === 1 ? "" : "s"}` : `${text} +${unnamed}`;
   return text;
 }
+
+// A context link's id is [a-z0-9_-]; a meeting's ("2026.09.30-1335") is not,
+// so every other character travels as _ and its hex code.
+const encodeMeetingRef = (id: string) =>
+  [...id]
+    .map((char) =>
+      /[A-Za-z0-9-]/.test(char) ? char : `_${char.codePointAt(0)!.toString(16).padStart(4, "0")}`,
+    )
+    .join("");
+export const decodeMeetingRef = (ref: string) =>
+  ref.replace(/_([0-9a-f]{4})/gi, (_, hex: string) =>
+    String.fromCodePoint(Number.parseInt(hex, 16)),
+  );
+
+/**
+ * The agent names each meeting it draws on as [[2026.09.30-1335]]: a chip that
+ * opens it. On a meeting's own page, naming that meeting says nothing, so it
+ * is left out (`here`).
+ */
+export function linkMeetingCitations(text: string, here: string | null = null): string {
+  return text.replace(/ ?\[\[([\p{L}\p{N}][\p{L}\p{N}._ -]*)\]\]/gu, (whole, id: string) =>
+    id === here
+      ? ""
+      : `${whole.startsWith(" ") ? " " : ""}[${id}](t3-context://v1/meeting/${encodeMeetingRef(id)})`,
+  );
+}

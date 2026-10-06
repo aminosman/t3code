@@ -3506,6 +3506,10 @@ const makeWsRpcLayer = (
               Effect.provideService(ProjectService.ProjectService, projectService),
               Effect.provideService(Crypto.Crypto, crypto),
               Effect.provideService(ThreadLaunchService.ThreadLaunchService, threadLaunch),
+              Effect.provideService(
+                ThreadManagementService.ThreadManagementService,
+                threadManagement,
+              ),
               Effect.mapError((error) => new HistoryApiError({ message: error.message })),
             ),
             { "rpc.aggregate": "history" },

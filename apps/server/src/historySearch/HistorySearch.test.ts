@@ -469,6 +469,22 @@ layer("HistorySearch", (it) => {
       assert.isUndefined(
         (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.live,
       );
+
+      // The meeting's chat: the thread its chat.json names, in a read and a listing.
+      assert.isUndefined(whole?.meeting.chatThreadId);
+      yield* Meetings.writeChatThreadId(meetingsDir, "2026.09.21-1330", "thread-chat").pipe(
+        Effect.provide(NodeServices.layer),
+      );
+      assert.strictEqual(
+        (yield* search.readMeeting({ meetingId: "2026.09.21-1330", whole: true }))?.meeting
+          .chatThreadId,
+        "thread-chat",
+      );
+      assert.strictEqual(
+        (yield* search.listMeetings({})).find((m) => m.id === "2026.09.21-1330")?.chatThreadId,
+        "thread-chat",
+      );
+      NodeFS.rmSync(NodePath.join(meetingsDir, "2026.09.21-1330", "chat.json"));
     }),
   );
 

@@ -145,12 +145,7 @@ import {
   useEnvironmentMachines,
   usePrimaryEnvironmentId,
 } from "../state/environments";
-import {
-  readThreadShell,
-  useAllEnvironmentProjectSnapshotsReady,
-  useProjects,
-  useThreadShells,
-} from "../state/entities";
+import { readThreadShell, useAllEnvironmentProjectSnapshotsReady } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -276,6 +271,7 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../composerDraftStore";
+import { useSidebarProjectsAndThreads } from "./meetings/sidebarWithoutMeetings";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -2288,9 +2284,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
-  const projects = useProjects();
+  const { projects, threads } = useSidebarProjectsAndThreads();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);

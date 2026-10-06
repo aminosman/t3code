@@ -5,14 +5,17 @@
  * and writes beside the audio what an agent can use: `summary.md` (the notes),
  * `transcript.md` (who said what, when), `slides.md` (what was on screen),
  * `meta.json` (when, how long, which window) and `project.json` (which project
- * it was filed under, and who was named). Nothing here writes to that folder,
- * and nothing here needs tui to be running: the files are the interface.
+ * it was filed under, and who was named). Roost writes only its own two files
+ * there — notes.md (what the user typed on the meeting's page) and chat.json
+ * (the meeting's chat) — and nothing here needs tui to be running: the files
+ * are the interface.
  *
  * @module historySearch/Meetings
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as NodeOS from "node:os";
 
 export interface TranscriptLine {
@@ -120,6 +123,32 @@ export const scan = (dir: string) =>
       if (readable) found.push({ id: name, version: [CHUNKING, ...stamps].join("|") });
     }
     return found;
+  });
+
+/**
+ * The meeting's chat: Roost writes `chat.json` ({"threadId"}) beside the
+ * user's notes.md when they first ask about the meeting, so every later
+ * question, from any client, continues the same conversation.
+ */
+export const CHAT_FILE = "chat.json";
+
+export const readChatThreadId = (dir: string, id: string) =>
+  Effect.gen(function* () {
+    if (!isMeetingId(id)) return null;
+    const path = yield* Path.Path;
+    return str((yield* readJson(path.join(dir, id, CHAT_FILE)))?.["threadId"]);
+  });
+
+const encodeChatFile = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ threadId: Schema.String })),
+);
+
+export const writeChatThreadId = (dir: string, id: string, threadId: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const text = yield* encodeChatFile({ threadId });
+    yield* fs.writeFileString(path.join(dir, id, CHAT_FILE), `${text}\n`);
   });
 
 /** "12:04" or "1:02:33" into seconds. */

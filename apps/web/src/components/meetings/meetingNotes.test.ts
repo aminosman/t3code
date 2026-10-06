@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { meetingCitations, meetingStart, parseMeetingNotes, peopleLine } from "./meetingNotes";
+import {
+  meetingCitations,
+  meetingStart,
+  parseMeetingNotes,
+  peopleLine,
+  decodeMeetingRef,
+  linkMeetingCitations,
+} from "./meetingNotes";
 
 const NOTES = `# Pricing for small law firms
 
@@ -56,5 +63,24 @@ describe("meeting helpers", () => {
     expect(peopleLine(["Mike", "Speaker a8cb", "Speaker 8dd4"])).toBe("Mike +2");
     expect(peopleLine(["Speaker a8cb"])).toBe("1 voice");
     expect(peopleLine(["Mo", "Omar", "Amin", "Bill"])).toBe("Mo, Omar & 2 others");
+  });
+});
+
+describe("linkMeetingCitations", () => {
+  it("turns [[meeting]] into a context link whose id survives the trip", () => {
+    const linked = linkMeetingCitations("Mo emails Aaron [[2026.09.30-1335]].");
+    expect(linked).toBe(
+      "Mo emails Aaron [2026.09.30-1335](t3-context://v1/meeting/2026_002e09_002e30-1335).",
+    );
+    expect(decodeMeetingRef("2026_002e09_002e30-1335")).toBe("2026.09.30-1335");
+  });
+
+  it("leaves out the meeting the chat is on", () => {
+    expect(
+      linkMeetingCitations(
+        "Email Aaron. [[2026.09.30-1335]] See [[2026.09.21-1330]].",
+        "2026.09.30-1335",
+      ),
+    ).toBe("Email Aaron. See [2026.09.21-1330](t3-context://v1/meeting/2026_002e09_002e21-1330).");
   });
 });

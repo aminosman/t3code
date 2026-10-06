@@ -90,6 +90,8 @@ export const HistoryMeetingSummary = Schema.Struct({
   people: Schema.Array(Schema.String),
   /** Being recorded now; its transcript and notes are updating live. */
   live: Schema.optional(Schema.Boolean),
+  /** The thread the user chats with this meeting in, once they have asked about it. */
+  chatThreadId: Schema.optional(Schema.String),
 });
 export type HistoryMeetingSummary = typeof HistoryMeetingSummary.Type;
 
@@ -190,8 +192,12 @@ export type HistoryMeetingsProject = typeof HistoryMeetingsProject.Type;
 /** A question about meetings: a thread in the Meetings project, already sent. */
 export const HistoryAskMeetingsInput = Schema.Struct({
   question: TrimmedNonEmptyString.check(Schema.isMaxLength(8000)),
-  /** Ask about this one meeting. */
+  /** Ask about this one meeting: the question goes into the meeting's chat. */
   meetingId: Schema.optional(Schema.String),
+  /** Start the meeting's chat over instead of continuing it. */
+  fresh: Schema.optional(Schema.Boolean),
+  /** Continue this chat (a thread in the Meetings project) — a follow-up. */
+  threadId: Schema.optional(Schema.String),
 });
 export type HistoryAskMeetingsInput = typeof HistoryAskMeetingsInput.Type;
 
