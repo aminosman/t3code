@@ -308,6 +308,7 @@ const makeHarness = Effect.gen(function* () {
                   meeting: teamSync,
                   notes: input.around === undefined ? "## Decisions\n- fix the login loop" : null,
                   myNotes: null,
+                  tuiHeard: null,
                   lines:
                     input.around === undefined
                       ? []

@@ -116,6 +116,15 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
       : serverEnvironment.meetingRead({ environmentId, input: { meetingId, whole: true } }),
   );
   const meeting = read.data;
+  const live = meeting?.meeting.live === true;
+  // Live: tui rewrites the transcript and the notes as the meeting goes, so
+  // the page reads the meeting again every few seconds while it records.
+  const refresh = read.refresh;
+  useEffect(() => {
+    if (!live) return;
+    const timer = setInterval(() => refresh(), 5000);
+    return () => clearInterval(timer);
+  }, [live, refresh]);
   const writeNotes = useAtomCommand(serverEnvironment.writeMeetingNotes, { reportFailure: false });
   const [view, setView] = useState<View | null>(null);
   const [typed, setTyped] = useState<string | null>(null);
@@ -199,6 +208,12 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
         ) : null}
         {meeting ? (
           <>
+            {live ? (
+              <div className="mb-3 flex w-fit items-center gap-2 rounded-full border border-(--mt-hairline) bg-(--mt-raised) px-3 py-1 text-xs font-medium text-(--mt-accent)">
+                <Bars live />
+                Recording — the notes update as the meeting goes
+              </div>
+            ) : null}
             <h1 className="mt-serif mb-3 text-3xl leading-tight">{title}</h1>
             <div className="mb-7 flex flex-wrap gap-2">
               {date ? (
@@ -228,6 +243,31 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
               ))}
             </div>
 
+            {meeting.tuiHeard &&
+            (meeting.tuiHeard.directions.length > 0 || meeting.tuiHeard.requests.length > 0) ? (
+              <section className="mb-7 rounded-xl border border-(--mt-hairline) bg-(--mt-raised) px-4 py-3">
+                <h3 className="mb-2 text-2xs font-medium tracking-wide text-(--mt-ink-2) uppercase">
+                  Tui heard
+                </h3>
+                <ul className="flex flex-col gap-1.5 text-sm">
+                  {meeting.tuiHeard.requests.map((request) => (
+                    <li key={`r:${request}`} className="flex gap-2">
+                      <span className="text-(--mt-accent)">→</span>
+                      <span className="text-(--mt-ink)">{request}</span>
+                      <span className="ml-auto shrink-0 text-xs text-(--mt-ink-3)">
+                        sent to Tui to route
+                      </span>
+                    </li>
+                  ))}
+                  {meeting.tuiHeard.directions.map((direction) => (
+                    <li key={`d:${direction}`} className="flex gap-2 text-(--mt-ink-2)">
+                      <span className="text-(--mt-ink-3)">✎</span>
+                      <span>{direction}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
             {shown === "notes" && doc ? <NoteBody doc={doc} /> : null}
             {shown === "notes" && !doc ? (
               <div className="flex items-center gap-2.5 rounded-xl border border-(--mt-hairline) bg-(--mt-raised) px-4 py-3 text-sm">

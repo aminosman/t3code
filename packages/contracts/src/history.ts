@@ -88,6 +88,8 @@ export const HistoryMeetingSummary = Schema.Struct({
   projectId: Schema.NullOr(Schema.String),
   projectTitle: Schema.NullOr(Schema.String),
   people: Schema.Array(Schema.String),
+  /** Being recorded now; its transcript and notes are updating live. */
+  live: Schema.optional(Schema.Boolean),
 });
 export type HistoryMeetingSummary = typeof HistoryMeetingSummary.Type;
 
@@ -125,6 +127,13 @@ export const HistoryMeetingReadOutput = Schema.Struct({
   notes: Schema.NullOr(Schema.String),
   /** What the user typed during the meeting (notes.md); null when nothing. */
   myNotes: Schema.NullOr(Schema.String),
+  /** What was said to Tui in it: directions applied to the notes, requests passed on. */
+  tuiHeard: Schema.NullOr(
+    Schema.Struct({
+      directions: Schema.Array(Schema.String),
+      requests: Schema.Array(Schema.String),
+    }),
+  ),
   lines: Schema.Array(HistoryTranscriptLine),
   hasEarlier: Schema.Boolean,
   hasLater: Schema.Boolean,

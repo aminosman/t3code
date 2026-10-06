@@ -450,6 +450,25 @@ layer("HistorySearch", (it) => {
         .pipe(Effect.flip);
       assert.include(refused.reason, "no meeting");
       yield* search.writeMyNotes({ meetingId: "2026.09.21-1330", text: "" });
+
+      // Being recorded: tui's live marker, and what Tui was told in it.
+      NodeFS.writeFileSync(NodePath.join(meetingsDir, "2026.09.21-1330", "transcript.live"), "");
+      NodeFS.writeFileSync(
+        NodePath.join(meetingsDir, "2026.09.21-1330", "live-actions.json"),
+        JSON.stringify({
+          directions: ["8:51 — scratch that — left it out"],
+          requests: ["look into SOC 2 auditors"],
+        }),
+      );
+      const live = yield* search.readMeeting({ meetingId: "2026.09.21-1330", whole: true });
+      assert.isTrue(live?.meeting.live);
+      assert.deepStrictEqual(live?.tuiHeard?.requests, ["look into SOC 2 auditors"]);
+      assert.isTrue((yield* search.listMeetings({})).find((m) => m.id === "2026.09.21-1330")?.live);
+      NodeFS.rmSync(NodePath.join(meetingsDir, "2026.09.21-1330", "transcript.live"));
+      NodeFS.rmSync(NodePath.join(meetingsDir, "2026.09.21-1330", "live-actions.json"));
+      assert.isUndefined(
+        (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.live,
+      );
     }),
   );
 

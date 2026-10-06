@@ -200,6 +200,8 @@ export interface MeetingSummary {
   readonly projectId: string | null;
   readonly projectTitle: string | null;
   readonly people: ReadonlyArray<string>;
+  /** Being recorded now: tui is transcribing it live (transcript.live). */
+  readonly live?: boolean;
 }
 
 export interface MeetingReadInput {
@@ -217,6 +219,11 @@ export interface MeetingReadOutput {
   /** The written notes (summary, decisions, action items); null with `around`. */
   readonly notes: string | null;
   readonly myNotes: string | null;
+  /** What was said to Tui in the meeting: directions it applied, requests it passed on. */
+  readonly tuiHeard: {
+    readonly directions: ReadonlyArray<string>;
+    readonly requests: ReadonlyArray<string>;
+  } | null;
   readonly lines: ReadonlyArray<Meetings.TranscriptLine>;
   readonly hasEarlier: boolean;
   readonly hasLater: boolean;
@@ -1503,6 +1510,28 @@ const make = (options: HistorySearchOptions) =>
         WHERE ${sql.in("g.meeting_id", ids)}
       `.pipe(Effect.map((rows) => rows.map(toMeetingSummary)));
 
+    // tui marks a meeting it is transcribing live; the final pass removes it.
+    const isLive = (id: string) =>
+      fs
+        .exists(path.join(meetingsDir, id, "transcript.live"))
+        .pipe(Effect.orElseSucceed(() => false));
+    const readTuiHeard = (id: string) =>
+      fs.readFileString(path.join(meetingsDir, id, "live-actions.json")).pipe(
+        Effect.map((text) => {
+          try {
+            const parsed = JSON.parse(text) as { directions?: unknown; requests?: unknown };
+            const strings = (value: unknown) =>
+              Array.isArray(value)
+                ? value.filter((item): item is string => typeof item === "string")
+                : [];
+            return { directions: strings(parsed.directions), requests: strings(parsed.requests) };
+          } catch {
+            return null;
+          }
+        }),
+        Effect.orElseSucceed(() => null),
+      );
+
     const listMeetings: HistorySearchShape["listMeetings"] = Effect.fn(
       "HistorySearch.listMeetings",
     )(
@@ -1515,7 +1544,10 @@ const make = (options: HistorySearchOptions) =>
           ORDER BY g.meeting_id DESC
           LIMIT ${clamp(input.limit, 20, 200) || 20}
         `;
-        return rows.map(toMeetingSummary);
+        const summaries = rows.map(toMeetingSummary);
+        return yield* Effect.forEach(summaries, (summary) =>
+          isLive(summary.id).pipe(Effect.map((live) => (live ? { ...summary, live } : summary))),
+        );
       },
       Effect.mapError(failWith("could not list meetings")),
     );
@@ -1546,11 +1578,14 @@ const make = (options: HistorySearchOptions) =>
           .readFileString(path.join(meetingsDir, meeting.id, "notes.md"))
           .pipe(Effect.orElseSucceed(() => ""));
         const myNotes = typed.trim().length > 0 ? typed : null;
+        const tuiHeard = yield* readTuiHeard(meeting.id);
+        if (yield* isLive(meeting.id)) Object.assign(summary, { live: true });
         if (input.whole === true) {
           return {
             meeting: summary,
             notes: meeting.notes,
             myNotes,
+            tuiHeard,
             lines: meeting.lines,
             hasEarlier: false,
             hasLater: false,
@@ -1562,6 +1597,7 @@ const make = (options: HistorySearchOptions) =>
             meeting: summary,
             notes: meeting.notes,
             myNotes,
+            tuiHeard,
             lines: [],
             hasEarlier: false,
             hasLater: meeting.lines.length > 0,
@@ -1582,6 +1618,7 @@ const make = (options: HistorySearchOptions) =>
           meeting: summary,
           notes: null,
           myNotes,
+          tuiHeard,
           lines: inside,
           hasEarlier: meeting.lines.some((line) => line.seconds < centre - span),
           hasLater: meeting.lines.some((line) => line.seconds > centre + span),
