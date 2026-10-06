@@ -8,6 +8,7 @@ import { useCallback, useMemo, useState } from "react";
 import { toastManager } from "~/components/ui/toast";
 import { useActiveEnvironmentId, useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
+import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -105,5 +106,21 @@ export function useMeetings() {
     [askCommand, asking, environmentId],
   );
 
-  return { environmentId, root, project, asks, ask, asking };
+  // A meeting's own chat lives on that meeting; the rest are chats across
+  // them, listed under Meetings in the sidebar and on the Meetings home.
+  const listing = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.meetingList({ environmentId, input: { limit: 200 } }),
+  );
+  const chats = useMemo(() => {
+    const onMeetings = new Set(
+      (listing.data?.meetings ?? []).flatMap((meeting) =>
+        meeting.chatThreadId ? [meeting.chatThreadId] : [],
+      ),
+    );
+    return asks.filter((thread) => !onMeetings.has(thread.id));
+  }, [asks, listing.data]);
+
+  return { environmentId, root, project, asks, chats, ask, asking };
 }

@@ -1,5 +1,5 @@
 import type { HistoryMeetingPart, HistoryMeetingSummary } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { MessageCircleIcon, NotebookPenIcon, SearchIcon, SparklesIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -61,23 +61,27 @@ const PART_LABEL: Record<string, string> = {
 };
 
 export function MeetingsHome() {
-  const { environmentId, root, asks, ask, asking } = useMeetings();
-  // A chat across all meetings, in the panel beside the list; null with the
-  // panel open is a new chat, waiting for its first question.
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
+  const { environmentId, root, chats, ask, asking } = useMeetings();
+  // A chat across all meetings, in the panel beside the list. The URL holds
+  // it (?chat=<thread>, "new" before its first question), so the sidebar's
+  // chats under Meetings open here.
+  const navigate = useNavigate();
+  const { chat } = useSearch({ from: "/_chat/meetings/" });
+  const chatOpen = chat !== undefined;
+  const chatThreadId = chat === undefined || chat === "new" ? null : chat;
   const [pending, setPending] = useState<string | null>(null);
+  const showChat = (next: string | null | undefined) =>
+    void navigate({
+      to: "/meetings",
+      search: next === undefined ? {} : { chat: next ?? "new" },
+      replace: true,
+    });
   const askHere = async (question: string, followUp: string | null) => {
-    setChatOpen(true);
-    setChatThreadId(followUp);
+    showChat(followUp);
     setPending(question);
     const threadId = await ask(question, { threadId: followUp });
     setPending(null);
-    if (threadId !== null) setChatThreadId(threadId);
-  };
-  const openChat = (threadId: string | null) => {
-    setChatThreadId(threadId);
-    setChatOpen(true);
+    if (threadId !== null) showChat(threadId);
   };
   const [query, setQuery] = useState("");
   const [settled, setSettled] = useState("");
@@ -105,16 +109,6 @@ export function MeetingsHome() {
           },
         }),
   );
-
-  // A meeting's own chat lives on that meeting; here, the chats across them.
-  const chats = useMemo(() => {
-    const onMeetings = new Set(
-      (list.data?.meetings ?? []).flatMap((meeting) =>
-        meeting.chatThreadId ? [meeting.chatThreadId] : [],
-      ),
-    );
-    return asks.filter((thread) => !onMeetings.has(thread.id));
-  }, [asks, list.data]);
 
   const byDay = useMemo(() => {
     const groups = new Map<string, { day: Date; meetings: Array<HistoryMeetingSummary> }>();
@@ -242,7 +236,7 @@ export function MeetingsHome() {
                     <button
                       key={thread.id}
                       type="button"
-                      onClick={() => openChat(thread.id)}
+                      onClick={() => showChat(thread.id)}
                       className={`-mx-2.5 flex h-10 w-[calc(100%+20px)] items-center gap-3 rounded-lg px-2.5 text-left hover:bg-(--mt-hover) ${
                         chatOpen && chatThreadId === thread.id ? "bg-(--mt-hover)" : ""
                       }`}
@@ -296,8 +290,8 @@ export function MeetingsHome() {
           asking={asking}
           pending={pending}
           onAsk={(question) => void askHere(question, chatThreadId)}
-          onFresh={() => openChat(null)}
-          onClose={() => setChatOpen(false)}
+          onFresh={() => showChat(null)}
+          onClose={() => showChat(undefined)}
         />
       ) : null}
     </div>

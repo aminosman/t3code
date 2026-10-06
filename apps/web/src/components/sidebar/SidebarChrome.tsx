@@ -1,11 +1,17 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, NotebookPenIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ChartNoAxesColumnIcon,
+  ChevronRightIcon,
+  NotebookPenIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { useEnvironments, usePullRequestsSupported } from "../../state/environments";
+import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -19,9 +25,13 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarTrigger,
   useSidebar,
 } from "../ui/sidebar";
+import { useMeetings } from "../meetings/useMeetings";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
@@ -126,36 +136,89 @@ function SidebarUtilityItem({
   );
 }
 
-/** Whether a connected server records meetings (Roost: tui's meetings folder). */
-function useMeetingsAvailable(): boolean {
-  const { environments } = useEnvironments();
-  return environments.some(
-    (entry) => entry.connection.phase === "connected" && entry.serverConfig?.meetingsWorkspaceRoot,
-  );
-}
+const MEETINGS_EXPANDED_KEY = "roost:sidebar:meetings-expanded";
+const MEETING_CHATS_SHOWN = 8;
 
 /**
  * Meetings as a place of its own, above the threads — not a project among
- * projects. Shown only where a server records meetings.
+ * projects. Shown only where a server records meetings. It opens to the chats
+ * asked across all meetings (a meeting's own chat lives on that meeting);
+ * each opens in the Meetings home's chat panel.
  */
 export const SidebarMeetingsEntry = memo(function SidebarMeetingsEntry() {
-  const available = useMeetingsAvailable();
+  const { root, chats } = useMeetings();
   const { isMobile, setOpenMobile } = useSidebar();
-  const active = useLocation({ select: (location) => location.pathname.startsWith("/meetings") });
-  if (!available) return null;
+  const location = useLocation({
+    select: (current) => ({
+      onMeetings: current.pathname.startsWith("/meetings"),
+      chat: (current.search as { chat?: unknown }).chat,
+    }),
+  });
+  const [expanded, setExpanded] = useState(
+    () => globalThis.localStorage?.getItem(MEETINGS_EXPANDED_KEY) !== "false",
+  );
+  const [showAll, setShowAll] = useState(false);
+  if (root === null) return null;
+  const toggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    globalThis.localStorage?.setItem(MEETINGS_EXPANDED_KEY, String(next));
+  };
+  const closeMobile = () => {
+    if (isMobile) setOpenMobile(false);
+  };
+  const shown = showAll ? chats : chats.slice(0, MEETING_CHATS_SHOWN);
   return (
     <SidebarMenu>
       <SidebarMenuItem>
         <SidebarMenuButton
-          isActive={active}
+          isActive={location.onMeetings && typeof location.chat !== "string"}
           render={<Link to="/meetings" />}
-          onClick={() => {
-            if (isMobile) setOpenMobile(false);
-          }}
+          onClick={closeMobile}
         >
           <NotebookPenIcon />
           <span className="flex-1 truncate">Meetings</span>
         </SidebarMenuButton>
+        {chats.length > 0 ? (
+          <button
+            type="button"
+            aria-label={expanded ? "Hide chats" : "Show chats"}
+            aria-expanded={expanded}
+            onClick={toggle}
+            className="absolute top-1.5 right-1.5 flex size-5 items-center justify-center rounded-md text-sidebar-muted-foreground hover:bg-sidebar-row-hover"
+          >
+            <ChevronRightIcon
+              className={cn("size-3.5 transition-transform", expanded && "rotate-90")}
+            />
+          </button>
+        ) : null}
+        {expanded && chats.length > 0 ? (
+          <SidebarMenuSub>
+            {shown.map((thread) => (
+              <SidebarMenuSubItem key={thread.id}>
+                <SidebarMenuSubButton
+                  isActive={location.onMeetings && location.chat === thread.id}
+                  render={<Link to="/meetings" search={{ chat: thread.id }} />}
+                  onClick={closeMobile}
+                >
+                  <span className="truncate">{thread.title}</span>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ))}
+            {chats.length > MEETING_CHATS_SHOWN ? (
+              <SidebarMenuSubItem>
+                <SidebarMenuSubButton
+                  size="sm"
+                  render={<button type="button" />}
+                  onClick={() => setShowAll(!showAll)}
+                  className="text-sidebar-muted-foreground"
+                >
+                  <span>{showAll ? "Show fewer" : `Show all ${chats.length}`}</span>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ) : null}
+          </SidebarMenuSub>
+        ) : null}
       </SidebarMenuItem>
     </SidebarMenu>
   );
