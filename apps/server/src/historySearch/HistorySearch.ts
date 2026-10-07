@@ -1542,22 +1542,42 @@ const make = (options: HistorySearchOptions) =>
       );
     const withRecording = (summary: MeetingSummary) =>
       Effect.gen(function* () {
-        if (!(yield* isLive(summary.id))) return summary;
+        if (!(yield* isLive(summary.id))) {
+          // The final pass removes transcript.live before it writes the
+          // final notes; until they land the live ones stand, and the
+          // meeting is still being transcribed.
+          return (yield* finalNotesPending(summary.id))
+            ? ({ ...summary, live: true, recording: "transcribing" } as MeetingSummary)
+            : summary;
+        }
         const state = yield* recordingOf(summary.id);
         return { ...summary, live: true, recording: state ?? "transcribing" } as MeetingSummary;
       });
+    // LiveNotes' footer on summary.md, for a meeting that ended minutes ago:
+    // a final pass whose notes failed must not read as transcribing forever.
+    const LIVE_NOTES_FOOTER = "live — updating as the meeting goes";
+    const finalNotesPending = (id: string) =>
+      Effect.gen(function* () {
+        const ended = yield* endedAgo(id);
+        if (ended === null || ended > 15 * 60_000) return false;
+        const notes = yield* fs.readFileString(path.join(meetingsDir, id, "summary.md"));
+        return notes.includes(LIVE_NOTES_FOOTER);
+      }).pipe(Effect.orElseSucceed(() => false));
     // tui resumes a meeting that ended within six hours (MeetingRecorder.resumable).
     const RESUME_HOURS = 6;
-    const isResumable = (id: string) =>
+    /** Milliseconds since meta.json's `ended`; null when it has none. */
+    const endedAgo = (id: string) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         const meta = yield* fs
           .readFileString(path.join(meetingsDir, id, "meta.json"))
           .pipe(Effect.flatMap(decodeMeetingEnded));
-        if (meta.ended === undefined) return false;
-        const age = now - Date.parse(meta.ended);
-        return age >= 0 && age <= RESUME_HOURS * 3_600_000;
-      }).pipe(Effect.orElseSucceed(() => false));
+        return meta.ended === undefined ? null : now - Date.parse(meta.ended);
+      }).pipe(Effect.orElseSucceed(() => null));
+    const isResumable = (id: string) =>
+      endedAgo(id).pipe(
+        Effect.map((age) => age !== null && age >= 0 && age <= RESUME_HOURS * 3_600_000),
+      );
     // Roost's own record of the meeting's chat, beside the user's notes.md.
     const withChat = (summary: MeetingSummary) =>
       Meetings.readChatThreadId(meetingsDir, summary.id).pipe(

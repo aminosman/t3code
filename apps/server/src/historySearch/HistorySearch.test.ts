@@ -497,6 +497,26 @@ layer("HistorySearch", (it) => {
       assert.isTrue(
         (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.resumable,
       );
+      // Stopped minutes ago, its live notes not yet replaced: still transcribing.
+      const summaryPath = NodePath.join(meetingsDir, "2026.09.21-1330", "summary.md");
+      const finalNotes = NodeFS.readFileSync(summaryPath, "utf8");
+      NodeFS.writeFileSync(
+        summaryPath,
+        `${finalNotes}\n<sub>live — updating as the meeting goes · Claude Code</sub>\n`,
+      );
+      const justEnded = DateTime.formatIso(
+        DateTime.makeUnsafe((yield* Clock.currentTimeMillis) - 60_000),
+      );
+      NodeFS.writeFileSync(metaPath, `{"ended":"${justEnded}"}`);
+      const pending = yield* search.readMeeting({ meetingId: "2026.09.21-1330" });
+      assert.strictEqual(pending?.meeting.recording, "transcribing");
+      assert.isTrue(pending?.meeting.live);
+      // An hour on, a final pass that never wrote its notes is not still going.
+      NodeFS.writeFileSync(metaPath, `{"ended":"${endedAt}"}`);
+      assert.isUndefined(
+        (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.recording,
+      );
+      NodeFS.writeFileSync(summaryPath, finalNotes);
       NodeFS.writeFileSync(metaPath, '{"ended":"2026-09-21T14:22:00Z"}');
       assert.isUndefined(
         (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.resumable,
