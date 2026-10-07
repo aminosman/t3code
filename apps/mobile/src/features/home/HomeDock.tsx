@@ -2,11 +2,11 @@ import type { HistoryMeetingSummary } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import { useRef, useState } from "react";
-import { Platform, Pressable, TextInput, View } from "react-native";
+import { Pressable, TextInput, View } from "react-native";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { GlassSurface } from "../../components/GlassSurface";
+import { GrInputSurface, RADIUS, SPACE } from "../../design/granola";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useTuiVoiceNote } from "../tui/useTuiVoiceNote";
@@ -15,8 +15,6 @@ import { useTuiEnvironment } from "./use-tui-environment";
 function newClientMessageId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
-
-export const SERIF_FONT = Platform.select({ ios: "ui-serif", default: "serif" });
 
 /**
  * The home composer: say or type anything and tui decides where it goes
@@ -92,40 +90,45 @@ export function HomeDock(props: {
   const problem = voice.error ?? (notice?.tone === "problem" ? notice.text : null);
 
   return (
-    <GlassSurface
-      className="mx-2.5 overflow-hidden rounded-[18px] border border-border"
-      fallbackClassName="bg-card"
-    >
-      <View className="gap-2 px-3.5 pt-3 pb-2.5">
+    <GrInputSurface>
+      <View
+        style={{
+          paddingHorizontal: SPACE.lg,
+          paddingTop: SPACE.md,
+          paddingBottom: SPACE.md,
+          gap: SPACE.sm,
+        }}
+      >
         {props.liveMeeting ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Open ${props.liveMeeting.title}, being recorded`}
-            className="-mx-1 flex-row items-center gap-2.5 rounded-2xl bg-adaptive-emerald-500-a12-a16 px-3 py-2"
+            className="flex-row items-center gap-2.5 bg-gr-danger-tint px-3 py-2"
+            style={{ borderRadius: RADIUS.control, marginHorizontal: -SPACE.xs }}
             onPress={() => props.liveMeeting && props.onOpenMeeting(props.liveMeeting)}
           >
-            <View className="size-2 rounded-full bg-danger-foreground" />
+            <View className="size-2 rounded-full bg-gr-danger" />
             <View className="flex-1">
-              <Text className="font-t3-medium text-sm" numberOfLines={1}>
+              <Text className="font-t3-medium text-[14px] text-gr-ink" numberOfLines={1}>
                 {props.liveMeeting.title}
               </Text>
-              <Text className="text-2xs text-foreground-muted">Recording on the Mac</Text>
+              <Text className="text-[12px] text-gr-ink-2">Recording on the Mac</Text>
             </View>
-            <SymbolView name="chevron.right" size={13} tintColorClassName="accent-icon-muted" />
+            <SymbolView name="chevron.right" size={13} tintColorClassName="accent-gr-ink-3" />
           </Pressable>
         ) : null}
 
         <TextInput
           accessibilityLabel="Message tui"
-          className="max-h-40 font-sans text-[17px] leading-6 text-foreground"
-          style={{ minHeight: focused ? 96 : 28 }}
+          className="max-h-40 font-sans text-[16px] leading-6 text-gr-ink"
+          style={{ minHeight: focused ? 96 : 24, paddingTop: 0, paddingBottom: 0 }}
           multiline
           placeholder={
             voice.recording ? "Listening… release to send" : "Message tui. It finds the thread."
           }
-          placeholderTextColorClassName="accent-placeholder"
-          cursorColorClassName="accent-focus"
-          selectionColorClassName="accent-focus/32"
+          placeholderTextColorClassName="accent-gr-ink-3"
+          cursorColorClassName="accent-gr-accent"
+          selectionColorClassName="accent-gr-accent-tint"
           value={draft}
           onChangeText={setDraft}
           onFocus={() => {
@@ -142,18 +145,18 @@ export function HomeDock(props: {
         />
 
         <View className="flex-row items-center gap-2">
-          <View className="flex-row items-center gap-1 rounded-full bg-subtle px-2.5 py-1">
-            <SymbolView name="sparkles" size={11} tintColorClassName="accent-icon-muted" />
-            <Text className="text-2xs text-foreground-muted">Auto</Text>
+          <View className="h-7 flex-row items-center gap-1 rounded-full border border-gr-hairline px-2.5">
+            <SymbolView name="sparkles" size={11} tintColorClassName="accent-gr-ink-2" />
+            <Text className="text-[12px] text-gr-ink-2">Auto</Text>
           </View>
           {notice?.tone === "ok" ? (
             <Pressable onPress={() => navigation.navigate("TuiInbox", undefined)} hitSlop={8}>
-              <Text className="text-2xs text-foreground-muted">
-                {notice.text} · <Text className="font-t3-medium text-2xs">Open</Text>
+              <Text className="text-[12px] text-gr-ink-2">
+                {notice.text} · <Text className="font-t3-medium text-[12px] text-gr-ink">Open</Text>
               </Text>
             </Pressable>
           ) : problem ? (
-            <Text className="flex-1 text-2xs text-danger-foreground" numberOfLines={2}>
+            <Text className="flex-1 text-[12px] text-gr-danger" numberOfLines={2}>
               {problem}
             </Text>
           ) : null}
@@ -164,14 +167,10 @@ export function HomeDock(props: {
               accessibilityLabel="Send to tui"
               disabled={sending}
               onPress={() => void sendText()}
-              className="size-10 items-center justify-center rounded-full bg-primary"
+              className="size-9 items-center justify-center rounded-full bg-gr-button"
               style={{ opacity: sending ? 0.5 : 1 }}
             >
-              <SymbolView
-                name="arrow.up"
-                size={17}
-                tintColorClassName="accent-primary-foreground"
-              />
+              <SymbolView name="arrow.up" size={16} tintColorClassName="accent-gr-button-ink" />
             </Pressable>
           ) : (
             <Pressable
@@ -182,19 +181,19 @@ export function HomeDock(props: {
               onPressOut={() => void micUp()}
               className={
                 voice.recording
-                  ? "size-11 items-center justify-center rounded-full bg-adaptive-emerald-600-400"
-                  : "size-11 items-center justify-center rounded-full bg-foreground"
+                  ? "size-9 items-center justify-center rounded-full bg-gr-bars"
+                  : "size-9 items-center justify-center rounded-full bg-gr-button"
               }
             >
               <SymbolView
                 name={voice.recording ? "waveform" : "mic"}
-                size={18}
-                tintColorClassName="accent-screen"
+                size={16}
+                tintColorClassName="accent-gr-button-ink"
               />
             </Pressable>
           )}
         </View>
       </View>
-    </GlassSurface>
+    </GrInputSurface>
   );
 }

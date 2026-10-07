@@ -3,7 +3,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { ScrollView, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, {
   cancelAnimation,
@@ -17,13 +17,24 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import {
+  GUTTER,
+  GrCard,
+  GrHeader,
+  GrIconButton,
+  GrPage,
+  GrSectionLabel,
+  GrTile,
+  SERIF,
+  SPACE,
+} from "../../design/granola";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { useHomeThreadSelection } from "./home-thread-navigation";
-import { HomeDock, SERIF_FONT } from "./HomeDock";
-import { tabsFootprint, type HomeTab } from "./HomeTabs";
 import { useMeetingsEnvironment } from "../meetings/use-meetings-environment";
+import { useHomeThreadSelection } from "./home-thread-navigation";
+import { HomeDock } from "./HomeDock";
+import { tabsFootprint, type HomeTab } from "./HomeTabs";
 import {
   buildShelves,
   SHELF_ORDER,
@@ -34,6 +45,11 @@ import {
   type ShelfCardState,
   type ShelfKind,
 } from "./shelves";
+import { useTuiEnvironment } from "./use-tui-environment";
+
+const CARD_WIDTH = 232;
+const CARD_HEIGHT = 136;
+const CARD_GAP = SPACE.md;
 
 const SHELF_TITLES: Record<ShelfKind, string> = {
   needs: "Needs you",
@@ -42,10 +58,19 @@ const SHELF_TITLES: Record<ShelfKind, string> = {
   failed: "Failed",
   stopped: "Stopped",
 };
-import { useTuiEnvironment } from "./use-tui-environment";
 
-const CARD_WIDTH = 226;
-const TILE_COLORS = ["#FBEFB8", "#E4E4DE", "#F8DDF0", "#D9ECF7", "#E2F0C9", "#F6E1CF"];
+/** Status colours, from the design system: see src/design/README.md. */
+const STATE_TONE: Record<ShelfCardState, { text: string; dot: string }> = {
+  working: { text: "text-gr-accent", dot: "bg-gr-accent" },
+  connecting: { text: "text-gr-accent", dot: "bg-gr-accent" },
+  done: { text: "text-gr-ink-3", dot: "bg-gr-ink-3" },
+  "needs-approval": { text: "text-gr-attention", dot: "bg-gr-attention" },
+  "needs-input": { text: "text-gr-attention", dot: "bg-gr-attention" },
+  "plan-ready": { text: "text-gr-attention", dot: "bg-gr-attention" },
+  error: { text: "text-gr-danger", dot: "bg-gr-danger" },
+  stopped: { text: "text-gr-ink-3", dot: "bg-gr-ink-3" },
+  new: { text: "text-gr-ink-3", dot: "bg-gr-ink-3" },
+};
 
 function greeting(now: Date): string {
   const hour = now.getHours();
@@ -54,37 +79,6 @@ function greeting(now: Date): string {
   if (hour < 18) return "Good afternoon";
   return "Good evening";
 }
-
-function tileColor(key: string): string {
-  let hash = 0;
-  for (let index = 0; index < key.length; index += 1)
-    hash = (hash * 31 + key.charCodeAt(index)) | 0;
-  return TILE_COLORS[Math.abs(hash) % TILE_COLORS.length]!;
-}
-
-const STATE_TEXT: Record<ShelfCardState, string> = {
-  working: "text-adaptive-sky-600-400",
-  connecting: "text-adaptive-sky-600-400",
-  done: "text-foreground-tertiary",
-  "needs-approval": "text-adaptive-amber-700-400",
-  "needs-input": "text-adaptive-amber-700-400",
-  "plan-ready": "text-adaptive-violet-600-400",
-  error: "text-adaptive-red-700-300",
-  stopped: "text-foreground-tertiary",
-  new: "text-foreground-tertiary",
-};
-
-const STATE_DOT: Record<ShelfCardState, string> = {
-  working: "bg-adaptive-sky-600-400",
-  connecting: "bg-adaptive-sky-600-400",
-  done: "bg-foreground-tertiary",
-  "needs-approval": "bg-adaptive-amber-700-400",
-  "needs-input": "bg-adaptive-amber-700-400",
-  "plan-ready": "bg-adaptive-violet-600-400",
-  error: "bg-adaptive-red-700-300",
-  stopped: "bg-foreground-tertiary",
-  new: "bg-foreground-tertiary",
-};
 
 /** Re-render once a minute so "4m" stays true. */
 function useMinuteClock(): number {
@@ -122,7 +116,7 @@ function ShelfCardView(props: {
   readonly onPress: () => void;
 }) {
   const { card } = props;
-  const done = card.state === "done";
+  const quiet = card.state === "done" || card.state === "stopped" || card.state === "new";
   const preview = shelfPreview(card.thread);
   // Shells carry no message text today, so most cards say what is doing the work.
   const failure = card.state === "error" ? (card.thread.runtime?.lastError ?? null) : null;
@@ -132,41 +126,33 @@ function ShelfCardView(props: {
     [formatModelSlugName(card.thread.modelSelection.model), card.thread.branch]
       .filter(Boolean)
       .join(" · ");
+  const tone = STATE_TONE[card.state];
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${card.thread.title}, ${props.projectTitle}, ${shelfStateLabel(card.state)}`}
+    <GrCard
       onPress={props.onPress}
-      className={
-        done
-          ? "gap-1 overflow-hidden rounded-[18px] border border-border bg-subtle px-3 py-2.5"
-          : "gap-1 overflow-hidden rounded-[18px] border border-border bg-card px-3 py-2.5"
-      }
-      style={{ width: CARD_WIDTH, height: 124 + (preview || failure ? 14 : 0) }}
+      accessibilityLabel={`${card.thread.title}, ${props.projectTitle}, ${shelfStateLabel(card.state)}`}
+      style={{
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        paddingHorizontal: SPACE.md,
+        paddingVertical: SPACE.md,
+        gap: SPACE.xs,
+      }}
     >
       <View className="flex-row items-center gap-2">
-        <View
-          className="size-5 items-center justify-center rounded-md"
-          style={{ backgroundColor: tileColor(props.projectTitle) }}
-        >
-          <Text className="text-3xs text-neutral-900" style={{ fontFamily: SERIF_FONT }}>
-            {props.projectTitle.slice(0, 1).toUpperCase()}
-          </Text>
-        </View>
-        <Text className="flex-1 text-3xs text-foreground-muted" numberOfLines={1}>
+        <GrTile name={props.projectTitle} size={20} />
+        <Text className="flex-1 text-[12px] text-gr-ink-2" numberOfLines={1}>
           {props.projectTitle}
         </Text>
-        <Text className="text-3xs text-foreground-tertiary">
-          {shortAgo(card.activityAt, props.now)}
-        </Text>
+        <Text className="text-[12px] text-gr-ink-3">{shortAgo(card.activityAt, props.now)}</Text>
       </View>
       <Text
         className={
-          done
-            ? "text-[15px] leading-[19px] text-foreground-secondary"
-            : "text-[15.5px] leading-[19px]"
+          quiet
+            ? "text-[15.5px] leading-[20px] text-gr-ink-2-strong"
+            : "text-[15.5px] leading-[20px] text-gr-ink"
         }
-        style={{ fontFamily: SERIF_FONT }}
+        style={{ fontFamily: SERIF }}
         numberOfLines={2}
       >
         {card.thread.title}
@@ -174,24 +160,26 @@ function ShelfCardView(props: {
       {detail ? (
         <Text
           className={
-            failure ? "text-2xs text-adaptive-red-700-300" : "text-2xs text-foreground-muted"
+            failure
+              ? "text-[12px] leading-[16px] text-gr-danger"
+              : "text-[12px] leading-[16px] text-gr-ink-2"
           }
-          numberOfLines={(preview || failure) && !done ? 2 : 1}
+          numberOfLines={failure ? 2 : 1}
         >
           {detail}
         </Text>
       ) : null}
       <View className="mt-auto flex-row items-center justify-between">
         <View className="flex-row items-center gap-1.5">
-          <PulseDot className={STATE_DOT[card.state]} pulse={card.state === "working"} />
-          <Text className={`font-t3-medium text-3xs ${STATE_TEXT[card.state]}`}>
+          <PulseDot className={tone.dot} pulse={card.state === "working"} />
+          <Text className={`font-t3-medium text-[12px] ${tone.text}`}>
             {shelfStateLabel(card.state)}
           </Text>
         </View>
         {card.agentCount > 0 ? (
           <View className="flex-row items-center gap-1">
-            <SymbolView name="sparkles" size={10} tintColorClassName="accent-icon-muted" />
-            <Text className="text-3xs text-foreground-muted">
+            <SymbolView name="sparkles" size={10} tintColorClassName="accent-gr-ink-3" />
+            <Text className="text-[12px] text-gr-ink-2">
               {card.agentsWorking > 0
                 ? `${card.agentsWorking} of ${card.agentCount} working`
                 : `${card.agentCount} agent${card.agentCount === 1 ? "" : "s"}`}
@@ -199,7 +187,7 @@ function ShelfCardView(props: {
           </View>
         ) : null}
       </View>
-    </Pressable>
+    </GrCard>
   );
 }
 
@@ -208,36 +196,39 @@ function LiveMeetingCard(props: {
   readonly onPress: () => void;
 }) {
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${props.meeting.title}, being recorded`}
+    <GrCard
       onPress={props.onPress}
-      className="gap-1 overflow-hidden rounded-[18px] border border-adaptive-red-200-800 bg-adaptive-red-50-950-a80 px-3 py-2.5"
-      style={{ width: CARD_WIDTH, height: 124 }}
+      accessibilityLabel={`${props.meeting.title}, being recorded`}
+      className="bg-gr-danger-tint"
+      style={{
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        paddingHorizontal: SPACE.md,
+        paddingVertical: SPACE.md,
+        gap: SPACE.xs,
+      }}
     >
       <View className="flex-row items-center justify-between">
-        <Text className="text-3xs text-foreground-muted">Meeting</Text>
-        <Text className="text-3xs text-foreground-tertiary">now</Text>
+        <Text className="text-[12px] text-gr-ink-2">Meeting</Text>
+        <Text className="text-[12px] text-gr-ink-3">now</Text>
       </View>
       <Text
-        className="text-[15.5px] leading-[19px]"
-        style={{ fontFamily: SERIF_FONT }}
+        className="text-[15.5px] leading-[20px] text-gr-ink"
+        style={{ fontFamily: SERIF }}
         numberOfLines={2}
       >
         {props.meeting.title}
       </Text>
-      <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
+      <Text className="text-[12px] text-gr-ink-2" numberOfLines={1}>
         {props.meeting.people.length > 0
           ? props.meeting.people.join(", ")
           : "Notes update as it goes"}
       </Text>
       <View className="mt-auto flex-row items-center gap-1.5">
-        <PulseDot className="bg-danger-foreground" pulse />
-        <Text className="font-t3-medium text-3xs text-adaptive-red-700-300">
-          Recording on the Mac
-        </Text>
+        <PulseDot className="bg-gr-danger" pulse />
+        <Text className="font-t3-medium text-[12px] text-gr-danger">Recording on the Mac</Text>
       </View>
-    </Pressable>
+    </GrCard>
   );
 }
 
@@ -250,28 +241,19 @@ function Shelf(props: {
 }) {
   return (
     <View>
-      <View className="flex-row items-center gap-2 px-5 pt-4 pb-2">
-        {props.working ? (
-          <PulseDot className="bg-adaptive-sky-600-400" pulse={props.count > 0} />
-        ) : null}
-        <Text className="font-t3-bold text-2xs uppercase tracking-[0.5px] text-foreground-muted">
-          {props.title}
-        </Text>
-        <View className="rounded-full bg-subtle px-1.5">
-          <Text className="font-t3-bold text-3xs text-foreground-muted">{props.count}</Text>
-        </View>
-        <View className="flex-1" />
-        <Pressable onPress={props.onSeeAll} hitSlop={10} accessibilityRole="button">
-          <Text className="text-2xs text-foreground-tertiary">All →</Text>
-        </Pressable>
-      </View>
+      <GrSectionLabel
+        title={props.title}
+        count={props.count}
+        leading={props.working ? <PulseDot className="bg-gr-accent" pulse /> : undefined}
+        action={{ label: "All", onPress: props.onSeeAll }}
+      />
       <ScrollView
         horizontal
         contentInsetAdjustmentBehavior="never"
         showsHorizontalScrollIndicator={false}
         decelerationRate="fast"
-        snapToInterval={CARD_WIDTH + 9}
-        contentContainerStyle={{ paddingHorizontal: 14, gap: 9 }}
+        snapToInterval={CARD_WIDTH + CARD_GAP}
+        contentContainerStyle={{ paddingHorizontal: GUTTER, gap: CARD_GAP }}
       >
         {props.children}
       </ScrollView>
@@ -314,9 +296,9 @@ export function useHomeData() {
 export type HomeData = ReturnType<typeof useHomeData>;
 
 /**
- * Home: what is working, what is done, and everything else, each a row to
- * swipe through, under a composer that sends to tui. It is the middle page
- * of the pager, between Meetings and Chats.
+ * Home: a row per status — needs you, working, done, failed, stopped — under
+ * a header that stays put, with a composer that sends to tui. It is the
+ * middle page of the pager, between Meetings and Chats.
  */
 export function ShelvesHomeScreen(props: {
   readonly data: HomeData;
@@ -346,6 +328,7 @@ export function ShelvesHomeScreen(props: {
         meetingId: meeting.id,
       });
   };
+
   // One row per status; a status with nothing in it takes no room.
   const visibleShelves = SHELF_ORDER.filter(
     (kind) => shelves[kind].length > 0 || (kind === "working" && liveMeeting !== null),
@@ -362,70 +345,55 @@ export function ShelvesHomeScreen(props: {
     />
   );
 
+  const header = (
+    <GrHeader
+      eyebrow={new Date(now).toLocaleDateString(undefined, {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      })}
+      title={greeting(new Date(now))}
+      note={
+        !connected && environmentId ? (
+          <Text className="text-[13px] text-gr-attention">
+            Not connected to your Mac · showing what the phone last saw
+          </Text>
+        ) : undefined
+      }
+      actions={
+        <>
+          <GrIconButton
+            icon="square.and.pencil"
+            label="New task"
+            onPress={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+          />
+          <GrIconButton
+            icon="ellipsis"
+            label="Open settings"
+            onPress={() =>
+              navigation.navigate("SettingsSheet", {
+                screen: "SettingsContent",
+                params: { screen: "Settings" },
+              })
+            }
+          />
+        </>
+      }
+    />
+  );
+
   return (
-    <View className="flex-1 bg-screen">
+    <GrPage header={header}>
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{
-          paddingTop: insets.top + 6,
-          paddingBottom: tabsFootprint(insets.bottom) + 140,
-        }}
+        contentContainerStyle={{ paddingBottom: tabsFootprint(insets.bottom) + 120 }}
         keyboardDismissMode="interactive"
       >
-        <View className="flex-row items-start px-5">
-          <View className="flex-1">
-            <Text className="text-xs text-foreground-muted">
-              {new Date(now).toLocaleDateString(undefined, {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-              })}
-            </Text>
-            <Text className="mt-0.5 text-[28px] leading-[34px]" style={{ fontFamily: SERIF_FONT }}>
-              {greeting(new Date(now))}
-            </Text>
-            {!connected && environmentId ? (
-              <Pressable
-                onPress={() =>
-                  navigation.navigate("SettingsSheet", {
-                    screen: "SettingsContent",
-                    params: { screen: "SettingsEnvironments" },
-                  })
-                }
-              >
-                <Text className="mt-1 text-2xs text-adaptive-amber-700-400">
-                  Not connected to your Mac · showing what the phone last saw
-                </Text>
-              </Pressable>
-            ) : null}
-          </View>
-          <View className="flex-row gap-2 pt-1">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="New task"
-              onPress={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-              className="size-9 items-center justify-center rounded-full bg-subtle"
-            >
-              <SymbolView name="square.and.pencil" size={16} tintColorClassName="accent-icon" />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open settings"
-              onPress={() =>
-                navigation.navigate("SettingsSheet", {
-                  screen: "SettingsContent",
-                  params: { screen: "Settings" },
-                })
-              }
-              className="size-9 items-center justify-center rounded-full bg-subtle"
-            >
-              <SymbolView name="ellipsis.circle" size={17} tintColorClassName="accent-icon" />
-            </Pressable>
-          </View>
-        </View>
-
         {visibleShelves.length === 0 ? (
-          <Text className="px-5 pt-6 text-sm text-foreground-tertiary">
+          <Text
+            className="text-[15px] text-gr-ink-3"
+            style={{ paddingHorizontal: GUTTER, paddingTop: SPACE.xl }}
+          >
             Nothing yet. Say what you want done below.
           </Text>
         ) : null}
@@ -448,13 +416,16 @@ export function ShelvesHomeScreen(props: {
       <KeyboardStickyView
         pointerEvents="box-none"
         style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
-        offset={{ closed: 0, opened: insets.bottom - 8 }}
+        offset={{ closed: 0, opened: insets.bottom - SPACE.sm }}
       >
         <View
           // Page-coloured under the composer so cards never show between it and the tabs.
-          className="bg-screen pt-2"
+          className="bg-gr-surface"
           pointerEvents="box-none"
-          style={{ paddingBottom: composing ? 8 : tabsFootprint(insets.bottom) }}
+          style={{
+            paddingTop: SPACE.sm,
+            paddingBottom: composing ? SPACE.sm : tabsFootprint(insets.bottom),
+          }}
         >
           <HomeDock
             liveMeeting={liveMeeting}
@@ -466,6 +437,6 @@ export function ShelvesHomeScreen(props: {
           />
         </View>
       </KeyboardStickyView>
-    </View>
+    </GrPage>
   );
 }

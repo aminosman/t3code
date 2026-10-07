@@ -86,7 +86,7 @@ export function HomePager(props: { readonly page?: HomeTab }) {
   }, [position, requestedPage, scrollRef]);
 
   return (
-    <View className="flex-1 bg-screen">
+    <View className="flex-1 bg-gr-surface">
       <NativeStackScreenOptions options={{ headerShown: false }} />
       <Animated.ScrollView
         ref={scrollRef}

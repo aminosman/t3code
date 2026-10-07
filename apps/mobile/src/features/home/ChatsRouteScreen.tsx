@@ -17,6 +17,7 @@ import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
+import { GrPage, GrSurfaceScope } from "../../design/granola";
 import { ChatsPaneHeader } from "./ChatsPaneHeader";
 import { useHomeListOptions } from "./home-list-options";
 import { useHomeThreadSelection } from "./home-thread-navigation";
@@ -232,17 +233,22 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
 
   if (props.embedded) {
     return (
-      <View className="flex-1 bg-screen">
-        <ChatsPaneHeader
-          searchQuery={searchQuery}
-          onSearchQueryChange={setSearchQuery}
-          onStartNewTask={startNewTask}
-          onOpenSettings={openSettings}
-        />
-        {/* The list already leaves room at its foot for iOS's bottom toolbar,
-            which the pager does not show; the capsule sits in that room. */}
-        {renderList()}
-      </View>
+      <GrSurfaceScope>
+        <GrPage
+          header={
+            <ChatsPaneHeader
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              onStartNewTask={startNewTask}
+              onOpenSettings={openSettings}
+            />
+          }
+        >
+          {/* The list already leaves room at its foot for iOS's bottom toolbar,
+              which the pager does not show; the capsule sits in that room. */}
+          {renderList()}
+        </GrPage>
+      </GrSurfaceScope>
     );
   }
 

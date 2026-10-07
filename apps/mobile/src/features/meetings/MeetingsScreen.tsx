@@ -7,25 +7,19 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { GlassSurface } from "../../components/GlassSurface";
+import { GUTTER, GrHeader, GrInputSurface, GrPage, SERIF, SPACE } from "../../design/granola";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SERIF_FONT } from "../home/HomeDock";
 import { tabsFootprint } from "../home/HomeTabs";
 import { meetingDayLabel, meetingTime } from "./meeting-notes";
+import { MeetingDayLabel, MeetingRowView } from "./meeting-rows";
 import { PhoneMeetingsHeader } from "./PhoneMeetingParts";
 import { useMeetingsEnvironment } from "./use-meetings-environment";
 
-const TILE_COLORS = ["#FBEFB8", "#E4E4DE", "#F8DDF0", "#D9ECF7", "#E2F0C9", "#F6E1CF"];
-
-function MeetingRow(props: {
-  readonly meeting: HistoryMeetingSummary;
-  readonly onPress: () => void;
-}) {
-  const { meeting } = props;
-  const details = [
+function meetingDetails(meeting: HistoryMeetingSummary): string {
+  return [
     meetingTime(meeting.startedAt),
     meeting.durationMinutes ? `${Math.round(meeting.durationMinutes)} min` : null,
     meeting.people.length > 0
@@ -33,43 +27,18 @@ function MeetingRow(props: {
         ? `${meeting.people.slice(0, 2).join(", ")} +${meeting.people.length - 2}`
         : meeting.people.join(", ")
       : null,
-  ].filter(Boolean);
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={props.onPress}
-      className="flex-row items-center gap-3 px-5 py-2.5 active:bg-row-hover"
-    >
-      <View
-        className="size-9 items-center justify-center rounded-[10px]"
-        style={{ backgroundColor: TILE_COLORS[meeting.title.length % TILE_COLORS.length] }}
-      >
-        <Text className="text-[17px] text-neutral-900" style={{ fontFamily: SERIF_FONT }}>
-          {meeting.title.slice(0, 1).toUpperCase()}
-        </Text>
-      </View>
-      <View className="flex-1">
-        <Text className="font-t3-medium text-[15px]" numberOfLines={1}>
-          {meeting.title}
-        </Text>
-        <Text className="mt-0.5 text-2xs text-foreground-muted" numberOfLines={1}>
-          {details.join(" · ")}
-          {meeting.projectTitle ? ` · ${meeting.projectTitle}` : ""}
-        </Text>
-      </View>
-      {meeting.live ? (
-        <View className="flex-row items-center gap-1 rounded-full bg-adaptive-red-50-950-a80 px-2 py-0.5">
-          <View className="size-1.5 rounded-full bg-danger-foreground" />
-          <Text className="text-3xs text-adaptive-red-700-300">Live</Text>
-        </View>
-      ) : null}
-    </Pressable>
-  );
+    meeting.projectTitle,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /**
- * Meetings recorded by Roost on the Mac, by day, newest first, and a box to
- * ask about them (the answer is a thread in the Meetings project).
+ * Meetings: start a recording on the phone, what was recorded here, and the
+ * meetings Roost keeps on the Mac by day, under a header that stays put, with
+ * a box to ask about them (the answer is a thread in the Meetings project).
+ * `embedded` is the left page of the home pager; otherwise it is a pushed
+ * screen with the native header (links, iPad).
  */
 export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
   const embedded = props.embedded === true;
@@ -116,37 +85,16 @@ export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
     } as never);
   };
 
-  return (
-    <View className="flex-1 bg-screen">
-      {embedded ? null : (
-        <NativeStackScreenOptions options={{ title: "Meetings", headerLargeTitle: true }} />
-      )}
+  const footer = embedded ? tabsFootprint(insets.bottom) : insets.bottom + SPACE.sm;
+  const canAsk = question.trim().length > 0 && !asking;
+
+  const body = (
+    <View className="flex-1">
       <SectionList
         sections={sections}
         keyExtractor={(meeting) => meeting.id}
         contentInsetAdjustmentBehavior={embedded ? "never" : "automatic"}
-        contentContainerStyle={{
-          paddingTop: embedded ? insets.top + 6 : 0,
-          paddingBottom: (embedded ? tabsFootprint(insets.bottom) : insets.bottom) + 80,
-        }}
-        ListHeaderComponent={
-          <>
-            {embedded ? (
-              <View className="px-5 pb-1">
-                <Text className="font-t3-bold text-2xs uppercase tracking-[0.5px] text-foreground-muted">
-                  On this phone and your Mac
-                </Text>
-                <Text
-                  className="mt-0.5 text-[32px] leading-[38px]"
-                  style={{ fontFamily: SERIF_FONT }}
-                >
-                  Meetings
-                </Text>
-              </View>
-            ) : null}
-            <PhoneMeetingsHeader />
-          </>
-        }
+        contentContainerStyle={{ paddingBottom: footer + 80 }}
         stickySectionHeadersEnabled={false}
         refreshControl={
           <RefreshControl
@@ -154,28 +102,29 @@ export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
             onRefresh={query.refresh}
           />
         }
-        renderSectionHeader={({ section }) => (
-          <Text className="px-5 pt-5 pb-1.5 font-t3-bold text-2xs uppercase tracking-[0.5px] text-foreground-muted">
-            {section.title}
-          </Text>
-        )}
+        ListHeaderComponent={<PhoneMeetingsHeader />}
+        renderSectionHeader={({ section }) =>
+          environmentId ? <MeetingDayLabel>{section.title}</MeetingDayLabel> : null
+        }
         renderItem={({ item }) => (
-          <MeetingRow
-            meeting={item}
+          <MeetingRowView
+            title={item.title}
+            details={meetingDetails(item)}
+            status={item.live ? { text: "Recording on the Mac", tone: "live" } : undefined}
             onPress={() =>
               environmentId && navigation.navigate("Meeting", { environmentId, meetingId: item.id })
             }
           />
         )}
         ListEmptyComponent={
-          <View className="items-center px-8 pt-24">
-            <Text className="text-center text-[22px]" style={{ fontFamily: SERIF_FONT }}>
-              {environmentId ? "No meetings yet" : "Meetings live on your Mac"}
+          <View style={{ paddingHorizontal: GUTTER, paddingTop: SPACE.xxxl }}>
+            <Text className="text-[20px] text-gr-ink" style={{ fontFamily: SERIF }}>
+              {environmentId ? "No meetings on the Mac yet" : "Your Mac's meetings show here"}
             </Text>
-            <Text className="mt-2 text-center text-sm text-foreground-muted">
+            <Text className="mt-1 text-[14px] leading-[20px] text-gr-ink-2">
               {environmentId
-                ? "Meetings tui records on the Mac show up here, with their notes and transcript."
-                : "Connect to a Mac running Roost with tui recording meetings, and they show up here."}
+                ? "Meetings tui records on the Mac appear here with their notes and transcript."
+                : "Connect to a Mac running Roost with tui recording meetings, and they appear here."}
             </Text>
           </View>
         }
@@ -184,29 +133,33 @@ export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
         <KeyboardStickyView
           pointerEvents="box-none"
           style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
-          offset={{ closed: 0, opened: insets.bottom - 8 }}
+          offset={{ closed: 0, opened: insets.bottom - SPACE.sm }}
         >
           <View
-            // In the pager the strip under the box is page-coloured, so rows
-            // do not show between it and the tabs.
-            className={embedded ? "bg-screen pt-2" : undefined}
-            style={{ paddingBottom: embedded ? tabsFootprint(insets.bottom) : insets.bottom + 4 }}
+            // Page-coloured under the box, so rows do not show between it and the tabs.
+            className="bg-gr-surface"
+            style={{ paddingTop: SPACE.sm, paddingBottom: footer }}
             pointerEvents="box-none"
           >
-            <GlassSurface
-              className="mx-2.5 overflow-hidden rounded-[18px] border border-border"
-              fallbackClassName="bg-card"
-            >
-              <View className="flex-row items-center gap-2 py-1.5 pr-1.5 pl-4">
+            <GrInputSurface>
+              <View
+                className="flex-row items-center"
+                style={{
+                  paddingLeft: SPACE.lg,
+                  paddingRight: SPACE.sm,
+                  paddingVertical: SPACE.sm,
+                  gap: SPACE.sm,
+                }}
+              >
                 <TextInput
                   accessibilityLabel="Ask about your meetings"
-                  className="max-h-32 flex-1 font-sans text-base text-foreground"
+                  className="max-h-32 flex-1 font-sans text-[16px] text-gr-ink"
                   // iOS pads a multiline field unevenly on its own; set both sides.
-                  style={{ paddingTop: 8, paddingBottom: 8 }}
+                  style={{ paddingTop: SPACE.sm, paddingBottom: SPACE.sm }}
                   multiline
                   placeholder="Ask anything about your meetings"
-                  placeholderTextColorClassName="accent-placeholder"
-                  cursorColorClassName="accent-focus"
+                  placeholderTextColorClassName="accent-gr-ink-3"
+                  cursorColorClassName="accent-gr-accent"
                   value={question}
                   onChangeText={setQuestion}
                   submitBehavior="blurAndSubmit"
@@ -216,25 +169,40 @@ export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Ask"
-                  disabled={!question.trim() || asking}
+                  disabled={!canAsk}
                   onPress={() => void submit()}
-                  className="size-9 items-center justify-center rounded-full bg-primary"
-                  style={{ opacity: !question.trim() || asking ? 0.4 : 1 }}
+                  className="size-9 items-center justify-center rounded-full bg-gr-button"
+                  style={{ opacity: canAsk ? 1 : 0.3 }}
                 >
-                  <SymbolView
-                    name="arrow.up"
-                    size={16}
-                    tintColorClassName="accent-primary-foreground"
-                  />
+                  <SymbolView name="arrow.up" size={16} tintColorClassName="accent-gr-button-ink" />
                 </Pressable>
               </View>
               {problem ? (
-                <Text className="px-4 pb-2 text-2xs text-danger-foreground">{problem}</Text>
+                <Text
+                  className="text-[12px] text-gr-danger"
+                  style={{ paddingHorizontal: SPACE.lg, paddingBottom: SPACE.sm }}
+                >
+                  {problem}
+                </Text>
               ) : null}
-            </GlassSurface>
+            </GrInputSurface>
           </View>
         </KeyboardStickyView>
       ) : null}
     </View>
+  );
+
+  if (!embedded) {
+    return (
+      <View className="flex-1 bg-gr-surface">
+        <NativeStackScreenOptions options={{ title: "Meetings", headerLargeTitle: true }} />
+        {body}
+      </View>
+    );
+  }
+  return (
+    <GrPage header={<GrHeader eyebrow="On this phone and your Mac" title="Meetings" />}>
+      {body}
+    </GrPage>
   );
 }

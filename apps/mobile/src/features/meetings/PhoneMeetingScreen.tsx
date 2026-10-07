@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { SERIF_FONT } from "../home/HomeDock";
+import { GrChip, SERIF } from "../../design/granola";
 import { meetingDayLabel, meetingTime } from "./meeting-notes";
 import { phoneMeetingStatus } from "./PhoneMeetingParts";
 import {
@@ -31,10 +31,8 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
 
   if (!meeting) {
     return (
-      <View className="flex-1 items-center justify-center bg-screen">
-        <Text className="text-sm text-foreground-muted">
-          This recording is no longer on the phone.
-        </Text>
+      <View className="flex-1 items-center justify-center bg-gr-surface">
+        <Text className="text-sm text-gr-ink-2">This recording is no longer on the phone.</Text>
       </View>
     );
   }
@@ -54,13 +52,13 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
     );
 
   return (
-    <View className="flex-1 bg-screen">
+    <View className="flex-1 bg-gr-surface">
       <NativeStackScreenOptions options={{ title: "" }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 40 }}
       >
-        <Text className="mt-2 text-[28px] leading-[34px]" style={{ fontFamily: SERIF_FONT }}>
+        <Text className="mt-2 text-[28px] leading-[34px] text-gr-ink" style={{ fontFamily: SERIF }}>
           {meeting.title}
         </Text>
         <View className="mt-3 flex-row flex-wrap gap-1.5">
@@ -69,16 +67,12 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
             clockTime(meeting.durationSeconds),
             meeting.kind === "call" ? "Call on speaker" : "In person",
           ].map((chip) => (
-            <View key={chip} className="rounded-full border border-border px-2.5 py-1">
-              <Text className="text-2xs text-foreground-secondary">{chip}</Text>
-            </View>
+            <GrChip key={chip}>{chip}</GrChip>
           ))}
         </View>
-        <Text className="mt-2 text-2xs text-adaptive-amber-700-400">
-          {phoneMeetingStatus(meeting)}
-        </Text>
+        <Text className="mt-2 text-2xs text-gr-attention">{phoneMeetingStatus(meeting)}</Text>
 
-        <View className="mt-5 flex-row gap-1 self-start rounded-full bg-subtle p-[3px]">
+        <View className="mt-5 flex-row gap-1 self-start rounded-full bg-gr-sunken p-[3px]">
           {(
             [
               { key: "transcript", label: "Transcript" },
@@ -92,14 +86,12 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
               onPress={() => setView(option.key)}
               className={
                 view === option.key
-                  ? "rounded-full bg-card px-3 py-1.5"
+                  ? "rounded-full bg-gr-raised px-3 py-1.5"
                   : "rounded-full px-3 py-1.5"
               }
             >
               <Text
-                className={
-                  view === option.key ? "font-t3-medium text-xs" : "text-xs text-foreground-muted"
-                }
+                className={view === option.key ? "font-t3-medium text-xs" : "text-xs text-gr-ink-2"}
               >
                 {option.label}
               </Text>
@@ -114,15 +106,12 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
         ) : meeting.transcription === "done" ? (
           <View className="mt-5 gap-3">
             {meeting.transcript.length === 0 ? (
-              <Text className="text-sm text-foreground-muted">No speech was heard.</Text>
+              <Text className="text-sm text-gr-ink-2">No speech was heard.</Text>
             ) : null}
             {meeting.transcript.map((line) => (
               <View key={`${line.seconds}:${line.text.slice(0, 24)}`} className="flex-row gap-3">
-                <Text className="w-11 pt-0.5 text-3xs text-foreground-tertiary">{line.at}</Text>
-                <Text
-                  selectable
-                  className="flex-1 text-[15px] leading-[22px] text-foreground-secondary"
-                >
+                <Text className="w-11 pt-0.5 text-3xs text-gr-ink-3">{line.at}</Text>
+                <Text selectable className="flex-1 text-[15px] leading-[22px] text-gr-ink-2-strong">
                   {line.text}
                 </Text>
               </View>
@@ -130,7 +119,7 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
           </View>
         ) : (
           <View className="mt-5 gap-3">
-            <Text className="text-sm text-foreground-muted">{phoneMeetingStatus(meeting)}</Text>
+            <Text className="text-sm text-gr-ink-2">{phoneMeetingStatus(meeting)}</Text>
             {meeting.transcription === "failed" ? (
               <Pressable
                 onPress={() => {
@@ -139,7 +128,7 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
                     transcription: "pending",
                   })).then(() => transcribePhoneMeeting(meeting.id));
                 }}
-                className="self-start rounded-full bg-subtle px-3 py-1.5"
+                className="self-start rounded-full bg-gr-sunken px-3 py-1.5"
               >
                 <Text className="text-xs">Try again</Text>
               </Pressable>
@@ -148,7 +137,7 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
         )}
 
         <Pressable onPress={remove} className="mt-10 self-start" hitSlop={8}>
-          <Text className="text-xs text-danger-foreground">Delete recording</Text>
+          <Text className="text-xs text-gr-danger">Delete recording</Text>
         </Pressable>
       </ScrollView>
     </View>

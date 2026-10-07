@@ -55,6 +55,31 @@ const color = (family: TailwindColorFamily, shade?: TailwindColorShade, opacity 
 // neither literally `light` nor `dark`, so appearance-sensitive values must also be
 // represented as semantic variables for custom themes.
 const ADAPTIVE_COLORS: Readonly<Record<string, readonly [light: string, dark: string]>> = {
+  // Granola's palette ("oats"), the same values as Roost's web Meetings pages
+  // (apps/web/src/index.css .meetings-surface). The phone's home, meetings and
+  // chats pages are drawn in it; see src/design/README.md.
+  "--color-gr-surface": ["#f7f7f2", "#292929"],
+  "--color-gr-sunken": ["#f2f2ec", "#212121"],
+  "--color-gr-raised": ["#ffffff", "#313130"],
+  "--color-gr-ink": ["#292929", "#fcfcf8"],
+  "--color-gr-ink-2": ["#72726e", "#9e9e99"],
+  "--color-gr-ink-2-strong": ["#4e4d4b", "#c9c9c3"],
+  "--color-gr-ink-3": ["#a3a39b", "#7e7e79"],
+  "--color-gr-hairline": ["rgb(71 67 42 / 16%)", "rgb(255 255 255 / 14%)"],
+  "--color-gr-hover": ["rgb(98 90 34 / 7%)", "rgb(255 255 255 / 6%)"],
+  "--color-gr-accent": ["#5b6f00", "#9db531"],
+  "--color-gr-accent-tint": ["#e5eacd", "#3a4220"],
+  "--color-gr-bars": ["#74bd00", "#74bd00"],
+  "--color-gr-danger": ["#bd4a30", "#e07a5f"],
+  "--color-gr-danger-tint": ["#f6e3dc", "#45302a"],
+  "--color-gr-attention": ["#a5670a", "#e0a44a"],
+  "--color-gr-attention-tint": ["#f8ecd6", "#4a3a1f"],
+  "--color-gr-event": ["#8fd3e8", "#5fa9c0"],
+  "--color-gr-bubble-them": ["#f0f0eb", "#3a3a38"],
+  "--color-gr-bubble-me": ["#dde5b8", "#46512a"],
+  "--color-gr-button": ["#292929", "#fcfcf8"],
+  "--color-gr-button-ink": ["#ffffff", "#292929"],
+  "--color-gr-tile-ink": ["#4e4d4b", "#4e4d4b"],
   "--color-adaptive-amber-50-950-a40": [color("amber", 50), color("amber", 950, 0.4)],
   "--color-adaptive-amber-200-900-a60": [color("amber", 200), color("amber", 900, 0.6)],
   "--color-adaptive-amber-500-a12-a16": [color("amber", 500, 0.12), color("amber", 500, 0.16)],

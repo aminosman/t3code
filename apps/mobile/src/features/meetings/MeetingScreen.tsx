@@ -8,7 +8,7 @@ import { AppText as Text } from "../../components/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { SERIF_FONT } from "../home/HomeDock";
+import { GrChip, SERIF } from "../../design/granola";
 import { meetingDayLabel, meetingTime, parseMeetingNotes } from "./meeting-notes";
 
 type MeetingScreenProps = StaticScreenProps<{
@@ -17,14 +17,6 @@ type MeetingScreenProps = StaticScreenProps<{
 }>;
 
 type View_ = "notes" | "mine" | "transcript";
-
-function Chip(props: { readonly children: string }) {
-  return (
-    <View className="rounded-full border border-border px-2.5 py-1">
-      <Text className="text-2xs text-foreground-secondary">{props.children}</Text>
-    </View>
-  );
-}
 
 /**
  * One meeting: its notes as Granola draws them (a grey "#" before each
@@ -76,7 +68,7 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
   ];
 
   return (
-    <View className="flex-1 bg-screen">
+    <View className="flex-1 bg-gr-surface">
       <NativeStackScreenOptions options={{ title: "" }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
@@ -86,19 +78,22 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
           <>
             {live ? (
               <View className="mt-1 flex-row items-center gap-1.5">
-                <View className="size-2 rounded-full bg-danger-foreground" />
-                <Text className="text-2xs text-adaptive-red-700-300">Recording on the Mac</Text>
+                <View className="size-2 rounded-full bg-gr-danger" />
+                <Text className="text-2xs text-gr-danger">Recording on the Mac</Text>
               </View>
             ) : null}
-            <Text className="mt-2 text-[28px] leading-[34px]" style={{ fontFamily: SERIF_FONT }}>
+            <Text
+              className="mt-2 text-[28px] leading-[34px] text-gr-ink"
+              style={{ fontFamily: SERIF }}
+            >
               {meeting.title}
             </Text>
             <View className="mt-3 flex-row flex-wrap gap-1.5">
               {chips.map((chip) => (
-                <Chip key={chip}>{chip}</Chip>
+                <GrChip key={chip}>{chip}</GrChip>
               ))}
             </View>
-            <View className="mt-5 flex-row gap-1 self-start rounded-full bg-subtle p-[3px]">
+            <View className="mt-5 flex-row gap-1 self-start rounded-full bg-gr-sunken p-[3px]">
               {views.map((option) => (
                 <Pressable
                   key={option.key}
@@ -107,15 +102,13 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
                   onPress={() => setView(option.key)}
                   className={
                     view === option.key
-                      ? "rounded-full bg-card px-3 py-1.5"
+                      ? "rounded-full bg-gr-raised px-3 py-1.5"
                       : "rounded-full px-3 py-1.5"
                   }
                 >
                   <Text
                     className={
-                      view === option.key
-                        ? "font-t3-medium text-xs"
-                        : "text-xs text-foreground-muted"
+                      view === option.key ? "font-t3-medium text-xs" : "text-xs text-gr-ink-2"
                     }
                   >
                     {option.label}
@@ -126,7 +119,7 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
 
             {view === "notes" ? (
               blocks.length === 0 ? (
-                <Text className="mt-6 text-sm text-foreground-muted">
+                <Text className="mt-6 text-sm text-gr-ink-2">
                   {live
                     ? "Notes appear as the meeting goes."
                     : "No notes were written for this meeting."}
@@ -136,13 +129,10 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
                   {blocks.map((block) =>
                     block.kind === "heading" ? (
                       <View key={block.id} className="mt-4 flex-row gap-2">
-                        <Text
-                          className="text-[19px] text-foreground-tertiary"
-                          style={{ fontFamily: SERIF_FONT }}
-                        >
+                        <Text className="text-[19px] text-gr-ink-3" style={{ fontFamily: SERIF }}>
                           #
                         </Text>
-                        <Text className="flex-1 text-[19px]" style={{ fontFamily: SERIF_FONT }}>
+                        <Text className="flex-1 text-[19px]" style={{ fontFamily: SERIF }}>
                           {block.text}
                         </Text>
                       </View>
@@ -152,17 +142,15 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
                         className="flex-row gap-2"
                         style={{ paddingLeft: 4 + block.depth * 16 }}
                       >
-                        <Text className="text-[15px] leading-[22px] text-foreground-tertiary">
-                          •
-                        </Text>
-                        <Text className="flex-1 text-[15px] leading-[22px] text-foreground-secondary">
+                        <Text className="text-[15px] leading-[22px] text-gr-ink-3">•</Text>
+                        <Text className="flex-1 text-[15px] leading-[22px] text-gr-ink-2-strong">
                           {block.text}
                         </Text>
                       </View>
                     ) : (
                       <Text
                         key={block.id}
-                        className="text-[15px] leading-[22px] text-foreground-secondary"
+                        className="text-[15px] leading-[22px] text-gr-ink-2-strong"
                       >
                         {block.text}
                       </Text>
@@ -177,7 +165,7 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
             ) : (
               <View className="mt-5 gap-1.5">
                 {(data?.lines ?? []).length === 0 ? (
-                  <Text className="text-sm text-foreground-muted">No transcript was kept.</Text>
+                  <Text className="text-sm text-gr-ink-2">No transcript was kept.</Text>
                 ) : null}
                 {(data?.lines ?? []).map((line, index, lines) => {
                   const mine = line.speaker === "me";
@@ -189,7 +177,7 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
                       style={{ marginTop: turn ? 8 : 0 }}
                     >
                       {turn ? (
-                        <Text className="mb-0.5 px-1 text-3xs text-foreground-tertiary">
+                        <Text className="mb-0.5 px-1 text-3xs text-gr-ink-3">
                           {mine ? "Me" : line.speaker === "them" ? "Them" : line.speaker} ·{" "}
                           {line.at}
                         </Text>
@@ -197,8 +185,8 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
                       <View
                         className={
                           mine
-                            ? "max-w-[86%] rounded-2xl bg-adaptive-emerald-500-a12-a16 px-3 py-2"
-                            : "max-w-[86%] rounded-2xl bg-subtle px-3 py-2"
+                            ? "max-w-[86%] rounded-2xl bg-gr-bubble-me px-3 py-2"
+                            : "max-w-[86%] rounded-2xl bg-gr-sunken px-3 py-2"
                         }
                       >
                         <Text className="text-sm leading-[20px]">{line.text}</Text>
@@ -210,7 +198,7 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
             )}
           </>
         ) : (
-          <Text className="mt-10 text-center text-sm text-foreground-muted">
+          <Text className="mt-10 text-center text-sm text-gr-ink-2">
             {query.error ? "Could not load this meeting from the Mac." : "Loading…"}
           </Text>
         )}

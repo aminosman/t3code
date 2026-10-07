@@ -2,7 +2,7 @@ import { Pressable, View } from "react-native";
 import Animated, { type SharedValue, useAnimatedStyle } from "react-native-reanimated";
 
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { GlassSurface } from "../../components/GlassSurface";
+import { FLOAT_SHADOW } from "../../design/granola";
 
 export type HomeTab = "meetings" | "home" | "chats";
 
@@ -47,14 +47,14 @@ export function HomeTabs(props: {
     transform: [{ translateX: Math.min(2, Math.max(0, props.position.value)) * TAB_WIDTH }],
   }));
   return (
-    <GlassSurface
-      className="overflow-hidden rounded-full border border-border p-[3px]"
-      fallbackClassName="bg-card"
+    <View
+      className="rounded-full border border-gr-hairline bg-gr-raised p-[3px]"
+      style={FLOAT_SHADOW}
     >
       <View className="flex-row">
         <Animated.View
           pointerEvents="none"
-          className="absolute top-0 left-0 h-7 rounded-full bg-foreground"
+          className="absolute top-0 left-0 h-7 rounded-full bg-gr-button"
           style={[{ width: TAB_WIDTH }, highlight]}
         />
         {TABS.map(({ tab, icon, label }) => {
@@ -74,14 +74,14 @@ export function HomeTabs(props: {
               <SymbolView
                 name={icon}
                 size={16}
-                tintColorClassName={active ? "accent-screen" : "accent-icon-muted"}
+                tintColorClassName={active ? "accent-gr-button-ink" : "accent-gr-ink-2"}
               />
               {badge ? (
                 <View
                   className={
                     badge === "live"
-                      ? "absolute top-1 right-2 size-1.5 rounded-full bg-danger-foreground"
-                      : "absolute top-1 right-2 size-1.5 rounded-full bg-warning-foreground"
+                      ? "absolute top-1 right-2 size-1.5 rounded-full bg-gr-danger"
+                      : "absolute top-1 right-2 size-1.5 rounded-full bg-gr-attention"
                   }
                 />
               ) : null}
@@ -89,6 +89,6 @@ export function HomeTabs(props: {
           );
         })}
       </View>
-    </GlassSurface>
+    </View>
   );
 }

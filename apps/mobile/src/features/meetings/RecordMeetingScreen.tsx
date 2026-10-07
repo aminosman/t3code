@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { normalizeVoiceInputDecibels } from "../voice-input/voiceInputMetering";
-import { SERIF_FONT } from "../home/HomeDock";
+import { GrChip, GUTTER, RADIUS, SERIF } from "../../design/granola";
 import {
   clockTime,
   defaultMeetingTitle,
@@ -170,16 +170,16 @@ export function RecordMeetingScreen({ route }: RecordMeetingScreenProps) {
   ];
 
   return (
-    <View className="flex-1 bg-screen" style={{ paddingTop: insets.top + 8 }}>
+    <View className="flex-1 bg-gr-surface" style={{ paddingTop: insets.top + 8 }}>
       <NativeStackScreenOptions options={{ headerShown: false, gestureEnabled: false }} />
-      <View className="flex-row items-center justify-between px-4">
+      <View className="flex-row items-center justify-between" style={{ paddingHorizontal: GUTTER }}>
         <Pressable
           accessibilityRole="button"
           onPress={phase === "failed" ? () => navigation.goBack() : discard}
           hitSlop={10}
-          className="rounded-full bg-subtle px-3 py-1.5"
+          className="rounded-full bg-gr-sunken px-3 py-1.5"
         >
-          <Text className="text-xs text-foreground-secondary">
+          <Text className="text-xs text-gr-ink-2-strong">
             {phase === "failed" ? "Close" : "Discard"}
           </Text>
         </Pressable>
@@ -187,11 +187,11 @@ export function RecordMeetingScreen({ route }: RecordMeetingScreenProps) {
           <View
             className={
               phase === "recording"
-                ? "size-2 rounded-full bg-danger-foreground"
-                : "size-2 rounded-full bg-foreground-tertiary"
+                ? "size-2 rounded-full bg-gr-danger"
+                : "size-2 rounded-full bg-gr-button-tertiary"
             }
           />
-          <Text className="text-2xs text-foreground-muted">
+          <Text className="text-2xs text-gr-ink-2">
             {phase === "recording"
               ? "Recording on this phone"
               : phase === "saving"
@@ -204,56 +204,61 @@ export function RecordMeetingScreen({ route }: RecordMeetingScreenProps) {
         <View className="w-16" />
       </View>
 
-      <View className="flex-1 px-5 pt-4">
+      <View className="flex-1" style={{ paddingHorizontal: GUTTER, paddingTop: 16 }}>
         <TextInput
           accessibilityLabel="Meeting title"
-          className="text-[28px] leading-[34px] text-foreground"
-          style={{ fontFamily: SERIF_FONT }}
+          className="text-[28px] leading-[34px] text-gr-ink"
+          style={{ fontFamily: SERIF }}
           value={title}
           onChangeText={setTitle}
           returnKeyType="done"
-          cursorColorClassName="accent-focus"
+          cursorColorClassName="accent-gr-accent"
         />
         <View className="mt-3 flex-row flex-wrap gap-1.5">
           {chips.map((chip) => (
-            <View key={chip} className="rounded-full border border-border px-2.5 py-1">
-              <Text className="text-2xs text-foreground-secondary">{chip}</Text>
-            </View>
+            <GrChip key={chip}>{chip}</GrChip>
           ))}
         </View>
         <TextInput
           accessibilityLabel="Your notes"
-          className="mt-5 flex-1 font-sans text-[16px] leading-6 text-foreground"
+          className="mt-5 flex-1 font-sans text-[16px] leading-6 text-gr-ink"
           style={{ textAlignVertical: "top" }}
           multiline
           placeholder="Type your notes. They are kept with the recording, in your words."
-          placeholderTextColorClassName="accent-placeholder"
-          cursorColorClassName="accent-focus"
+          placeholderTextColorClassName="accent-gr-ink-3"
+          cursorColorClassName="accent-gr-accent"
           value={notes}
           onChangeText={setNotes}
         />
-        {problem ? <Text className="pb-3 text-sm text-danger-foreground">{problem}</Text> : null}
+        {problem ? <Text className="pb-3 text-sm text-gr-danger">{problem}</Text> : null}
       </View>
 
       <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom - 8 }}>
         <View
-          className="mx-3 flex-row items-center gap-3 rounded-full bg-foreground py-2 pr-2 pl-5"
-          style={{ marginBottom: Math.max(12, insets.bottom) }}
+          className="flex-row items-center gap-3 bg-gr-button py-2 pr-2 pl-5"
+          style={{
+            marginHorizontal: GUTTER,
+            borderRadius: RADIUS.panel,
+            marginBottom: Math.max(12, insets.bottom),
+          }}
         >
           <View className="h-5 flex-row items-center gap-[3px]">
             {BAR_KEYS.map((key, slot) => (
               <View
                 key={key}
-                className="w-[3px] rounded-full"
+                className={
+                  phase === "recording"
+                    ? "w-[3px] rounded-full bg-gr-bars"
+                    : "w-[3px] rounded-full bg-gr-ink-3"
+                }
                 style={{
                   height: 4 + (levels[slot] ?? 0) * 16,
-                  backgroundColor: phase === "recording" ? "#74BD00" : "#888888",
                 }}
               />
             ))}
           </View>
           <Text
-            className="font-t3-medium text-[15px] text-screen"
+            className="font-t3-medium text-[15px] text-gr-button-ink"
             style={{ fontVariant: ["tabular-nums"] }}
           >
             {clockTime(seconds)}
@@ -264,7 +269,7 @@ export function RecordMeetingScreen({ route }: RecordMeetingScreenProps) {
             accessibilityLabel="Stop and save"
             disabled={phase !== "recording"}
             onPress={() => void stop()}
-            className="size-11 items-center justify-center rounded-full bg-danger-foreground"
+            className="size-11 items-center justify-center rounded-full bg-gr-danger"
             style={{ opacity: phase === "recording" ? 1 : 0.5 }}
           >
             <View className="size-3.5 rounded-[3px] bg-white" />
