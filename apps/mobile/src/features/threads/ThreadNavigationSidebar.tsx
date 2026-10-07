@@ -27,7 +27,8 @@ import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
-import { useProjects, useNavigationThreadShells } from "../../state/entities";
+import { useProjects, useThreadShells } from "../../state/entities";
+import { useThreadSortOrder } from "./use-thread-sort-order";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
@@ -159,7 +160,9 @@ function ThreadNavigationSidebarPane(
   const insets = useSafeAreaInsets();
   const { fabClearance } = useAndroidControlSizing();
   const projects = useProjects();
-  const threads = useNavigationThreadShells();
+  // Every thread, owned ones included: they nest under their owner, as on the desktop.
+  const threads = useThreadShells();
+  const [sortOrder] = useThreadSortOrder();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const searchInputRef = useRef<TextInputInstance>(null);
@@ -503,8 +506,13 @@ function ThreadNavigationSidebarPane(
       snoozedShelfExpanded,
       settledShelfExpanded,
       selectedThreadKey: props.selectedThreadKey ?? null,
+      sortOrder,
+      nestOwnedThreads: true,
+      ownedExpandedByThreadId,
     });
   }, [
+    sortOrder,
+    ownedExpandedByThreadId,
     pendingOrder,
     queuedThreadKeys,
     nowMinute,
@@ -915,6 +923,10 @@ function ThreadNavigationSidebarPane(
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
               simultaneousSwipeGesture={sidebarScrollGesture}
+              ownedDepth={item.item.ownedDepth}
+              ownedChildCount={item.item.ownedChildCount}
+              ownedExpanded={item.item.ownedExpanded}
+              onToggleOwnedThreads={toggleOwnedThreads}
             />
           );
         }

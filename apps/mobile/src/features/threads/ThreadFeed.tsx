@@ -663,6 +663,18 @@ const ThreadMediaVisibleContext = createContext(false);
 // LegendList only computes hook visibility when the list has a viewability config.
 const THREAD_MEDIA_VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 0 };
 
+// Module-level so a keystroke's re-render hands the list the same functions.
+function threadFeedEntryKey(entry: { readonly id: string }): string {
+  return entry.id;
+}
+
+function threadFeedEntryType(entry: {
+  readonly type: string;
+  readonly message?: { readonly role: string };
+}): string {
+  return entry.type === "message" && entry.message ? `message:${entry.message.role}` : entry.type;
+}
+
 function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
   const [visible, setVisible] = useState(false);
   useViewabilityAmount<ThreadFeedEntry>(
@@ -2636,7 +2648,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // The thinking row a running thread shows while its messages load is not
   // content: the list must still remount, and so open at the end, when they
   // arrive.
-  const listMountKey = `${feedThreadKey}:${presentedFeed.some((entry) => entry.type !== "thinking") ? "filled" : "empty"}`;
+  // Once a thread's list has shown content it stays mounted: a feed that
+  // dips back to empty or to just the thinking row (a reconnect, a history
+  // window swap) must not remount the list, which opens at the top.
+  const feedHasContent = presentedFeed.some((entry) => entry.type !== "thinking");
+  const [filledFeedKey, setFilledFeedKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (feedHasContent) setFilledFeedKey(feedThreadKey);
+  }, [feedHasContent, feedThreadKey]);
+  const listMountKey = `${feedThreadKey}:${feedHasContent || filledFeedKey === feedThreadKey ? "filled" : "empty"}`;
   useLayoutEffect(() => {
     const bottom = props.contentInsetEndAdjustment.value;
     if (bottom > 0) {
@@ -3072,10 +3092,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             extraData={listAppearanceData}
             renderItem={renderItem}
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
-            keyExtractor={(entry) => entry.id}
-            getItemType={(entry) =>
-              entry.type === "message" ? `message:${entry.message.role}` : entry.type
-            }
+            keyExtractor={threadFeedEntryKey}
+            getItemType={threadFeedEntryType}
             getFixedItemSize={getFixedItemSize}
             // Virtualized rows must move with their measurements. Native layout
             // transitions can retain stale positions during sync, even at duration 0.

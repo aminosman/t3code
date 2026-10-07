@@ -2,12 +2,16 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Platform, useWindowDimensions, View } from "react-native";
+import { Platform, useWindowDimensions } from "react-native";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { useProjects, useNavigationThreadShells } from "../../state/entities";
+import { useAtomSet } from "@effect/atom-react";
+import { useProjects, useThreadShells } from "../../state/entities";
+import { updateMobilePreferencesAtom } from "../../state/preferences";
+import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
+import { groupedThreadSortOrder, useThreadSortOrder } from "../threads/use-thread-sort-order";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -35,7 +39,17 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
   const { width: windowWidth } = useWindowDimensions();
   const { layout, panes } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
-  const threads = useNavigationThreadShells();
+  // Every thread, owned ones included: both layouts nest them under their
+  // owner, as the desktop sidebar does.
+  const allThreads = useThreadShells();
+  const threads = useMemo(
+    () => allThreads.filter((thread) => thread.archivedAt === null),
+    [allThreads],
+  );
+  const [sortOrder, setSortOrder] = useThreadSortOrder();
+  const groupedSort = groupedThreadSortOrder(sortOrder);
+  const flatLayout = useThreadListV2Enabled();
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
@@ -92,12 +106,8 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
   );
-  const {
-    options: listOptions,
-    setSelectedEnvironmentId,
-    setProjectSortOrder,
-    setThreadSortOrder,
-  } = useHomeListOptions(availableEnvironmentIds);
+  const { options: listOptions, setSelectedEnvironmentId } =
+    useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const projectFilterOptions = useMemo(
@@ -193,7 +203,7 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
           params: { screen: "Settings" },
         })
       }
-      onProjectSortOrderChange={setProjectSortOrder}
+      onProjectSortOrderChange={setSortOrder}
       onSearchQueryChange={setSearchQuery}
       onSelectThread={handleSelectThread}
       onSelectPendingTask={openPendingTask}
@@ -210,17 +220,18 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
         });
       }}
       onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-      onThreadSortOrderChange={setThreadSortOrder}
+      onThreadSortOrderChange={setSortOrder}
       pendingTasks={pendingTasks}
       projectGroupingMode={listOptions.projectGroupingMode}
       projects={projects}
-      projectSortOrder={listOptions.projectSortOrder}
+      projectSortOrder={groupedSort}
       savedConnectionsById={savedConnectionsById}
       searchQuery={searchQuery}
       selectedEnvironmentId={selectedEnvironmentId}
       selectedProjectKey={selectedProjectKey}
       threads={threads}
-      threadSortOrder={listOptions.threadSortOrder}
+      v2SortOrder={sortOrder}
+      threadSortOrder={groupedSort}
     />
   );
 
@@ -241,6 +252,12 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
               onSearchQueryChange={setSearchQuery}
               onStartNewTask={startNewTask}
               onOpenSettings={openSettings}
+              layout={flatLayout ? "recent" : "projects"}
+              onLayoutChange={(layout) =>
+                savePreferences({ legacyThreadListEnabled: layout === "projects" })
+              }
+              sortOrder={sortOrder}
+              onSortOrderChange={setSortOrder}
             />
           }
         >
@@ -280,8 +297,8 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
           searchQuery={searchQuery}
           selectedEnvironmentId={selectedEnvironmentId}
           selectedProjectKey={selectedProjectKey}
-          projectSortOrder={listOptions.projectSortOrder}
-          threadSortOrder={listOptions.threadSortOrder}
+          projectSortOrder={groupedSort}
+          threadSortOrder={groupedSort}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
           onOpenEnvironments={() =>
@@ -296,11 +313,11 @@ export function ChatsRouteScreen(props: { readonly embedded?: boolean } = {}) {
               params: { screen: "Settings" },
             })
           }
-          onProjectSortOrderChange={setProjectSortOrder}
+          onProjectSortOrderChange={setSortOrder}
           onSearchQueryChange={setSearchQuery}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
           onOpenTui={() => navigation.navigate("TuiInbox", undefined)}
-          onThreadSortOrderChange={setThreadSortOrder}
+          onThreadSortOrderChange={setSortOrder}
         />
 
         {renderList()}

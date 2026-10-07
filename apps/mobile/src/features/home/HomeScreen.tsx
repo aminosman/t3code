@@ -71,6 +71,7 @@ import {
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
+  type ThreadListV2SortOrder,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
@@ -97,6 +98,8 @@ import { useMaterialFabScroll } from "./MaterialFabScrollContext";
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
 interface HomeScreenProps {
+  /** Order of the flat list's active block; absent keeps the saved hand order. */
+  readonly v2SortOrder?: ThreadListV2SortOrder;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -754,6 +757,9 @@ export function HomeScreen(props: HomeScreenProps) {
       snoozedShelfExpanded,
       settledShelfExpanded,
       selectedThreadKey: null,
+      sortOrder: props.v2SortOrder ?? "manual",
+      nestOwnedThreads: true,
+      ownedExpandedByThreadId,
     });
   }, [
     pendingOrder,
@@ -771,6 +777,8 @@ export function HomeScreen(props: HomeScreenProps) {
     matchedThreadKeys,
     threadListV2Enabled,
     v2ScopedProjectGroup,
+    props.v2SortOrder,
+    ownedExpandedByThreadId,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -820,7 +828,9 @@ export function HomeScreen(props: HomeScreenProps) {
         snoozeLabelNow: `${nowMinute}:00.000Z`,
         snoozeEnvironmentIds,
         queuedThreadKeys,
-        moveAvailability: threadMoveAvailability,
+        // Move up/down only mean something in the hand-kept order.
+        moveAvailability:
+          (props.v2SortOrder ?? "manual") === "manual" ? threadMoveAvailability : undefined,
         shelfPreferencesLoading: !shelfPreferencesLoaded,
       }),
     [
@@ -952,10 +962,15 @@ export function HomeScreen(props: HomeScreenProps) {
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
           activationKey={item.key}
+          ownedDepth={item.item.ownedDepth}
+          ownedChildCount={item.item.ownedChildCount}
+          ownedExpanded={item.item.ownedExpanded}
+          onToggleOwnedThreads={toggleOwnedThreads}
         />
       );
     },
     [
+      toggleOwnedThreads,
       handleDeleteThread,
       activeReorderEnvironmentIds,
       handleMoveThread,
