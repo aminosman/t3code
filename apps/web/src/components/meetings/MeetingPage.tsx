@@ -14,12 +14,13 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { MeetingChat } from "./MeetingChat";
+import { MeetingThreads } from "./MeetingThreads";
 import { RecordingControls } from "./RecordingControls";
 import { parseMeetingNotes, peopleLine, type MeetingNotesDocument } from "./meetingNotes";
 import { AskBar, Bars, meetingDate } from "./MeetingsParts";
 import { useMeetings } from "./useMeetings";
 
-type View = "notes" | "mine" | "transcript";
+type View = "notes" | "mine" | "transcript" | "threads";
 
 function Chip({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
@@ -224,6 +225,12 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
               : null}
             {segment("mine", "My notes")}
             {segment("transcript", "Transcript")}
+            {meeting?.threads && meeting.threads.length > 0
+              ? segment(
+                  "threads",
+                  `Threads ${new Set(meeting.threads.map((thread) => thread.threadId)).size}`,
+                )
+              : null}
           </div>
           {chatOpen || chatThreadId === null ? (
             <span className="w-[86px]" />
@@ -331,6 +338,9 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
                 </div>
               ) : null}
               {shown === "transcript" ? <Transcript lines={meeting.lines} /> : null}
+              {shown === "threads" && environmentId !== null ? (
+                <MeetingThreads environmentId={environmentId} threads={meeting.threads ?? []} />
+              ) : null}
             </>
           ) : null}
         </article>

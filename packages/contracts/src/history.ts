@@ -144,6 +144,19 @@ export const HistoryMeetingReadOutput = Schema.Struct({
     }),
   ),
   lines: Schema.Array(HistoryTranscriptLine),
+  /** Threads the meeting started or sent work to: tui's threads.json. */
+  threads: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        threadId: Schema.String,
+        title: Schema.String,
+        project: Schema.String,
+        action: Schema.Literals(["started", "sent"]),
+        request: Schema.String,
+        at: Schema.String,
+      }),
+    ),
+  ),
   hasEarlier: Schema.Boolean,
   hasLater: Schema.Boolean,
   notesPath: Schema.String,

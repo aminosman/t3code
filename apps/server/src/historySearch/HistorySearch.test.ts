@@ -446,6 +446,19 @@ layer("HistorySearch", (it) => {
         whole?.lines.map((line) => line.at),
         ["8:51", "9:40", "12:37", "31:02"],
       );
+      // The threads the meeting reached, for its Threads tab.
+      assert.deepStrictEqual(whole?.threads, []);
+      const threadsPath = NodePath.join(meetingsDir, "2026.09.21-1330", "threads.json");
+      NodeFS.writeFileSync(
+        threadsPath,
+        '[{"threadId":"t-1","title":"Plaid pricing","project":"ficra","action":"started","request":"look into the Plaid pricing","at":"2026-09-21T13:40:00Z"}]',
+      );
+      const withThreads = yield* search.readMeeting({ meetingId: "2026.09.21-1330", whole: true });
+      assert.deepStrictEqual(
+        withThreads?.threads?.map((thread) => [thread.threadId, thread.action]),
+        [["t-1", "started"]],
+      );
+      NodeFS.rmSync(threadsPath);
       // Only into a meeting that exists, and never outside the folder.
       const refused = yield* search
         .writeMyNotes({ meetingId: "../escape", text: "x" })

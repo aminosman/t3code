@@ -192,6 +192,20 @@ export interface ThreadMessagesOutput {
   readonly hasNewer: boolean;
 }
 
+/** A thread the meeting started or sent work to (tui's threads.json). */
+const MeetingThreadSchema = Schema.Struct({
+  threadId: Schema.String,
+  title: Schema.String,
+  project: Schema.String,
+  action: Schema.Literals(["started", "sent"]),
+  request: Schema.String,
+  at: Schema.String,
+});
+export type MeetingThread = typeof MeetingThreadSchema.Type;
+const decodeMeetingThreads = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(MeetingThreadSchema)),
+);
+
 /** meta.json's `ended`: when tui stopped recording the meeting. */
 const decodeMeetingEnded = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ ended: Schema.optional(Schema.String) })),
@@ -236,6 +250,7 @@ export interface MeetingReadOutput {
     readonly requests: ReadonlyArray<string>;
   } | null;
   readonly lines: ReadonlyArray<Meetings.TranscriptLine>;
+  readonly threads?: ReadonlyArray<MeetingThread>;
   readonly hasEarlier: boolean;
   readonly hasLater: boolean;
   readonly notesPath: string;
@@ -1587,6 +1602,11 @@ const make = (options: HistorySearchOptions) =>
           chatThreadId === null ? summary : { ...summary, chatThreadId },
         ),
       );
+    const readThreads = (id: string) =>
+      fs.readFileString(path.join(meetingsDir, id, "threads.json")).pipe(
+        Effect.flatMap(decodeMeetingThreads),
+        Effect.orElseSucceed((): ReadonlyArray<MeetingThread> => []),
+      );
     const readTuiHeard = (id: string) =>
       fs.readFileString(path.join(meetingsDir, id, "live-actions.json")).pipe(
         Effect.map((text) => {
@@ -1663,6 +1683,7 @@ const make = (options: HistorySearchOptions) =>
             myNotes,
             tuiHeard,
             lines: meeting.lines,
+            threads: yield* readThreads(meeting.id),
             hasEarlier: false,
             hasLater: false,
             ...paths,
