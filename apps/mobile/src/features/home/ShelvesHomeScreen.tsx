@@ -38,6 +38,7 @@ import { tabsFootprint, type HomeTab } from "./HomeTabs";
 import {
   buildShelves,
   SHELF_ORDER,
+  shelfNeedsUser,
   shelfPreview,
   shelfStateLabel,
   shortAgo,
@@ -51,24 +52,24 @@ const CARD_WIDTH = 232;
 const CARD_HEIGHT = 136;
 const CARD_GAP = SPACE.md;
 
-const SHELF_TITLES: Record<ShelfKind, string> = {
-  needs: "Needs you",
-  working: "Working",
-  done: "Done",
-  failed: "Failed",
-  stopped: "Stopped",
-};
+// A row is titled by its status, in the desktop's words.
+const SHELF_TITLES: Record<ShelfKind, string> = Object.fromEntries(
+  SHELF_ORDER.map((kind) => [kind, shelfStateLabel(kind)]),
+) as Record<ShelfKind, string>;
 
 /** Status colours, from the design system: see src/design/README.md. */
 const STATE_TONE: Record<ShelfCardState, { text: string; dot: string }> = {
-  working: { text: "text-gr-accent", dot: "bg-gr-accent" },
-  connecting: { text: "text-gr-accent", dot: "bg-gr-accent" },
-  done: { text: "text-gr-ink-3", dot: "bg-gr-ink-3" },
   "needs-approval": { text: "text-gr-attention", dot: "bg-gr-attention" },
   "needs-input": { text: "text-gr-attention", dot: "bg-gr-attention" },
+  working: { text: "text-gr-accent", dot: "bg-gr-accent" },
+  connecting: { text: "text-gr-accent", dot: "bg-gr-accent" },
+  waiting: { text: "text-gr-ink-2", dot: "bg-gr-ink-2" },
   "plan-ready": { text: "text-gr-attention", dot: "bg-gr-attention" },
+  completed: { text: "text-gr-accent", dot: "bg-gr-accent" },
   error: { text: "text-gr-danger", dot: "bg-gr-danger" },
+  limited: { text: "text-gr-danger", dot: "bg-gr-danger" },
   stopped: { text: "text-gr-ink-3", dot: "bg-gr-ink-3" },
+  done: { text: "text-gr-ink-3", dot: "bg-gr-ink-3" },
   new: { text: "text-gr-ink-3", dot: "bg-gr-ink-3" },
 };
 
@@ -281,7 +282,7 @@ export function useHomeData() {
         : null,
     ).data?.meetings ?? [];
   const liveMeeting = meetings.find((meeting) => meeting.live) ?? null;
-  const needsYou = shelves.needs.length > 0;
+  const needsYou = SHELF_ORDER.some((kind) => shelfNeedsUser(kind) && shelves[kind].length > 0);
   return {
     now,
     shelves,

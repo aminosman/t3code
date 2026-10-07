@@ -1,32 +1,49 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+
+import { threadHasUnseenCompletion } from "../threads/threadListV2";
 
 /**
- * The home screen's shelves, one per status: what needs the user, what is
- * working, what is done, what failed and what stopped. Each thread lands on
- * exactly one shelf; subagent threads never get a card of their own and are
+ * The home screen's rows: one per status, in the desktop sidebar's words and
+ * order (resolveThreadStatusPill in apps/web Sidebar.logic.ts) — Pending
+ * approval, Awaiting input, Working, Connecting, Waiting, Plan ready,
+ * Completed — then what the desktop leaves without a pill, split the same
+ * way: Failed, Usage limit, Stopped, Done, Not started. Each thread lands on
+ * exactly one row; subagent threads never get a card of their own and are
  * counted on the thread that started them.
  */
-export type ShelfKind = "needs" | "working" | "done" | "failed" | "stopped";
-
-export const SHELF_ORDER: ReadonlyArray<ShelfKind> = [
-  "needs",
-  "working",
-  "done",
-  "failed",
-  "stopped",
-];
-
 export type ShelfCardState =
-  | "working"
-  | "connecting"
-  | "done"
   | "needs-approval"
   | "needs-input"
+  | "working"
+  | "connecting"
+  | "waiting"
   | "plan-ready"
+  | "completed"
   | "error"
+  | "limited"
   | "stopped"
+  | "done"
   | "new";
+
+/** A row is a status. */
+export type ShelfKind = ShelfCardState;
+
+export const SHELF_ORDER: ReadonlyArray<ShelfKind> = [
+  "needs-approval",
+  "needs-input",
+  "working",
+  "connecting",
+  "waiting",
+  "plan-ready",
+  "completed",
+  "error",
+  "limited",
+  "stopped",
+  "done",
+  "new",
+];
 
 export interface ShelfCard {
   readonly thread: EnvironmentThreadShell;
@@ -61,33 +78,28 @@ export function shelfCardState(thread: EnvironmentThreadShell): ShelfCardState {
   const status = thread.runtime?.status;
   if (status === "running" || status === "waiting") return "working";
   if (status === "preparing" || status === "starting" || status === "queued") return "connecting";
-  if (threadRuntimeIsActive(thread.runtime)) return "working";
-  if (status === "failed" || thread.latestRun?.status === "failed") return "error";
-  if (thread.interactionMode === "plan" && thread.hasActionableProposedPlan) return "plan-ready";
+  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return "waiting";
+  if (
+    thread.interactionMode === "plan" &&
+    thread.hasActionableProposedPlan &&
+    !threadRuntimeIsActive(thread.runtime)
+  ) {
+    return "plan-ready";
+  }
+  if (threadHasUnseenCompletion(thread)) return "completed";
+  if (status === "failed") {
+    return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "error";
+  }
+  if (thread.latestRun?.status === "failed") return "error";
   const run = thread.latestRun?.status;
-  if (run === "completed") return "done";
   if (run === "interrupted" || run === "cancelled" || run === "rolled_back") return "stopped";
   if (thread.latestRun === null) return "new";
   return "done";
 }
 
-export function shelfOf(state: ShelfCardState): ShelfKind {
-  switch (state) {
-    case "needs-approval":
-    case "needs-input":
-    case "plan-ready":
-      return "needs";
-    case "working":
-    case "connecting":
-      return "working";
-    case "done":
-      return "done";
-    case "error":
-      return "failed";
-    case "stopped":
-    case "new":
-      return "stopped";
-  }
+/** The rows that ask something of the user, for the Chats tab's dot. */
+export function shelfNeedsUser(kind: ShelfKind): boolean {
+  return kind === "needs-approval" || kind === "needs-input" || kind === "plan-ready";
 }
 
 function activityAt(thread: EnvironmentThreadShell): string {
@@ -138,25 +150,19 @@ export function buildShelves(
     if (root === thread) continue;
     const entry = agents.get(threadKey(root)) ?? { count: 0, working: 0 };
     entry.count += 1;
-    if (shelfOf(shelfCardState(thread)) === "working") entry.working += 1;
+    const childState = shelfCardState(thread);
+    if (childState === "working" || childState === "connecting") entry.working += 1;
     agents.set(threadKey(root), entry);
   }
 
-  const shelves: Record<ShelfKind, ShelfCard[]> = {
-    needs: [],
-    working: [],
-    done: [],
-    failed: [],
-    stopped: [],
-  };
+  const shelves = Object.fromEntries(
+    SHELF_ORDER.map((kind) => [kind, [] as ShelfCard[]]),
+  ) as Record<ShelfKind, ShelfCard[]>;
   for (const thread of threads) {
     if (isSubagent(thread) || thread.archivedAt !== null || thread.deletedAt !== null) continue;
     if (isSnoozed(thread, now)) continue;
-    const ownState = shelfCardState(thread);
+    const state = shelfCardState(thread);
     const team = agents.get(threadKey(thread));
-    // A thread whose agents are still at work is working, whatever its own turn says.
-    const state: ShelfCardState =
-      ownState === "done" && (team?.working ?? 0) > 0 ? "working" : ownState;
     const card: ShelfCard = {
       thread,
       state,
@@ -164,12 +170,17 @@ export function buildShelves(
       agentsWorking: team?.working ?? 0,
       activityAt: activityAt(thread),
     };
-    const shelf = shelfOf(state);
-    if (shelf === "done") {
+    if (state === "done") {
+      // Finished and seen: the last three days stay on the home screen.
       if (now - Date.parse(card.activityAt) <= DONE_WINDOW_MS) shelves.done.push(card);
-    } else if (shelf === "working" || shelf === "needs" || !isSettled(thread)) {
-      // Settling a failed or stopped thread puts it away.
-      shelves[shelf].push(card);
+    } else if (
+      (state === "error" || state === "limited" || state === "stopped" || state === "new") &&
+      isSettled(thread)
+    ) {
+      // Settling a thread that went wrong or never ran puts it away.
+      continue;
+    } else {
+      shelves[state].push(card);
     }
   }
 
@@ -180,24 +191,31 @@ export function buildShelves(
   return result;
 }
 
+/** The desktop's own words where it has a pill. */
 export function shelfStateLabel(state: ShelfCardState): string {
   switch (state) {
+    case "needs-approval":
+      return "Pending approval";
+    case "needs-input":
+      return "Awaiting input";
     case "working":
       return "Working";
     case "connecting":
-      return "Starting";
-    case "done":
-      return "Done";
-    case "needs-approval":
-      return "Needs approval";
-    case "needs-input":
-      return "Needs you";
+      return "Connecting";
+    case "waiting":
+      return "Waiting";
     case "plan-ready":
       return "Plan ready";
+    case "completed":
+      return "Completed";
     case "error":
-      return "Error";
+      return "Failed";
+    case "limited":
+      return "Usage limit";
     case "stopped":
       return "Stopped";
+    case "done":
+      return "Done";
     case "new":
       return "Not started";
   }
