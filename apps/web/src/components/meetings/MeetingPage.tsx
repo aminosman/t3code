@@ -228,7 +228,12 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
             {meeting?.threads && meeting.threads.length > 0
               ? segment(
                   "threads",
-                  `Threads ${new Set(meeting.threads.map((thread) => thread.threadId)).size}`,
+                  <>
+                    Threads
+                    <span className="rounded-full bg-(--mt-hover) px-1.5 text-2xs tabular-nums text-(--mt-ink-2)">
+                      {new Set(meeting.threads.map((thread) => thread.threadId)).size}
+                    </span>
+                  </>,
                 )
               : null}
           </div>
