@@ -54,7 +54,7 @@ export function DirectPushNotificationsRow() {
 
   const disable = useCallback(async () => {
     setStatus("off");
-    const installationId = resolveInstallationId();
+    const installationId = await resolveInstallationId();
     const environmentIds = [
       ...appAtomRegistry.get(environmentPresentations.presentationsAtom).keys(),
     ];

@@ -7,6 +7,10 @@ import { foregroundNotificationBehavior } from "./foregroundNotificationBehavior
 import { routeAgentNotificationResponseOnce, threadDeepLinkOnScreen } from "./notificationPayload";
 import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
 import { routeTuiNotificationAnswer } from "../tui/tuiNotificationActions";
+import {
+  registerThreadNotificationCategories,
+  routeThreadNotificationAnswer,
+} from "../push/threadNotificationActions";
 
 export function useAgentNotificationNavigation(pathname: string): void {
   const linkTo = useLinkTo();
@@ -33,7 +37,11 @@ export function useAgentNotificationNavigation(pathname: string): void {
   }, []);
 
   useEffect(() => {
+    void registerThreadNotificationCategories();
     const handleResponse = (response: Notifications.NotificationResponse): void => {
+      // Reply / Approve / Decline on a thread's notification is answered in
+      // the background; the user stays where they were.
+      if (routeThreadNotificationAnswer(response)) return;
       // Allow / Decline on a tui card; the tap still opens the tui screen.
       routeTuiNotificationAnswer(response);
       routeAgentNotificationResponseOnce({

@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { DirectPushNotificationsRow } from "../push/DirectPushNotificationsRow";
+import { PushDevicesRows } from "../push/PushDevicesRows";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -123,6 +124,7 @@ function LocalSettingsRouteScreen() {
           {/* Cloud-less builds still get notifications, delivered by the
               environment itself rather than the relay. */}
           <DirectPushNotificationsRow />
+          <PushDevicesRows />
         </SettingsSection>
 
         <SettingsIndexSections />

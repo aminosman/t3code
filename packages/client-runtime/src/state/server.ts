@@ -1306,6 +1306,20 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:tui-inbox:send",
       tag: WS_METHODS.tuiInboxSend,
     }),
+    /** Phones this environment notifies, for the Devices settings. */
+    pushDevices: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:push:list-devices",
+      tag: WS_METHODS.pushListDevices,
+      staleTimeMs: 10_000,
+    }),
+    removePushDevice: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:push:remove-device",
+      tag: WS_METHODS.pushRemoveDevice,
+    }),
+    testPushDevice: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:push:test-device",
+      tag: WS_METHODS.pushTestDevice,
+    }),
     controlTui: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:tui-inbox:control",
       tag: WS_METHODS.tuiInboxControl,

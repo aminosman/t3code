@@ -20,6 +20,7 @@ import {
   HardDriveIcon,
   PanelsTopLeftIcon,
   KeyboardIcon,
+  SmartphoneIcon,
   Link2Icon,
   PaletteIcon,
   SearchIcon,
@@ -90,6 +91,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,
   "/settings/voice": AudioLinesIcon,
+  "/settings/devices": SmartphoneIcon,
   "/settings/archived": ArchiveIcon,
 };
 

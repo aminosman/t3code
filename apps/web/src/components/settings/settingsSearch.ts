@@ -24,6 +24,7 @@ export type SettingsPath =
   | "/settings/storage"
   | "/settings/connections"
   | "/settings/voice"
+  | "/settings/devices"
   | "/settings/archived";
 
 /**
@@ -97,6 +98,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/voice": "Voice",
+  "/settings/devices": "Devices",
   "/settings/archived": "Archive",
 };
 
@@ -884,6 +886,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["push apns notify alerts phone mobile"],
   },
   {
+    id: "push-devices",
+    title: "Notified devices",
+    to: "/settings/devices",
+    searchTerms: ["push notifications phone iphone registered remove test duplicate"],
+  },
+  {
     id: "push-apns-auth-key",
     title: "APNs auth key",
     to: "/settings/voice",
@@ -940,6 +948,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   // Voice and push settings live on the server the oracle talks through; no
   // particular scope has to be selected to render them.
   "/settings/voice": null,
+  // The phones the primary environment notifies, beside its push settings.
+  "/settings/devices": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
