@@ -176,6 +176,9 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as TuiInbox from "./tuiInbox/TuiInbox.ts";
+import * as PushDeviceRegistry from "./push/PushDeviceRegistry.ts";
+import * as PushNotifier from "./push/PushNotifier.ts";
+import { listPushDevices, removePushDevice } from "./push/pushDevices.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
 import * as Meetings from "./historySearch/Meetings.ts";
 import * as MeetingsProject from "./historySearch/MeetingsProject.ts";
@@ -1127,6 +1130,20 @@ const makeWsRpcLayer = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const tuiInbox = yield* TuiInbox.TuiInbox;
+      const pushRegistry = yield* PushDeviceRegistry.PushDeviceRegistry;
+      const pushNotifier = yield* PushNotifier.PushNotifier;
+      const settingsForPush = yield* ServerSettings.ServerSettingsService;
+      const withPushServices = <A, E>(
+        effect: Effect.Effect<
+          A,
+          E,
+          PushDeviceRegistry.PushDeviceRegistry | ServerSettings.ServerSettingsService
+        >,
+      ) =>
+        effect.pipe(
+          Effect.provideService(PushDeviceRegistry.PushDeviceRegistry, pushRegistry),
+          Effect.provideService(ServerSettings.ServerSettingsService, settingsForPush),
+        );
       const history = yield* HistorySearch.HistorySearch;
       const historyFailed = (error: HistorySearch.HistorySearchError) =>
         new HistoryApiError({ message: error.reason });
@@ -3463,6 +3480,20 @@ const makeWsRpcLayer = (
         [WS_METHODS.tuiInboxControl]: (input) =>
           observeRpcEffect(WS_METHODS.tuiInboxControl, tuiInbox.control(input), {
             "rpc.aggregate": "tui-inbox",
+          }),
+        [WS_METHODS.pushListDevices]: (_input) =>
+          observeRpcEffect(WS_METHODS.pushListDevices, withPushServices(listPushDevices), {
+            "rpc.aggregate": "push",
+          }),
+        [WS_METHODS.pushRemoveDevice]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pushRemoveDevice,
+            withPushServices(removePushDevice(input.installationId)),
+            { "rpc.aggregate": "push" },
+          ),
+        [WS_METHODS.pushTestDevice]: (input) =>
+          observeRpcEffect(WS_METHODS.pushTestDevice, pushNotifier.sendTest(input.installationId), {
+            "rpc.aggregate": "push",
           }),
         [WS_METHODS.historySearch]: (input) =>
           observeRpcEffect(

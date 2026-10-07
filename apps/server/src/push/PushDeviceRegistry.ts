@@ -39,6 +39,25 @@ const PushDeviceRegistryFile = Schema.Struct({
 const decodeRegistry = Schema.decodeUnknownOption(Schema.fromJsonString(PushDeviceRegistryFile));
 const encodeRegistry = Schema.encodeSync(Schema.fromJsonString(PushDeviceRegistryFile));
 
+/**
+ * One entry per APNs token, the latest registration winning. A token is the
+ * phone (per app), so two entries for it notify that phone twice: Roost's
+ * phone app sent a new installation id on every launch until Oct 2026, and
+ * registries written then still hold the copies.
+ */
+export function onePerToken(
+  devices: ReadonlyArray<RegisteredPushDevice>,
+): ReadonlyArray<RegisteredPushDevice> {
+  const latest = new Map<string, RegisteredPushDevice>();
+  for (const device of devices) {
+    const kept = latest.get(device.deviceToken);
+    if (kept === undefined || device.registeredAt >= kept.registeredAt) {
+      latest.set(device.deviceToken, device);
+    }
+  }
+  return devices.filter((device) => latest.get(device.deviceToken) === device);
+}
+
 export class PushDeviceRegistry extends Context.Service<
   PushDeviceRegistry,
   {
@@ -84,7 +103,7 @@ export const make = Effect.gen(function* () {
       );
 
   const live = (devices: ReadonlyArray<RegisteredPushDevice>, nowMs: number) =>
-    devices.filter((device) => nowMs - device.registeredAt < REGISTRATION_TTL_MS);
+    onePerToken(devices.filter((device) => nowMs - device.registeredAt < REGISTRATION_TTL_MS));
 
   const list = Effect.gen(function* () {
     const [devices, nowMs] = yield* Effect.all([readAll, Clock.currentTimeMillis]);
@@ -95,10 +114,13 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const [devices, nowMs] = yield* Effect.all([readAll, Clock.currentTimeMillis]);
       // Keyed by installation, so a token rotation replaces the old entry
-      // instead of leaving a dead one behind to be pushed to forever.
+      // instead of leaving a dead one behind to be pushed to forever; and by
+      // token, so an app whose installation id changed is still one device.
       const next: ReadonlyArray<RegisteredPushDevice> = [
         ...live(devices, nowMs).filter(
-          (device) => device.installationId !== registration.installationId,
+          (device) =>
+            device.installationId !== registration.installationId &&
+            device.deviceToken !== registration.deviceToken,
         ),
         {
           installationId: registration.installationId,
@@ -116,7 +138,16 @@ export const make = Effect.gen(function* () {
   const unregister: PushDeviceRegistry["Service"]["unregister"] = (installationId) =>
     Effect.gen(function* () {
       const devices = yield* readAll;
-      const next = devices.filter((device) => device.installationId !== installationId);
+      // Copies of the same token go too, or a hidden duplicate would surface
+      // as the device just removed.
+      const tokens = new Set(
+        devices
+          .filter((device) => device.installationId === installationId)
+          .map((device) => device.deviceToken),
+      );
+      const next = devices.filter(
+        (device) => device.installationId !== installationId && !tokens.has(device.deviceToken),
+      );
       if (next.length !== devices.length) {
         yield* writeAll(next);
       }

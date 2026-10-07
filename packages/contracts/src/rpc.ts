@@ -266,6 +266,13 @@ import {
   PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
 import {
+  PushDeviceError,
+  PushDeviceList,
+  PushDeviceRemoveInput,
+  PushDeviceTestInput,
+  PushDeviceTestResult,
+} from "./push.ts";
+import {
   TuiInboxControlInput,
   TuiInboxError,
   TuiInboxEvent,
@@ -454,6 +461,9 @@ export const WS_METHODS = {
   tuiInboxSend: "tuiInbox.send",
   tuiInboxSubscribe: "tuiInbox.subscribe",
   tuiInboxControl: "tuiInbox.control",
+  pushListDevices: "push.listDevices",
+  pushRemoveDevice: "push.removeDevice",
+  pushTestDevice: "push.testDevice",
 
   // history (Roost): the search agents use as t3_history_search, for clients
   historySearch: "history.search",
@@ -1484,6 +1494,24 @@ const WsTuiInboxPostRpc = Rpc.make(WS_METHODS.tuiInboxPost, {
   error: Schema.Union([TuiInboxError, EnvironmentAuthorizationError]),
 });
 
+const WsPushListDevicesRpc = Rpc.make(WS_METHODS.pushListDevices, {
+  payload: Schema.Struct({}),
+  success: PushDeviceList,
+  error: Schema.Union([PushDeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsPushRemoveDeviceRpc = Rpc.make(WS_METHODS.pushRemoveDevice, {
+  payload: PushDeviceRemoveInput,
+  success: PushDeviceList,
+  error: Schema.Union([PushDeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsPushTestDeviceRpc = Rpc.make(WS_METHODS.pushTestDevice, {
+  payload: PushDeviceTestInput,
+  success: PushDeviceTestResult,
+  error: Schema.Union([PushDeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsTuiInboxSendRpc = Rpc.make(WS_METHODS.tuiInboxSend, {
   payload: TuiInboxSendInput,
   success: TuiInboxSendResult,
@@ -1962,6 +1990,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsTuiInboxConnectRpc,
   WsTuiInboxPostRpc,
   WsTuiInboxSendRpc,
+  WsPushListDevicesRpc,
+  WsPushRemoveDeviceRpc,
+  WsPushTestDeviceRpc,
   WsTuiInboxSubscribeRpc,
   WsTuiInboxControlRpc,
   WsHistorySearchRpc,

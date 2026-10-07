@@ -189,6 +189,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.tuiInboxSend]: AuthOrchestrationOperateScope,
   [WS_METHODS.tuiInboxSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.tuiInboxControl]: AuthOrchestrationOperateScope,
+  // The same scope a phone registers with: pairing is the authorization.
+  [WS_METHODS.pushListDevices]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pushRemoveDevice]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pushTestDevice]: AuthOrchestrationOperateScope,
   [WS_METHODS.historySearch]: AuthOrchestrationReadScope,
   [WS_METHODS.historyMeetingList]: AuthOrchestrationReadScope,
   [WS_METHODS.historyMeetingRead]: AuthOrchestrationReadScope,

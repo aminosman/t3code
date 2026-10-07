@@ -26,6 +26,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import { readApnsCredentials } from "./apnsCredentials.ts";
 import * as PushDeviceRegistry from "./PushDeviceRegistry.ts";
+import { buildThreadNotification, type PendingRequestItem } from "./threadNotification.ts";
 
 /**
  * Phases worth interrupting someone for. "running"/"starting" are progress,
@@ -62,6 +63,10 @@ export class PushNotifier extends Context.Service<
   PushNotifier,
   {
     readonly start: Effect.Effect<void, never, Scope.Scope>;
+    /** Sends one device a test notification; the message says why when it did not go. */
+    readonly sendTest: (
+      installationId: string,
+    ) => Effect.Effect<{ readonly delivered: boolean; readonly message?: string }>;
   }
 >()("t3/push/PushNotifier") {}
 
@@ -108,6 +113,34 @@ export const make = Effect.gen(function* () {
       return;
     }
 
+    const pendingRequestId = thread?.pendingRuntimeRequest?.id;
+    const pending =
+      thread !== null && pendingRequestId !== undefined
+        ? yield* threads
+            .getProjectThreadRecords({ projectId: thread.projectId, threadId }, ["turnItems"], {
+              turnItemTypes: ["approval_request", "user_input_request"],
+            })
+            .pipe(
+              Effect.map(
+                (records) =>
+                  (records.turnItems.find(
+                    (item) =>
+                      (item.type === "approval_request" || item.type === "user_input_request") &&
+                      item.requestId === pendingRequestId,
+                  ) ?? null) as PendingRequestItem | null,
+              ),
+              Effect.orElseSucceed(() => null),
+            )
+        : null;
+    const notification = buildThreadNotification({
+      state,
+      thread: {
+        latestVisibleMessage: thread?.latestVisibleMessage ?? null,
+        lastError: thread?.lastError ?? null,
+      },
+      pending,
+    });
+
     yield* Effect.logInfo("push: notifying devices of thread phase", {
       threadId,
       phase: state.phase,
@@ -121,15 +154,19 @@ export const make = Effect.gen(function* () {
           .send(credentials, {
             deviceToken: device.deviceToken,
             production: device.pushEnvironment === "production",
-            title: `${state.projectTitle} · ${state.headline}`,
-            body: state.detail ?? state.threadTitle,
+            title: notification.title,
+            subtitle: notification.subtitle,
+            body: notification.body,
             data: {
               threadId: state.threadId,
               environmentId: state.environmentId,
               deepLink: state.deepLink,
+              ...(notification.requestId ? { requestId: notification.requestId } : {}),
             },
-            // One thread's updates replace each other on the lock screen
-            // rather than stacking into a wall of stale alerts.
+            ...(notification.category ? { category: notification.category } : {}),
+            // One thread's notifications stack together, and its updates
+            // replace each other rather than piling up stale alerts.
+            threadId: state.threadId,
             collapseId: state.threadId,
           })
           .pipe(
@@ -144,6 +181,45 @@ export const make = Effect.gen(function* () {
           ),
       { concurrency: 4, discard: true },
     );
+  });
+
+  const sendTest = Effect.fn("PushNotifier.sendTest")(function* (installationId: string) {
+    const devices = yield* registry.list;
+    const device = devices.find((entry) => entry.installationId === installationId);
+    if (device === undefined) {
+      return { delivered: false, message: "That device is no longer registered." };
+    }
+    const credentials = yield* readApnsCredentials().pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, settingsService),
+    );
+    if (credentials === null) {
+      return {
+        delivered: false,
+        message: "Push is not configured: add the APNs key under Voice → Phone notifications.",
+      };
+    }
+    return yield* apns
+      .send(credentials, {
+        deviceToken: device.deviceToken,
+        production: device.pushEnvironment === "production",
+        title: "Test notification",
+        subtitle: device.deviceName ?? "This device",
+        body: "Notifications from this environment reach this device.",
+        data: {},
+      })
+      .pipe(
+        Effect.as({ delivered: true }),
+        Effect.catch((error) =>
+          (error.tokenRejected ? registry.forget(device.deviceToken) : Effect.void).pipe(
+            Effect.as({
+              delivered: false,
+              message: error.tokenRejected
+                ? "Apple says this device's token is no longer valid; it was removed."
+                : error.message,
+            }),
+          ),
+        ),
+      );
   });
 
   const start = Effect.gen(function* () {
@@ -162,7 +238,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return PushNotifier.of({ start });
+  return PushNotifier.of({ start, sendTest });
 });
 
 const serviceLayer = Layer.effect(PushNotifier, make);

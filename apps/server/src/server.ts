@@ -37,7 +37,11 @@ import {
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { voiceRealtimeSessionRouteLayer } from "./voice/http.ts";
-import { pushDeviceRegisterRouteLayer, pushDeviceUnregisterRouteLayer } from "./push/http.ts";
+import {
+  pushDeviceRegisterRouteLayer,
+  pushDeviceUnregisterRouteLayer,
+  pushReplyRouteLayer,
+} from "./push/http.ts";
 import * as ApnsClient from "./push/ApnsClient.ts";
 import * as PushDeviceRegistry from "./push/PushDeviceRegistry.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
@@ -670,6 +674,7 @@ const makeRoutesLayer = Layer.mergeAll(
     voiceRealtimeSessionRouteLayer,
     pushDeviceRegisterRouteLayer,
     pushDeviceUnregisterRouteLayer,
+    pushReplyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
     phoneMeetingAudioRouteLayer,

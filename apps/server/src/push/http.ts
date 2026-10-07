@@ -10,8 +10,10 @@ import {
   AuthOrchestrationOperateScope,
   PUSH_DEVICE_REGISTER_PATH,
   PUSH_DEVICE_UNREGISTER_PATH,
+  PUSH_REPLY_PATH,
   PushDeviceRegistration,
   PushDeviceUnregistration,
+  PushReply,
   type PushRegistrationResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -27,12 +29,14 @@ import {
 import { authenticateRawRouteWithScope } from "../http.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PushDeviceRegistry from "./PushDeviceRegistry.ts";
+import { replyFromNotification } from "./pushReply.ts";
 
 const decodeRegistration = Schema.decodeUnknownEffect(PushDeviceRegistration);
 const decodeUnregistration = Schema.decodeUnknownEffect(PushDeviceUnregistration);
+const decodeReply = Schema.decodeUnknownEffect(PushReply);
 
 /** Whether this environment can actually deliver, so clients can say so. */
-const readDeliveryConfigured = Effect.gen(function* () {
+export const readDeliveryConfigured = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const settings = yield* settingsService.getSettings.pipe(
     Effect.catchTag("ServerSettingsError", (cause) =>
@@ -113,5 +117,48 @@ export const pushDeviceUnregisterRouteLayer = HttpRouter.add(
       registered: false,
       deliveryConfigured: yield* readDeliveryConfigured,
     } satisfies PushRegistrationResult);
+  }).pipe(Effect.catchTags(routeErrorHandlers)),
+);
+
+export const pushReplyRouteLayer = HttpRouter.add(
+  "POST",
+  PUSH_REPLY_PATH,
+  Effect.gen(function* () {
+    yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+
+    const body = yield* request.json.pipe(Effect.option);
+    if (Option.isNone(body)) {
+      return badRequest("Could not read the reply body.");
+    }
+    const reply = yield* decodeReply(body.value).pipe(Effect.option);
+    if (Option.isNone(reply)) {
+      return badRequest("Expected a thread id, an action, and a reply id.");
+    }
+
+    return yield* replyFromNotification(reply.value).pipe(
+      Effect.tap((result) =>
+        Effect.logInfo("push: reply from a notification", {
+          threadId: reply.value.threadId,
+          action: reply.value.action,
+          delivery: result.delivery,
+        }),
+      ),
+      Effect.map((result) => HttpServerResponse.jsonUnsafe(result)),
+      Effect.catchTag("PushReplyError", (error) =>
+        Effect.logWarning("push: reply from a notification failed", {
+          threadId: reply.value.threadId,
+          action: reply.value.action,
+          message: error.message,
+        }).pipe(
+          Effect.as(
+            HttpServerResponse.jsonUnsafe(
+              { error: "reply-failed", message: error.message },
+              { status: error.status },
+            ),
+          ),
+        ),
+      ),
+    );
   }).pipe(Effect.catchTags(routeErrorHandlers)),
 );

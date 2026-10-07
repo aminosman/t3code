@@ -32,7 +32,11 @@ export interface ApnsNotification {
   readonly deviceToken: string;
   readonly production: boolean;
   readonly title: string;
+  /** A second bold line under the title. */
+  readonly subtitle?: string;
   readonly body: string;
+  /** Groups notifications in Notification Center, e.g. one stack per thread. */
+  readonly threadId?: string;
   /** Merged into the payload alongside `aps` for deep-linking. */
   readonly data: Record<string, string>;
   /** Coalesces updates about the same thread into one notification. */
@@ -189,8 +193,13 @@ export const make = Effect.sync(() => {
         // @effect-diagnostics-next-line preferSchemaOverJson:off
         const payload = JSON.stringify({
           aps: {
-            alert: { title: notification.title, body: notification.body },
+            alert: {
+              title: notification.title,
+              ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
+              body: notification.body,
+            },
             sound: "default",
+            ...(notification.threadId ? { "thread-id": notification.threadId } : {}),
             "interruption-level": "active",
             ...(notification.category ? { category: notification.category } : {}),
           },

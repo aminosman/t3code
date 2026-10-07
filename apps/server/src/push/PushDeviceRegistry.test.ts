@@ -101,4 +101,55 @@ describe("PushDeviceRegistry", () => {
       assert.isEmpty(yield* registry.list);
     }).pipe(Effect.provide(makeTestLayer())),
   );
+
+  it.effect("keeps one entry per token when the installation id changes", () =>
+    Effect.gen(function* () {
+      const registry = yield* PushDeviceRegistry.PushDeviceRegistry;
+      yield* registry.register(registration({ installationId: "launch-1" }));
+      yield* TestClock.adjust("1 second");
+      yield* registry.register(registration({ installationId: "launch-2" }));
+
+      assert.deepEqual(
+        (yield* registry.list).map((device) => device.installationId),
+        ["launch-2"],
+      );
+    }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect("removing a device removes the copies of its token", () =>
+    Effect.gen(function* () {
+      const registry = yield* PushDeviceRegistry.PushDeviceRegistry;
+      yield* registry.register(registration({ installationId: "launch-1" }));
+      yield* registry.register(registration({ installationId: "other", deviceToken: "token-2" }));
+      yield* registry.unregister("launch-1");
+
+      assert.deepEqual(
+        (yield* registry.list).map((device) => device.installationId),
+        ["other"],
+      );
+    }).pipe(Effect.provide(makeTestLayer())),
+  );
+});
+
+describe("onePerToken", () => {
+  it("keeps the latest registration of a token that was written twice", () => {
+    const device = (installationId: string, deviceToken: string, registeredAt: number) =>
+      ({
+        installationId,
+        deviceToken,
+        platform: "ios",
+        pushEnvironment: "production",
+        registeredAt,
+      }) as const;
+    // The shape of Roost's own registry on Oct 7 2026: one iPhone, two ids.
+    const kept = PushDeviceRegistry.onePerToken([
+      device("B915", "40d3", 1),
+      device("other", "9f00", 2),
+      device("C05E", "40d3", 3),
+    ]);
+    assert.deepEqual(
+      kept.map((entry) => entry.installationId),
+      ["other", "C05E"],
+    );
+  });
 });
