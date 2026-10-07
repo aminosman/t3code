@@ -91,10 +91,12 @@ function answerableFromNotification(
 
 export function buildThreadNotification(input: {
   readonly state: AgentAwarenessState;
-  readonly thread: Pick<OrchestrationV2ThreadShell, "latestVisibleMessage" | "lastError">;
+  readonly thread: Pick<OrchestrationV2ThreadShell, "lastError">;
+  /** What the agent said last in the run that just ended. */
+  readonly lastAssistantText: string | null;
   readonly pending: PendingRequestItem | null;
 }): ThreadNotification {
-  const { state, thread, pending } = input;
+  const { state, thread, pending, lastAssistantText } = input;
   const title = state.threadTitle.trim() || state.projectTitle;
   const subtitle = `${state.projectTitle} · ${STATUS[state.phase]}`;
 
@@ -135,10 +137,7 @@ export function buildThreadNotification(input: {
     };
   }
 
-  const said =
-    thread.latestVisibleMessage?.role === "assistant"
-      ? plainText(thread.latestVisibleMessage.text)
-      : "";
+  const said = lastAssistantText ? plainText(lastAssistantText) : "";
   return {
     title,
     subtitle,

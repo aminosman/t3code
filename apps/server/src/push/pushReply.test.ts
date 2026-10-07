@@ -6,7 +6,7 @@ import { planPushReply } from "./pushReply.ts";
 const reply = (overrides: Partial<PushReply>): PushReply =>
   ({ threadId: "thread-1", action: "reply", replyId: "r1", ...overrides }) as PushReply;
 const waitingOn = (id: string, kind: "user_input" | "command" = "user_input") =>
-  ({ pendingRuntimeRequest: { id, kind, createdAt: new Date() } }) as never;
+  ({ pendingRuntimeRequest: { id, kind } }) as never;
 const idle = { pendingRuntimeRequest: null };
 const question = (overrides: object = {}) =>
   ({

@@ -21,11 +21,7 @@ const state = (phase: AgentAwarenessState["phase"]): AgentAwarenessState => ({
   deepLink: "/threads/env-1/thread-1",
 });
 
-const said = (text: string) =>
-  ({
-    latestVisibleMessage: { role: "assistant", text },
-    lastError: null,
-  }) as never;
+const noError = { lastError: null };
 
 const base = { id: "item-1", status: "pending" } as never as Record<string, never>;
 
@@ -33,7 +29,8 @@ describe("buildThreadNotification", () => {
   it("leads with the thread and ends with what the agent said", () => {
     const notification = buildThreadNotification({
       state: state("completed"),
-      thread: said("**Done.** The registry now keeps one entry per `token`."),
+      thread: noError,
+      lastAssistantText: "**Done.** The registry now keeps one entry per `token`.",
       pending: null,
     });
     assert.deepEqual(notification, {
@@ -47,7 +44,8 @@ describe("buildThreadNotification", () => {
   it("says why a run failed", () => {
     const notification = buildThreadNotification({
       state: state("failed"),
-      thread: { latestVisibleMessage: null, lastError: "Usage limit reached" },
+      thread: { lastError: "Usage limit reached" },
+      lastAssistantText: null,
       pending: null,
     });
     assert.strictEqual(notification.subtitle, "tui · Failed");
@@ -57,7 +55,8 @@ describe("buildThreadNotification", () => {
   it("asks the question, answerable by typing when it takes free text", () => {
     const notification = buildThreadNotification({
       state: state("waiting_for_input"),
-      thread: said("ignored"),
+      thread: noError,
+      lastAssistantText: "ignored",
       pending: {
         ...base,
         type: "user_input_request",
@@ -84,7 +83,8 @@ describe("buildThreadNotification", () => {
     const question = (id: string) => ({ id, header: id, question: `${id}?`, options: [] });
     const notification = buildThreadNotification({
       state: state("waiting_for_input"),
-      thread: said("ignored"),
+      thread: noError,
+      lastAssistantText: "ignored",
       pending: {
         ...base,
         type: "user_input_request",
@@ -99,7 +99,8 @@ describe("buildThreadNotification", () => {
   it("offers approve and decline for an approval", () => {
     const notification = buildThreadNotification({
       state: state("waiting_for_approval"),
-      thread: said("ignored"),
+      thread: noError,
+      lastAssistantText: "ignored",
       pending: {
         ...base,
         type: "approval_request",

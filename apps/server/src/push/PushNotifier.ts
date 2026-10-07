@@ -132,12 +132,28 @@ export const make = Effect.gen(function* () {
               Effect.orElseSucceed(() => null),
             )
         : null;
+    // The shell carries no message bodies; the finished run's own messages
+    // hold what the agent said last.
+    const latestRunId = thread?.latestRunId ?? null;
+    const lastAssistantText =
+      thread !== null && latestRunId !== null && state.phase === "completed"
+        ? yield* threads
+            .getProjectThreadRecords({ projectId: thread.projectId, threadId }, ["messages"], {
+              messageRoles: ["assistant"],
+              messageRunIds: [latestRunId],
+            })
+            .pipe(
+              Effect.map((records) => {
+                const said = records.messages.filter((message) => message.text.trim().length > 0);
+                return said.at(-1)?.text ?? null;
+              }),
+              Effect.orElseSucceed(() => null),
+            )
+        : null;
     const notification = buildThreadNotification({
       state,
-      thread: {
-        latestVisibleMessage: thread?.latestVisibleMessage ?? null,
-        lastError: thread?.lastError ?? null,
-      },
+      thread: { lastError: thread?.lastError ?? null },
+      lastAssistantText,
       pending,
     });
 
@@ -145,6 +161,10 @@ export const make = Effect.gen(function* () {
       threadId,
       phase: state.phase,
       devices: devices.length,
+      title: notification.title,
+      subtitle: notification.subtitle,
+      body: notification.body,
+      category: notification.category ?? null,
     });
 
     yield* Effect.forEach(
