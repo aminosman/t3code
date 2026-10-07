@@ -194,6 +194,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.historyMeetingRead]: AuthOrchestrationReadScope,
   [WS_METHODS.historyThreadMessages]: AuthOrchestrationReadScope,
   [WS_METHODS.historyMeetingNotesWrite]: AuthOrchestrationOperateScope,
+  [WS_METHODS.historyPhoneMeetingUploadUrl]: AuthOrchestrationOperateScope,
+  [WS_METHODS.historyPhoneMeetingImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.historyMeetingsProject]: AuthOrchestrationOperateScope,
   [WS_METHODS.historyAskMeetings]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,

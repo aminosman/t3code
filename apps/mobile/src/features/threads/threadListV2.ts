@@ -11,11 +11,13 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { flattenOwnedThreads, groupOwnedThreads } from "@t3tools/client-runtime/state/ownedThreads";
 import {
   sortActiveThreadsByOrderKey,
   resolveSettledThreadTimestamp,
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
+  sortThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
@@ -283,7 +285,18 @@ export interface ThreadListV2Item {
   /** Pinned-block row: renders the pin glyph and offers Unpin. */
   readonly pinned: boolean;
   readonly isLast: boolean;
+  /** Roost: how many owners up (0 or absent at the top), as the desktop sidebar nests. */
+  readonly ownedDepth?: number;
+  /** Owned threads under this one in the list, shown or not. */
+  readonly ownedChildCount?: number;
+  readonly ownedExpanded?: boolean;
 }
+
+/**
+ * How the active block is ordered: by latest user message (the desktop's
+ * default, and how a messages app reads), by creation, or by hand.
+ */
+export type ThreadListV2SortOrder = "updated_at" | "created_at" | "manual";
 
 export interface ThreadListV2Layout {
   readonly items: ThreadListV2Item[];
@@ -411,7 +424,10 @@ export function threadListV2ListItemsAreEqual(
         previous.showTrailingDivider === item.showTrailingDivider &&
         previous.hasQueuedMessages === item.hasQueuedMessages &&
         previous.canMoveUp === item.canMoveUp &&
-        previous.canMoveDown === item.canMoveDown
+        previous.canMoveDown === item.canMoveDown &&
+        previous.item.ownedDepth === item.item.ownedDepth &&
+        previous.item.ownedChildCount === item.item.ownedChildCount &&
+        previous.item.ownedExpanded === item.item.ownedExpanded
       );
     case "v2-pending":
       return (
@@ -611,6 +627,13 @@ export function buildThreadListV2Items(input: {
       outbox. Such a thread has work the user is waiting on, so it stays in
       the active block even when the server has settled it. */
   readonly queuedThreadKeys?: ReadonlySet<string>;
+  /** Order of the active block. Absent = "manual" (saved order keys). */
+  readonly sortOrder?: ThreadListV2SortOrder;
+  /** Roost: draw owned threads (delegate children, provider subagents) under
+      their owner, as the desktop sidebar does, instead of hiding them. */
+  readonly nestOwnedThreads?: boolean;
+  /** Owners the user opened or closed by hand, by thread id. */
+  readonly ownedExpandedByThreadId?: Readonly<Record<string, boolean>>;
 }): ThreadListV2Layout {
   const now = input.now;
   const pending =
@@ -634,8 +657,25 @@ export function buildThreadListV2Items(input: {
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
-  for (const thread of input.threads) {
-    if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent") continue;
+  // Roost: owned threads ride under their owner (outside a search, where every
+  // match stands on its own); the sections below see only the top level.
+  const nest = input.nestOwnedThreads === true && query.length === 0;
+  let childrenByOwner: ReadonlyMap<string, EnvironmentThreadShell[]> = new Map();
+  let candidates: ReadonlyArray<EnvironmentThreadShell> = input.threads;
+  if (nest) {
+    const visible = input.threads.filter(
+      (thread) =>
+        thread.archivedAt === null &&
+        (input.environmentId === null || thread.environmentId === input.environmentId) &&
+        (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+    );
+    const grouped = groupOwnedThreads(visible);
+    childrenByOwner = grouped.childrenByOwner;
+    candidates = grouped.topLevel;
+  }
+  for (const thread of candidates) {
+    if (thread.archivedAt !== null) continue;
+    if (!nest && thread.lineage.relationshipToParent === "subagent") continue;
     // The server stamps settledOverride for the tail.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
     if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
@@ -681,7 +721,11 @@ export function buildThreadListV2Items(input: {
     }
   }
 
-  const orderedActive = applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+  const sortOrder = input.sortOrder ?? "manual";
+  const orderedActive =
+    sortOrder === "manual"
+      ? applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending)
+      : sortThreads(active, sortOrder);
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>
       parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
@@ -709,12 +753,48 @@ export function buildThreadListV2Items(input: {
         );
 
   const items: ThreadListV2Item[] = [];
+  const selectedThreadId =
+    selectedThreadKey === null ? null : selectedThreadKey.split(":").slice(1).join(":") || null;
+  /** A thread, then (when nesting) the owned threads drawn under it. */
+  const push = (item: ThreadListV2Item) => {
+    if (!nest) {
+      items.push(item);
+      return;
+    }
+    const rows = flattenOwnedThreads({
+      roots: [item.thread],
+      childrenByOwner,
+      expandedByThreadId: input.ownedExpandedByThreadId ?? {},
+      activeThreadId: selectedThreadId,
+    });
+    for (const row of rows) {
+      items.push(
+        row.depth === 0
+          ? {
+              ...item,
+              ownedDepth: 0,
+              ownedChildCount: row.childCount,
+              ownedExpanded: row.expanded,
+            }
+          : {
+              thread: row.thread,
+              variant: item.variant,
+              snoozed: item.snoozed,
+              pinned: false,
+              isLast: false,
+              ownedDepth: row.depth,
+              ownedChildCount: row.childCount,
+              ownedExpanded: row.expanded,
+            },
+      );
+    }
+  };
   for (const thread of applyPendingThreadOrder(
     sortPinnedThreadsByOrderKey(pinned),
     "pinned",
     pending,
   )) {
-    items.push({
+    push({
       thread,
       variant: "card",
       snoozed: false,
@@ -723,7 +803,7 @@ export function buildThreadListV2Items(input: {
     });
   }
   for (const thread of orderedActive) {
-    items.push({
+    push({
       thread,
       variant: "card",
       snoozed: false,
@@ -733,7 +813,7 @@ export function buildThreadListV2Items(input: {
   }
   const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
   for (const thread of visibleSnoozed) {
-    items.push({
+    push({
       thread,
       variant: "slim",
       snoozed: true,
@@ -743,7 +823,7 @@ export function buildThreadListV2Items(input: {
   }
   const settledShelfHeaderIndex = orderedSettled.length > 0 ? items.length : null;
   for (const thread of visibleSettled) {
-    items.push({
+    push({
       thread,
       variant: "slim",
       snoozed: false,

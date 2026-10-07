@@ -282,6 +282,10 @@ import {
   HistoryAskMeetingsInput,
   HistoryAskMeetingsResult,
   HistoryMeetingNotesWriteInput,
+  HistoryPhoneMeetingImportInput,
+  HistoryPhoneMeetingImportOutput,
+  HistoryPhoneMeetingUploadUrlInput,
+  HistoryPhoneMeetingUploadUrlOutput,
   HistoryMeetingsProject,
   HistoryMeetingReadInput,
   HistoryMeetingReadOutput,
@@ -457,6 +461,8 @@ export const WS_METHODS = {
   historyMeetingRead: "history.meetingRead",
   historyThreadMessages: "history.threadMessages",
   historyMeetingNotesWrite: "history.meetingNotesWrite",
+  historyPhoneMeetingUploadUrl: "history.phoneMeetingUploadUrl",
+  historyPhoneMeetingImport: "history.phoneMeetingImport",
   historyMeetingsProject: "history.meetingsProject",
   historyAskMeetings: "history.askMeetings",
 
@@ -1525,6 +1531,18 @@ const WsHistoryMeetingNotesWriteRpc = Rpc.make(WS_METHODS.historyMeetingNotesWri
   error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
 });
 
+const WsHistoryPhoneMeetingUploadUrlRpc = Rpc.make(WS_METHODS.historyPhoneMeetingUploadUrl, {
+  payload: HistoryPhoneMeetingUploadUrlInput,
+  success: HistoryPhoneMeetingUploadUrlOutput,
+  error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
+});
+
+const WsHistoryPhoneMeetingImportRpc = Rpc.make(WS_METHODS.historyPhoneMeetingImport, {
+  payload: HistoryPhoneMeetingImportInput,
+  success: HistoryPhoneMeetingImportOutput,
+  error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
+});
+
 const WsHistoryMeetingsProjectRpc = Rpc.make(WS_METHODS.historyMeetingsProject, {
   payload: Schema.Struct({}),
   success: HistoryMeetingsProject,
@@ -1951,6 +1969,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsHistoryMeetingReadRpc,
   WsHistoryThreadMessagesRpc,
   WsHistoryMeetingNotesWriteRpc,
+  WsHistoryPhoneMeetingUploadUrlRpc,
+  WsHistoryPhoneMeetingImportRpc,
   WsHistoryMeetingsProjectRpc,
   WsHistoryAskMeetingsRpc,
   WsSubscribePreviewEventsRpc,

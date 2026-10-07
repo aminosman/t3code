@@ -47,6 +47,12 @@ export interface Preferences {
    * default flat list — see `resolveThreadListV2Enabled`.
    */
   readonly legacyThreadListEnabled?: boolean;
+  /**
+   * How Chats orders threads, in both layouts: by the latest user message
+   * (the desktop's default), by creation, or (flat list only) by hand with
+   * Move up/down. Unset means "updated_at".
+   */
+  readonly threadSortOrder?: "updated_at" | "created_at" | "manual";
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
   /** Model favorites belong to this device, like the web client setting. */
@@ -115,6 +121,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     legacyThreadListEnabled?: boolean;
+    threadSortOrder?: "updated_at" | "created_at" | "manual";
     planModeEnabled?: boolean;
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
@@ -188,6 +195,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.legacyThreadListEnabled === "boolean") {
     preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
+  }
+  if (
+    parsed.threadSortOrder === "updated_at" ||
+    parsed.threadSortOrder === "created_at" ||
+    parsed.threadSortOrder === "manual"
+  ) {
+    preferences.threadSortOrder = parsed.threadSortOrder;
   }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;

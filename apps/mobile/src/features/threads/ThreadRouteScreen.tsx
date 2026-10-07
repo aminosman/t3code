@@ -959,7 +959,10 @@ function ThreadRouteContent(
     setupMessage,
     startLocalThread,
   ]);
-  const creationState = ((): ThreadDetailScreenProps["creationState"] => {
+  // These three are memoized so a keystroke (the draft lives here) does not
+  // hand ThreadDetailScreen and the message list new objects: a list
+  // re-render while the keyboard is up could reset the scroll on iOS.
+  const creationState = useMemo((): ThreadDetailScreenProps["creationState"] => {
     if (selectedThreadCreation === null) {
       return awaitingBootstrapTurn ? { kind: "preparing", preparingWorktree: true } : null;
     }
@@ -974,7 +977,49 @@ function ThreadRouteContent(
       kind: "preparing",
       preparingWorktree: selectedThreadCreation.message.creation?.workspaceMode === "worktree",
     };
-  })();
+  }, [awaitingBootstrapTurn, handleEditFailedCreation, selectedThreadCreation]);
+  const hasCreationState = creationState !== null;
+  const hasSelectedThreadDetail = selectedThreadDetail !== null;
+  const detailError = Option.getOrNull(selectedThreadDetailState.error);
+  const detailDeleted = selectedThreadDetailState.status === "deleted";
+  // A queued creation renders as ready content: its prompt is the whole
+  // conversation until the server creates the thread. The subscription's
+  // not-found error for that window is expected, not a load failure.
+  const contentPresentation = useMemo(
+    () =>
+      hasCreationState
+        ? { kind: "ready" as const }
+        : projectThreadContentPresentation({
+            hasDetail: hasSelectedThreadDetail,
+            detailError,
+            detailDeleted,
+            connectionState: routeConnectionState,
+          }),
+    [detailDeleted, detailError, hasCreationState, hasSelectedThreadDetail, routeConnectionState],
+  );
+  const setupWorking = composer.activeWorkStartedAt !== null;
+  const worktreeSetupProp = useMemo(
+    () =>
+      worktreeSetup
+        ? {
+            snapshot: worktreeSetup,
+            turnStartedAt: setupTurnStartedAt,
+            working: setupWorking,
+            turnStarted: setupTurnStartedAt !== null,
+            onCancel: handleCancelWorktreeSetup,
+            onWorkLocally: setupMessage && selectedThreadProject ? handleWorkLocally : null,
+          }
+        : null,
+    [
+      handleCancelWorktreeSetup,
+      handleWorkLocally,
+      selectedThreadProject,
+      setupMessage,
+      setupTurnStartedAt,
+      setupWorking,
+      worktreeSetup,
+    ],
+  );
   if (!environmentId || !threadId) {
     return <OpeningThreadLoadingScreen />;
   }
@@ -983,18 +1028,6 @@ function ThreadRouteContent(
     return <OpeningThreadLoadingScreen />;
   }
 
-  // A queued creation renders as ready content: its prompt is the whole
-  // conversation until the server creates the thread. The subscription's
-  // not-found error for that window is expected, not a load failure.
-  const contentPresentation =
-    creationState !== null
-      ? { kind: "ready" as const }
-      : projectThreadContentPresentation({
-          hasDetail: selectedThreadDetail !== null,
-          detailError: Option.getOrNull(selectedThreadDetailState.error),
-          detailDeleted: selectedThreadDetailState.status === "deleted",
-          connectionState: routeConnectionState,
-        });
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = () => (
     <>
@@ -1030,18 +1063,7 @@ function ThreadRouteContent(
               ? composer.activeWorkStartedAt
               : null
           }
-          worktreeSetup={
-            worktreeSetup
-              ? {
-                  snapshot: worktreeSetup,
-                  turnStartedAt: setupTurnStartedAt,
-                  working: composer.activeWorkStartedAt !== null,
-                  turnStarted: setupTurnStartedAt !== null,
-                  onCancel: handleCancelWorktreeSetup,
-                  onWorkLocally: setupMessage && selectedThreadProject ? handleWorkLocally : null,
-                }
-              : null
-          }
+          worktreeSetup={worktreeSetupProp}
           activePendingApproval={requests.activePendingApproval}
           respondingApprovalId={requests.respondingApprovalId}
           activePendingUserInput={requests.activePendingUserInput}

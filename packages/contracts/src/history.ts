@@ -202,6 +202,48 @@ export const HistoryMeetingNotesWriteInput = Schema.Struct({
 });
 export type HistoryMeetingNotesWriteInput = typeof HistoryMeetingNotesWriteInput.Type;
 
+/**
+ * A meeting recorded on the phone, sent to the Mac in two steps: the audio
+ * first (to the URL `historyPhoneMeetingUploadUrl` signs), then this, which
+ * writes its transcript, the user's notes and, last, meta.json — the sign tui
+ * reads as "finished", after which it transcribes the audio itself, writes the
+ * notes and files the meeting like one it recorded.
+ */
+export const HistoryPhoneMeetingTranscriptLine = Schema.Struct({
+  seconds: Schema.Number,
+  text: Schema.String.check(Schema.isMaxLength(20_000)),
+});
+
+export const HistoryPhoneMeetingUploadUrlInput = Schema.Struct({
+  meetingId: TrimmedNonEmptyString,
+  sizeBytes: Schema.Number,
+});
+export type HistoryPhoneMeetingUploadUrlInput = typeof HistoryPhoneMeetingUploadUrlInput.Type;
+
+export const HistoryPhoneMeetingUploadUrlOutput = Schema.Struct({
+  /** POST the audio here (relative to the server). Null when it is already on the Mac. */
+  relativeUrl: Schema.NullOr(Schema.String),
+});
+export type HistoryPhoneMeetingUploadUrlOutput = typeof HistoryPhoneMeetingUploadUrlOutput.Type;
+
+export const HistoryPhoneMeetingImportInput = Schema.Struct({
+  meetingId: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(300)),
+  kind: Schema.Literals(["room", "call"]),
+  startedAt: TrimmedNonEmptyString,
+  durationSeconds: Schema.Number,
+  myNotes: Schema.String.check(Schema.isMaxLength(200_000)),
+  transcript: Schema.Array(HistoryPhoneMeetingTranscriptLine),
+});
+export type HistoryPhoneMeetingImportInput = typeof HistoryPhoneMeetingImportInput.Type;
+
+export const HistoryPhoneMeetingImportOutput = Schema.Struct({
+  meetingId: TrimmedNonEmptyString,
+  /** "imported" the first time; "already" when the Mac had it (a retry). */
+  status: Schema.Literals(["imported", "already"]),
+});
+export type HistoryPhoneMeetingImportOutput = typeof HistoryPhoneMeetingImportOutput.Type;
+
 /** The project questions about meetings are asked in, made on first use. */
 export const HistoryMeetingsProject = Schema.Struct({
   projectId: TrimmedNonEmptyString,

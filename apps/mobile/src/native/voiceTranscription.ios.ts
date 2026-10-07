@@ -96,3 +96,31 @@ async function transcribeVoiceRecording(
     throw wrapError("transcription-failed", "Voice transcription failed.", error);
   }
 }
+
+export interface TimedTranscriptSegment {
+  readonly text: string;
+  readonly startSecond: number;
+  readonly endSecond: number;
+}
+
+/**
+ * A whole recording transcribed on the device, with each segment's time —
+ * for meetings recorded on the phone, offline. Null where the device cannot
+ * (before iOS 26, or an unsupported language).
+ */
+export async function transcribeRecordingOnDevice(
+  uri: string,
+): Promise<ReadonlyArray<TimedTranscriptSegment> | null> {
+  const locale = getDeviceLocale();
+  if (!AppleTranscription.isAvailable(locale)) return null;
+  const supportedLocale = await AppleTranscription.prepare(locale);
+  const audio = await new File(uri).arrayBuffer();
+  const result = await AppleTranscription.transcribe(audio, supportedLocale);
+  return result.segments
+    .map((segment) => ({
+      text: segment.text.trim(),
+      startSecond: segment.startSecond,
+      endSecond: segment.endSecond,
+    }))
+    .filter((segment) => segment.text.length > 0);
+}

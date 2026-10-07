@@ -530,6 +530,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
+  /** Roost: how many owners up, as the desktop sidebar nests; 0 or absent at the top. */
+  readonly ownedDepth?: number;
+  /** Owned threads under this one; 0 or absent draws no toggle. */
+  readonly ownedChildCount?: number;
+  readonly ownedExpanded?: boolean;
+  readonly onToggleOwnedThreads?: (thread: EnvironmentThreadShell, expanded: boolean) => void;
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const {
@@ -910,6 +916,40 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
       : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
+  // Roost: an owner's toggle for the threads it owns, drawn under it, and
+  // the indent of an owned row — as the desktop sidebar and the grouped list.
+  const ownedChildCount = props.ownedChildCount ?? 0;
+  const ownedExpanded = props.ownedExpanded === true;
+  const onToggleOwnedThreads = props.onToggleOwnedThreads;
+  const ownedIndent = (props.ownedDepth ?? 0) * 18;
+  const ownedToggle =
+    ownedChildCount > 0 && onToggleOwnedThreads ? (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          ownedExpanded
+            ? `Hide ${ownedChildCount} owned threads`
+            : `Show ${ownedChildCount} owned threads`
+        }
+        accessibilityState={{ expanded: ownedExpanded }}
+        hitSlop={10}
+        className="flex-row items-center gap-0.5"
+        onPress={() => onToggleOwnedThreads(thread, !ownedExpanded)}
+      >
+        <SymbolView
+          name={ownedExpanded ? "chevron.down" : "chevron.right"}
+          size={10}
+          tintColorClassName={rowAppearance.mutedIconTintClassName}
+          type="monochrome"
+        />
+        {!ownedExpanded ? (
+          <Text className={cn("text-xs tabular-nums", rowAppearance.mutedForegroundClassName)}>
+            {ownedChildCount}
+          </Text>
+        ) : null}
+      </Pressable>
+    ) : null;
+
   // Sidebar rows use navigation foregrounds on their active and idle surfaces.
   const cardContent = (
     <>
@@ -955,6 +995,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             type="monochrome"
           />
         ) : null}
+        {ownedToggle}
         <Text
           className={cn(
             "text-xs tabular-nums",
@@ -1138,7 +1179,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
              separates rows. The opaque screen background stays so swipe
              actions reveal behind the row. */
           <View>
-            <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{cardContent}</View>
+            <View
+              className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}
+              style={ownedIndent > 0 ? { paddingLeft: ownedIndent } : undefined}
+            >
+              {cardContent}
+            </View>
             {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
               <View className="ml-5 h-px bg-border-subtle" />
             ) : null}
@@ -1169,6 +1215,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             "min-h-[44px] flex-row items-center gap-2.5 py-2",
             sidebarPane ? "px-3" : "px-5",
           )}
+          style={ownedIndent > 0 ? { marginLeft: ownedIndent } : undefined}
         >
           {props.project ? (
             <View className="opacity-40">
@@ -1204,6 +1251,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ) : null}
           </View>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {ownedToggle}
           <Text
             className={cn(
               "text-sm tabular-nums",

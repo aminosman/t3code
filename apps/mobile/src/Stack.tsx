@@ -56,6 +56,10 @@ import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
+import { MeetingScreen } from "./features/meetings/MeetingScreen";
+import { PhoneMeetingScreen } from "./features/meetings/PhoneMeetingScreen";
+import { RecordMeetingScreen } from "./features/meetings/RecordMeetingScreen";
+import { MeetingsScreen } from "./features/meetings/MeetingsScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectNewRoute } from "./features/projects/AddProjectNewRoute";
@@ -688,6 +692,35 @@ const RootStackConfig = createNativeStackNavigator({
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
       },
+    }),
+    Meetings: createNativeStackScreen({
+      screen: MeetingsScreen,
+      linking: "meetings",
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        title: "Meetings",
+        // Meetings sit to the left of Home, so they come in from the left.
+        animation: "slide_from_left",
+      },
+    }),
+    Meeting: createNativeStackScreen({
+      screen: MeetingScreen,
+      linking: "meetings/:environmentId/:meetingId",
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    MeetingRecord: createNativeStackScreen({
+      screen: RecordMeetingScreen,
+      linking: "meetings/record",
+      options: {
+        presentation: "fullScreenModal",
+        headerShown: false,
+        gestureEnabled: false,
+      },
+    }),
+    PhoneMeeting: createNativeStackScreen({
+      screen: PhoneMeetingScreen,
+      linking: "phone-meetings/:id",
+      options: GLASS_HEADER_OPTIONS,
     }),
     TuiInbox: createNativeStackScreen({
       screen: TuiInboxScreen,
