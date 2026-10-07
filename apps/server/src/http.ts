@@ -36,6 +36,8 @@ import {
   storeAttachmentUpload,
   validateAttachmentUploadToken,
 } from "./assets/AttachmentUpload.ts";
+import * as Meetings from "./historySearch/Meetings.ts";
+import * as PhoneMeetings from "./historySearch/PhoneMeetings.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -430,6 +432,40 @@ export const assetRouteLayer = HttpRouter.add(
     ).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );
+  }),
+);
+
+/** A phone meeting's audio, streamed into its folder under ~/Meetings (see PhoneMeetings.ts). */
+export const phoneMeetingAudioRouteLayer = HttpRouter.add(
+  "POST",
+  `${PhoneMeetings.PHONE_MEETING_AUDIO_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+    const token = url.value.pathname.slice(
+      `${PhoneMeetings.PHONE_MEETING_AUDIO_ROUTE_PREFIX}/`.length,
+    );
+    const claims = token ? yield* PhoneMeetings.validateAudioUploadToken(token) : null;
+    if (!claims) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    const contentLength = request.headers["content-length"];
+    if (contentLength !== undefined && Number(contentLength) !== claims.sizeBytes) {
+      return HttpServerResponse.text("Content-Length must match the upload size.", { status: 400 });
+    }
+    const dir = yield* Meetings.configuredDir;
+    const bodyPull = yield* Stream.toPull(request.stream);
+    const stored = yield* PhoneMeetings.storeAudioUpload(
+      dir,
+      claims,
+      Stream.fromPull(Effect.succeed(bodyPull)),
+    );
+    return stored.ok
+      ? HttpServerResponse.empty({ status: 204 })
+      : HttpServerResponse.text(stored.detail, { status: stored.status });
   }),
 );
 

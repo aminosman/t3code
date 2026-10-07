@@ -177,7 +177,9 @@ import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as TuiInbox from "./tuiInbox/TuiInbox.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
+import * as Meetings from "./historySearch/Meetings.ts";
 import * as MeetingsProject from "./historySearch/MeetingsProject.ts";
+import * as PhoneMeetings from "./historySearch/PhoneMeetings.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -3487,6 +3489,24 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.historyMeetingNotesWrite,
             history.writeMyNotes(input).pipe(Effect.mapError(historyFailed)),
+            { "rpc.aggregate": "history" },
+          ),
+        [WS_METHODS.historyPhoneMeetingUploadUrl]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.historyPhoneMeetingUploadUrl,
+            Meetings.configuredDir.pipe(
+              Effect.flatMap((dir) => PhoneMeetings.issueAudioUploadUrl(dir, input)),
+              Effect.mapError((error) => new HistoryApiError({ message: error.reason })),
+            ),
+            { "rpc.aggregate": "history" },
+          ),
+        [WS_METHODS.historyPhoneMeetingImport]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.historyPhoneMeetingImport,
+            Meetings.configuredDir.pipe(
+              Effect.flatMap((dir) => PhoneMeetings.importPhoneMeeting(dir, input)),
+              Effect.mapError((error) => new HistoryApiError({ message: error.reason })),
+            ),
             { "rpc.aggregate": "history" },
           ),
         [WS_METHODS.historyMeetingsProject]: () =>

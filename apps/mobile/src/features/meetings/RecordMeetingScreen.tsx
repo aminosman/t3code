@@ -29,7 +29,15 @@ import {
 
 type RecordMeetingScreenProps = StaticScreenProps<{ readonly kind?: PhoneMeetingKind } | undefined>;
 
-const RECORDING_OPTIONS = { ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true };
+// Speech quality: mono at 24 kHz, about 20 MB an hour, so long meetings send
+// quickly to the Mac; both transcribers resample to 16 kHz anyway.
+const RECORDING_OPTIONS = {
+  ...RecordingPresets.HIGH_QUALITY,
+  sampleRate: 24_000,
+  numberOfChannels: 1,
+  bitRate: 48_000,
+  isMeteringEnabled: true,
+};
 const BAR_COUNT = 9;
 /** The bars are fixed positions in a row; they are keyed by position name. */
 const BAR_KEYS = Array.from({ length: BAR_COUNT }, (_, slot) => `bar-${slot}`);
@@ -166,7 +174,7 @@ export function RecordMeetingScreen({ route }: RecordMeetingScreenProps) {
 
   const chips = [
     openedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
-    kind === "call" ? "Call on speaker" : "In person",
+    kind === "call" ? "Call on another device" : "In person",
   ];
 
   return (

@@ -29,6 +29,8 @@ export interface PhoneMeeting {
   readonly transcript: ReadonlyArray<PhoneTranscriptLine>;
   /** When the Mac took it; null while it is only on the phone. */
   readonly syncedAt: string | null;
+  /** Why the last attempt to send it to the Mac failed; cleared when it lands. */
+  readonly syncProblem?: string | null;
 }
 
 const ROOT = "phone-meetings";

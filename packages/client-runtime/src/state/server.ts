@@ -1314,6 +1314,16 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:history:meeting-notes-write",
       tag: WS_METHODS.historyMeetingNotesWrite,
     }),
+    /** A phone meeting's audio upload URL (null when the Mac already has it). */
+    phoneMeetingUploadUrl: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:history:phone-meeting-upload-url",
+      tag: WS_METHODS.historyPhoneMeetingUploadUrl,
+    }),
+    /** Puts a phone meeting's transcript, notes and meta.json beside its audio. */
+    phoneMeetingImport: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:history:phone-meeting-import",
+      tag: WS_METHODS.historyPhoneMeetingImport,
+    }),
     askMeetings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:history:ask-meetings",
       tag: WS_METHODS.historyAskMeetings,

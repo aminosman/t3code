@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { MeetingsScreen } from "../meetings/MeetingsScreen";
+import { usePhoneMeetingSync } from "../meetings/phone-meeting-sync";
 import { ChatsRouteScreen } from "./ChatsRouteScreen";
 import { HOME_TABS, HomeTabs, tabsBottom, type HomeTab } from "./HomeTabs";
 import { ShelvesHomeScreen, useHomeData } from "./ShelvesHomeScreen";
@@ -26,6 +27,8 @@ export function HomePager(props: { readonly page?: HomeTab }) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const data = useHomeData();
+  // Phone recordings go to the Mac by themselves whenever it is reachable.
+  usePhoneMeetingSync();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const position = useSharedValue(HOME_INDEX);
   const [page, setPage] = useState(HOME_INDEX);

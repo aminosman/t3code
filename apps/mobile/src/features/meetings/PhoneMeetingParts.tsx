@@ -6,6 +6,7 @@ import { AppText as Text } from "../../components/AppText";
 import { GrButton, GrCard, GUTTER, SERIF, SPACE } from "../../design/granola";
 import { meetingDayLabel, meetingTime } from "./meeting-notes";
 import { MeetingDayLabel, MeetingRowView } from "./meeting-rows";
+import { usePhoneMeetingSending } from "./phone-meeting-sync";
 import {
   clockTime,
   resumePendingTranscriptions,
@@ -13,17 +14,28 @@ import {
   type PhoneMeeting,
 } from "./phone-meetings";
 
-export function phoneMeetingStatus(meeting: PhoneMeeting): string {
-  switch (meeting.transcription) {
-    case "pending":
-      return "Transcribing on the phone…";
-    case "done":
-      return meeting.syncedAt ? "On your Mac" : "Not on your Mac yet";
-    case "unavailable":
-      return "Transcribing needs iOS 26";
-    case "failed":
-      return "Could not transcribe";
-  }
+/** Where a phone recording is: being transcribed, on its way, or on the Mac. */
+export function phoneMeetingStatus(meeting: PhoneMeeting, sending: boolean): string {
+  if (meeting.syncedAt) return "On your Mac";
+  if (meeting.transcription === "pending") return "Transcribing on the phone…";
+  if (sending) return "Sending to your Mac…";
+  return "Sends when your Mac is reachable";
+}
+
+function PhoneMeetingRow(props: { readonly meeting: PhoneMeeting; readonly onPress: () => void }) {
+  const { meeting } = props;
+  const sending = usePhoneMeetingSending(meeting.id);
+  return (
+    <MeetingRowView
+      title={meeting.title}
+      details={`${meetingDayLabel(meeting.startedAt)} ${meetingTime(meeting.startedAt)} · ${clockTime(meeting.durationSeconds)}`}
+      status={{
+        text: phoneMeetingStatus(meeting, sending),
+        tone: meeting.syncedAt ? "quiet" : "attention",
+      }}
+      onPress={props.onPress}
+    />
+  );
 }
 
 /**
@@ -46,7 +58,7 @@ export function PhoneMeetingsHeader() {
               Record a meeting
             </Text>
             <Text className="text-[13px] leading-[18px] text-gr-ink-2">
-              Recorded and transcribed on this phone, even with no connection.
+              Recorded and transcribed on this phone, even offline, then sent to your Mac.
             </Text>
           </View>
           <View className="flex-row" style={{ gap: SPACE.sm }}>
@@ -59,7 +71,7 @@ export function PhoneMeetingsHeader() {
             <GrButton
               grow
               kind="secondary"
-              label="Call on speaker"
+              label="Call on another device"
               leading={<View className="size-2 rounded-full bg-gr-danger" />}
               onPress={() => navigation.navigate("MeetingRecord", { kind: "call" })}
             />
@@ -71,14 +83,9 @@ export function PhoneMeetingsHeader() {
         <>
           <MeetingDayLabel>On this phone</MeetingDayLabel>
           {meetings.map((meeting) => (
-            <MeetingRowView
+            <PhoneMeetingRow
               key={meeting.id}
-              title={meeting.title}
-              details={`${meetingDayLabel(meeting.startedAt)} ${meetingTime(meeting.startedAt)} · ${clockTime(meeting.durationSeconds)}`}
-              status={{
-                text: phoneMeetingStatus(meeting),
-                tone: meeting.syncedAt ? "quiet" : "attention",
-              }}
+              meeting={meeting}
               onPress={() => navigation.navigate("PhoneMeeting", { id: meeting.id })}
             />
           ))}

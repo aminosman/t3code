@@ -8,6 +8,8 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { GrChip, SERIF } from "../../design/granola";
 import { meetingDayLabel, meetingTime } from "./meeting-notes";
 import { phoneMeetingStatus } from "./PhoneMeetingParts";
+import { syncPhoneMeeting, usePhoneMeetingSending } from "./phone-meeting-sync";
+import { useMeetingsEnvironment } from "./use-meetings-environment";
 import {
   clockTime,
   deletePhoneMeeting,
@@ -28,6 +30,8 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [view, setView] = useState<"transcript" | "mine">("transcript");
+  const sending = usePhoneMeetingSending(route.params.id);
+  const environmentId = useMeetingsEnvironment();
 
   if (!meeting) {
     return (
@@ -65,12 +69,38 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
           {[
             `${meetingDayLabel(meeting.startedAt)} ${meetingTime(meeting.startedAt)}`,
             clockTime(meeting.durationSeconds),
-            meeting.kind === "call" ? "Call on speaker" : "In person",
+            meeting.kind === "call" ? "Call on another device" : "In person",
           ].map((chip) => (
             <GrChip key={chip}>{chip}</GrChip>
           ))}
         </View>
-        <Text className="mt-2 text-2xs text-gr-attention">{phoneMeetingStatus(meeting)}</Text>
+        <View className="mt-3 flex-row items-center gap-3">
+          <Text
+            className={
+              meeting.syncedAt ? "text-[13px] text-gr-accent" : "text-[13px] text-gr-attention"
+            }
+          >
+            {phoneMeetingStatus(meeting, sending)}
+          </Text>
+          {!meeting.syncedAt && meeting.transcription !== "pending" && !sending && environmentId ? (
+            <Pressable
+              onPress={() => void syncPhoneMeeting(environmentId, meeting)}
+              hitSlop={8}
+              className="rounded-full border border-gr-hairline px-3 py-1"
+            >
+              <Text className="text-[13px] text-gr-ink">Send now</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {meeting.syncProblem && !meeting.syncedAt ? (
+          <Text className="mt-1 text-[12px] text-gr-ink-2">{meeting.syncProblem}</Text>
+        ) : null}
+        {meeting.syncedAt ? (
+          <Text className="mt-1 text-[12px] leading-[17px] text-gr-ink-2">
+            tui transcribes it again on the Mac, writes the notes and files it; it then appears
+            under your Mac's meetings.
+          </Text>
+        ) : null}
 
         <View className="mt-5 flex-row gap-1 self-start rounded-full bg-gr-sunken p-[3px]">
           {(
@@ -119,7 +149,13 @@ export function PhoneMeetingScreen({ route }: PhoneMeetingScreenProps) {
           </View>
         ) : (
           <View className="mt-5 gap-3">
-            <Text className="text-sm text-gr-ink-2">{phoneMeetingStatus(meeting)}</Text>
+            <Text className="text-sm text-gr-ink-2">
+              {meeting.transcription === "pending"
+                ? "Transcribing on the phone…"
+                : meeting.transcription === "unavailable"
+                  ? "This phone cannot transcribe (it needs iOS 26). The Mac will, once it has the recording."
+                  : "The phone could not transcribe this. The Mac will, once it has the recording."}
+            </Text>
             {meeting.transcription === "failed" ? (
               <Pressable
                 onPress={() => {
