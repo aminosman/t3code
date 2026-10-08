@@ -5,7 +5,7 @@ export interface AgentRow {
   readonly depth: number;
 }
 
-/** Every thread an owner started, at any depth, in the order they were made. */
+/** Every thread an owner started, at any depth, newest first at each level. */
 export function ownedThreadRows(
   threads: ReadonlyArray<EnvironmentThreadShell>,
   environmentId: string,
@@ -25,7 +25,7 @@ export function ownedThreadRows(
   const seen = new Set<string>([threadId]);
   const visit = (id: string, depth: number) => {
     const list = [...(children.get(id) ?? [])].sort((a, b) =>
-      a.createdAt.localeCompare(b.createdAt),
+      b.createdAt.localeCompare(a.createdAt),
     );
     for (const child of list) {
       if (seen.has(child.id)) continue;

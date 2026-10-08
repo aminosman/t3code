@@ -22,7 +22,7 @@ function thread(id: string, parent: string | null, createdAt: string): Environme
 }
 
 describe("ownedThreadRows", () => {
-  it("lists every agent under a thread, nested, in the order they were started", () => {
+  it("lists every agent under a thread, nested, newest first, each with the agents it started under it", () => {
     const rows = ownedThreadRows(
       [
         thread("owner", null, "2026-10-07T10:00:00.000Z"),
@@ -35,9 +35,9 @@ describe("ownedThreadRows", () => {
       "owner",
     );
     expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      ["second", 0],
       ["first", 0],
       ["grandchild", 1],
-      ["second", 0],
     ]);
   });
 });
