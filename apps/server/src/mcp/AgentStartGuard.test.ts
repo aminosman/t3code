@@ -15,7 +15,7 @@ const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
     Effect.map((error) => (error as { message: string }).message),
   );
 
-it.effect("lets one thread start a handful an hour, and a chain go four layers deep", () =>
+it.effect("stops only a runaway: STARTS_PER_HOUR an hour, MAX_DEPTH layers deep", () =>
   Effect.gen(function* () {
     const guard = yield* AgentStartGuard.AgentStartGuard;
     const start = (caller: ThreadId) =>
@@ -26,12 +26,12 @@ it.effect("lets one thread start a handful an hour, and a chain go four layers d
         return child;
       });
 
-    // A started thread may start its own, down to four layers below the user.
+    // A started thread may start its own, down to MAX_DEPTH layers below the user.
     let child = yield* start(user);
-    for (let layer = 2; layer <= 4; layer++) child = yield* start(child);
-    expect(yield* refusal(start(child))).toContain("4 layers");
+    for (let layer = 2; layer <= AgentStartGuard.MAX_DEPTH; layer++) child = yield* start(child);
+    expect(yield* refusal(start(child))).toContain(`${AgentStartGuard.MAX_DEPTH} layers`);
 
-    for (let index = 0; index < 4; index++) yield* start(user);
+    for (let index = 1; index < AgentStartGuard.STARTS_PER_HOUR; index++) yield* start(user);
     expect(yield* refusal(start(user))).toContain("ask the user");
     yield* TestClock.adjust("61 minutes");
     yield* start(user);
@@ -41,14 +41,15 @@ it.effect("lets one thread start a handful an hour, and a chain go four layers d
 it.effect("admits a batch only when all of it fits, and counts a retried start once", () =>
   Effect.gen(function* () {
     const guard = yield* AgentStartGuard.AgentStartGuard;
-    expect(yield* refusal(guard.admit(user, 6))).toContain("may start 5");
+    const cap = AgentStartGuard.STARTS_PER_HOUR;
+    expect(yield* refusal(guard.admit(user, cap + 1))).toContain(`may start ${cap}`);
     yield* guard.admit(user, 0);
 
     const child = fresh();
     yield* guard.record(user, [child]);
     // delegate_task with the same clientRequestId returns the same child.
     yield* guard.record(user, [child]);
-    yield* guard.admit(user, 4);
-    expect(yield* refusal(guard.admit(user, 5))).toContain("started 1 agents");
+    yield* guard.admit(user, cap - 1);
+    expect(yield* refusal(guard.admit(user, cap))).toContain("started 1 agents");
   }).pipe(Effect.provide(AgentStartGuard.layer)),
 );

@@ -10,17 +10,15 @@ import * as Ref from "effect/Ref";
  * them may go — the same two limits whichever tool starts them
  * (delegate_task, t3_thread_launch, create_threads).
  *
- * An agent an agent starts spends the user's allowance and lands in their
- * sidebar. One thread may start a handful an hour — a review, a second
- * opinion — and a thread started by an agent may itself start others, down to
- * MAX_DEPTH layers below a thread the user opened, so a review can ask for a
- * review of its own work but not without end (Amin, Sep 26 2026: "we should be
- * able to go … four layers deep, not just one"). These limits were Roost's own
- * t3_thread_create's; upstream's tools have none, and they replaced it
- * (Oct 5 2026). Both are in memory and reset with the server.
+ * They exist only to stop a runaway loop, never to ration agents (Amin, Oct 7
+ * 2026: "we shouldn't be capping it … the whole point is just to prevent
+ * runaway loops … let's make it really permissive", after a thread hit the old
+ * 5 an hour). The history: 1 layer, then 4 (Sep 26: "we should be able to go
+ * … four layers deep, not just one"), 5 starts an hour, until Oct 7. Both are
+ * in memory and reset with the server.
  */
-export const STARTS_PER_HOUR = 5;
-export const MAX_DEPTH = 4;
+export const STARTS_PER_HOUR = 200;
+export const MAX_DEPTH = 50;
 const HOUR_MS = 3_600_000;
 
 export class AgentStartGuard extends Context.Service<

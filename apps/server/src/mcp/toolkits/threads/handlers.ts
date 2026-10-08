@@ -48,10 +48,11 @@ const MAX_WAIT_SECONDS = 900;
 const WAIT_POLL = "2 seconds";
 /**
  * A message to an existing thread spends the user's allowance but makes no new
- * thread, so the cap is looser than AgentStartGuard's: enough for a conversation with a reviewer,
- * not enough for a loop between two agents to run unattended for long.
+ * thread. Like AgentStartGuard's limits this only stops a runaway loop between
+ * two agents, never a real conversation (Amin, Oct 7 2026: "really
+ * permissive"); it was 30 until then.
  */
-const SENDS_PER_HOUR = 30;
+export const SENDS_PER_HOUR = 1000;
 const HOUR_MS = 3_600_000;
 
 /** Why a provider cannot be picked right now; null when it can. */

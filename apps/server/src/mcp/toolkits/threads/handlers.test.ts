@@ -30,6 +30,7 @@ import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts
 import { HistorySearch, type HistorySearchInput } from "../../../historySearch/HistorySearch.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { SENDS_PER_HOUR } from "./handlers.ts";
 
 const homeProjectId = ProjectId.make("project-home");
 const workProjectId = ProjectId.make("project-work");
@@ -691,7 +692,7 @@ it.effect(
         expect(gone.isError).toBe(true);
         expect(text(gone)).toContain("no active thread");
 
-        for (let index = 1; index < 30; index++) {
+        for (let index = 1; index < SENDS_PER_HOUR; index++) {
           expect(
             (yield* call("t3_any_thread_send", { threadId: workThreadId, message: "go" })).isError,
           ).toBe(false);
@@ -706,7 +707,7 @@ it.effect(
       }).pipe(Effect.provide(layer));
 
       const inputs = yield* Ref.get(sends);
-      expect(inputs).toHaveLength(31);
+      expect(inputs).toHaveLength(SENDS_PER_HOUR + 1);
       const first = inputs[0]!;
       expect(first).toMatchObject({
         projectId: workProjectId,
