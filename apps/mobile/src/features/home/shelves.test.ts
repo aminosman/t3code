@@ -3,7 +3,15 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadShellFixture } from "../../test-fixtures";
-import { buildShelves, SHELF_ORDER, shelfCardState, shortAgo } from "./shelves";
+import {
+  activityAt,
+  buildShelves,
+  recentProjectKeys,
+  SHELF_ORDER,
+  shelfCardState,
+  shelfStatusLine,
+  shortAgo,
+} from "./shelves";
 
 const environmentId = EnvironmentId.make("environment-1");
 const NOW = Date.parse("2026-10-06T12:00:00.000Z");
@@ -81,6 +89,17 @@ describe("shelfCardState — the desktop's statuses, then the rest", () => {
     expect(
       shelfCardState(thread("b", { ...finished, lastVisitedAt: "2026-10-06T11:45:00.000Z" })),
     ).toBe("done");
+  });
+
+  it("files an unseen failure under Failed, marked unread, not under Completed", () => {
+    const unseenFailure = thread("f", {
+      latestRun: run("failed", "2026-10-06T11:30:00.000Z"),
+      lastVisitedAt: "2026-10-06T11:00:00.000Z",
+    });
+    expect(shelfCardState(unseenFailure)).toBe("error");
+    const shelves = buildShelves([unseenFailure], NOW);
+    expect(shelves.error[0]?.unread).toBe(true);
+    expect(shelves.completed).toEqual([]);
   });
 
   it("splits what went wrong from a usage limit, and stopped from never started", () => {
@@ -167,5 +186,50 @@ describe("shortAgo", () => {
     expect(shortAgo("2026-10-06T11:56:00.000Z", NOW)).toBe("4m");
     expect(shortAgo("2026-10-06T10:00:00.000Z", NOW)).toBe("2h");
     expect(shortAgo("2026-10-03T12:00:00.000Z", NOW)).toBe("3d");
+  });
+});
+
+describe("project pills", () => {
+  const inProject = (id: string, project: string, at: string) =>
+    thread(id, {
+      projectId: project as never,
+      latestRun: run("completed", at),
+    });
+
+  it("lists projects most recently active first, and filters every row to one", () => {
+    const threads = [
+      inProject("a", "older", "2026-10-06T08:00:00.000Z"),
+      inProject("b", "newer", "2026-10-06T11:00:00.000Z"),
+      inProject("c", "older", "2026-10-06T09:00:00.000Z"),
+    ];
+    expect(recentProjectKeys(threads)).toEqual(["environment-1:newer", "environment-1:older"]);
+    const filtered = buildShelves(threads, NOW, "environment-1:older");
+    expect(filtered.done.map((card) => card.thread.title)).toEqual(["c", "a"]);
+  });
+});
+
+describe("shelfStatusLine", () => {
+  const card = (overrides: Partial<EnvironmentThreadShell>) => {
+    const t = thread("x", overrides);
+    return {
+      thread: t,
+      state: shelfCardState(t),
+      agentCount: 0,
+      agentsWorking: 0,
+      activityAt: activityAt(t),
+    };
+  };
+  it("says how long ago a thread finished, and how long one has been working", () => {
+    expect(
+      shelfStatusLine(card({ latestRun: run("completed", "2026-10-06T09:00:00.000Z") }), NOW),
+    ).toBe("Done · 3h ago");
+    expect(
+      shelfStatusLine(card({ latestRun: run("failed", "2026-10-05T12:00:00.000Z") }), NOW),
+    ).toBe("Failed · 1d ago");
+    const working = card({
+      runtime: runtime("running"),
+      latestRun: { ...run("running", null)!, startedAt: "2026-10-06T11:48:00.000Z" } as never,
+    });
+    expect(shelfStatusLine(working, NOW)).toBe("Working · 12m");
   });
 });

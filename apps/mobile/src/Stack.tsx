@@ -56,6 +56,7 @@ import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
+import { OwnedThreadsSheet } from "./features/home/OwnedThreadsSheet";
 import { MeetingScreen } from "./features/meetings/MeetingScreen";
 import { PhoneMeetingScreen } from "./features/meetings/PhoneMeetingScreen";
 import { RecordMeetingScreen } from "./features/meetings/RecordMeetingScreen";
@@ -707,6 +708,15 @@ const RootStackConfig = createNativeStackNavigator({
       screen: MeetingScreen,
       linking: "meetings/:environmentId/:meetingId",
       options: GLASS_HEADER_OPTIONS,
+    }),
+    OwnedThreads: createNativeStackScreen({
+      screen: OwnedThreadsSheet,
+      linking: `${THREAD_LINKING_PREFIX}/owned`,
+      options: {
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.6, 1],
+        sheetGrabberVisible: true,
+      },
     }),
     MeetingRecord: createNativeStackScreen({
       screen: RecordMeetingScreen,

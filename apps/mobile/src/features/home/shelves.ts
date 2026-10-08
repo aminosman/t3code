@@ -54,6 +54,8 @@ export interface ShelfCard {
   readonly agentsWorking: number;
   /** When the card's state last changed, for ordering and "2m". */
   readonly activityAt: string;
+  /** Something happened since the user last opened it (the server's visited watermark). */
+  readonly unread?: boolean;
 }
 
 export type Shelves = Readonly<Record<ShelfKind, ReadonlyArray<ShelfCard>>>;
@@ -86,14 +88,16 @@ export function shelfCardState(thread: EnvironmentThreadShell): ShelfCardState {
   ) {
     return "plan-ready";
   }
-  if (threadHasUnseenCompletion(thread)) return "completed";
+  // What went wrong wins over "unseen": an unseen failure is Failed, with
+  // the unread dot, not Completed.
   if (status === "failed") {
     return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "error";
   }
-  if (thread.latestRun?.status === "failed") return "error";
   const run = thread.latestRun?.status;
+  if (run === "failed") return "error";
   if (run === "interrupted" || run === "cancelled" || run === "rolled_back") return "stopped";
   if (thread.latestRun === null) return "new";
+  if (threadHasUnseenCompletion(thread)) return "completed";
   return "done";
 }
 
@@ -102,7 +106,7 @@ export function shelfNeedsUser(kind: ShelfKind): boolean {
   return kind === "needs-approval" || kind === "needs-input" || kind === "plan-ready";
 }
 
-function activityAt(thread: EnvironmentThreadShell): string {
+export function activityAt(thread: EnvironmentThreadShell): string {
   return thread.latestRun?.completedAt ?? thread.latestUserMessageAt ?? thread.updatedAt;
 }
 
@@ -127,6 +131,8 @@ function byRecent(a: ShelfCard, b: ShelfCard): number {
 export function buildShelves(
   threads: ReadonlyArray<EnvironmentThreadShell>,
   now: number = Date.now(),
+  /** Only threads in this project (`environmentId:projectId`); null for all. */
+  projectKey: string | null = null,
 ): Shelves {
   // Subagents by the top-level thread they belong to.
   const byKey = new Map(threads.map((thread) => [threadKey(thread), thread] as const));
@@ -160,6 +166,8 @@ export function buildShelves(
   ) as Record<ShelfKind, ShelfCard[]>;
   for (const thread of threads) {
     if (isSubagent(thread) || thread.archivedAt !== null || thread.deletedAt !== null) continue;
+    if (projectKey !== null && `${thread.environmentId}:${thread.projectId}` !== projectKey)
+      continue;
     if (isSnoozed(thread, now)) continue;
     const state = shelfCardState(thread);
     const team = agents.get(threadKey(thread));
@@ -169,6 +177,7 @@ export function buildShelves(
       agentCount: team?.count ?? 0,
       agentsWorking: team?.working ?? 0,
       activityAt: activityAt(thread),
+      unread: threadHasUnseenCompletion(thread),
     };
     if (state === "done") {
       // Finished and seen: the last three days stay on the home screen.
@@ -247,4 +256,56 @@ export function shelfPreview(thread: EnvironmentThreadShell): string | null {
     .trim();
   if (!plain) return null;
   return plain.length > 180 ? `${plain.slice(0, 179)}…` : plain;
+}
+
+/** A thread's project key, as the project pills filter by. */
+export function shelfProjectKey(
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "projectId">,
+) {
+  return `${thread.environmentId}:${thread.projectId}`;
+}
+
+/**
+ * Projects with a thread on the home screen, most recently active first —
+ * the order of the pills above the rows.
+ */
+export function recentProjectKeys(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+): ReadonlyArray<string> {
+  const latest = new Map<string, string>();
+  for (const thread of threads) {
+    if (isSubagent(thread) || thread.archivedAt !== null || thread.deletedAt !== null) continue;
+    const key = shelfProjectKey(thread);
+    const at = activityAt(thread);
+    const seen = latest.get(key);
+    if (seen === undefined || at > seen) latest.set(key, at);
+  }
+  return [...latest.entries()].sort((a, b) => b[1].localeCompare(a[1])).map(([key]) => key);
+}
+
+/**
+ * The status with its time, in words: "Done · 3h ago", "Failed · 1d ago",
+ * "Working · 12m" (how long it has been at it), "Awaiting input · 5m".
+ */
+export function shelfStatusLine(card: ShelfCard, now: number = Date.now()): string {
+  const label = shelfStateLabel(card.state);
+  switch (card.state) {
+    case "done":
+    case "completed":
+    case "error":
+    case "limited":
+    case "stopped": {
+      const ago = shortAgo(card.activityAt, now);
+      return ago === "now" ? `${label} · just now` : `${label} · ${ago} ago`;
+    }
+    case "working":
+    case "connecting": {
+      const since = card.thread.latestRun?.startedAt ?? card.thread.latestRun?.requestedAt ?? null;
+      return since ? `${label} · ${shortAgo(since, now)}` : label;
+    }
+    case "new":
+      return label;
+    default:
+      return `${label} · ${shortAgo(card.activityAt, now)}`;
+  }
 }

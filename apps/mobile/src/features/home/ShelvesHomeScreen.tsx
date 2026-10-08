@@ -3,7 +3,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, {
   cancelAnimation,
@@ -40,8 +40,9 @@ import {
   SHELF_ORDER,
   shelfNeedsUser,
   shelfPreview,
+  recentProjectKeys,
   shelfStateLabel,
-  shortAgo,
+  shelfStatusLine,
   type ShelfCard,
   type ShelfCardState,
   type ShelfKind,
@@ -115,6 +116,7 @@ function ShelfCardView(props: {
   readonly projectTitle: string;
   readonly now: number;
   readonly onPress: () => void;
+  readonly onShowAgents: () => void;
 }) {
   const { card } = props;
   const quiet = card.state === "done" || card.state === "stopped" || card.state === "new";
@@ -131,7 +133,7 @@ function ShelfCardView(props: {
   return (
     <GrCard
       onPress={props.onPress}
-      accessibilityLabel={`${card.thread.title}, ${props.projectTitle}, ${shelfStateLabel(card.state)}`}
+      accessibilityLabel={`${card.unread ? "Unread, " : ""}${card.thread.title}, ${props.projectTitle}, ${shelfStateLabel(card.state)}`}
       style={{
         width: CARD_WIDTH,
         height: CARD_HEIGHT,
@@ -145,7 +147,9 @@ function ShelfCardView(props: {
         <Text className="flex-1 text-[12px] text-gr-ink-2" numberOfLines={1}>
           {props.projectTitle}
         </Text>
-        <Text className="text-[12px] text-gr-ink-3">{shortAgo(card.activityAt, props.now)}</Text>
+        {card.unread ? (
+          <View accessibilityLabel="Unread" className="size-2 rounded-full bg-gr-accent" />
+        ) : null}
       </View>
       <Text
         className={
@@ -173,19 +177,26 @@ function ShelfCardView(props: {
       <View className="mt-auto flex-row items-center justify-between">
         <View className="flex-row items-center gap-1.5">
           <PulseDot className={tone.dot} pulse={card.state === "working"} />
-          <Text className={`font-t3-medium text-[12px] ${tone.text}`}>
-            {shelfStateLabel(card.state)}
+          <Text className={`font-t3-medium text-[12px] ${tone.text}`} numberOfLines={1}>
+            {shelfStatusLine(card, props.now)}
           </Text>
         </View>
         {card.agentCount > 0 ? (
-          <View className="flex-row items-center gap-1">
-            <SymbolView name="sparkles" size={10} tintColorClassName="accent-gr-ink-3" />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Show the ${card.agentCount} agents under this thread`}
+            hitSlop={10}
+            onPress={props.onShowAgents}
+            className="flex-row items-center gap-1 rounded-full border border-gr-hairline px-2 py-0.5 active:bg-gr-sunken"
+          >
+            <SymbolView name="sparkles" size={10} tintColorClassName="accent-gr-ink-2" />
             <Text className="text-[12px] text-gr-ink-2">
               {card.agentsWorking > 0
-                ? `${card.agentsWorking} of ${card.agentCount} working`
-                : `${card.agentCount} agent${card.agentCount === 1 ? "" : "s"}`}
+                ? `${card.agentsWorking}/${card.agentCount}`
+                : `${card.agentCount}`}
             </Text>
-          </View>
+            <SymbolView name="chevron.right" size={9} tintColorClassName="accent-gr-ink-3" />
+          </Pressable>
         ) : null}
       </View>
     </GrCard>
@@ -230,6 +241,60 @@ function LiveMeetingCard(props: {
         <Text className="font-t3-medium text-[12px] text-gr-danger">Recording on the Mac</Text>
       </View>
     </GrCard>
+  );
+}
+
+/**
+ * One capsule per project with something on Home, most recently active
+ * first, after "All". Tapping one shows only that project's threads on every
+ * row; tapping it again (or All) shows everything.
+ */
+function ProjectPills(props: {
+  readonly keys: ReadonlyArray<string>;
+  readonly titles: ReadonlyMap<string, string>;
+  readonly selected: string | null;
+  readonly onSelect: (key: string | null) => void;
+}) {
+  const pill = (key: string | null, label: string) => {
+    const on = props.selected === key;
+    return (
+      <Pressable
+        key={key ?? "all"}
+        accessibilityRole="button"
+        accessibilityState={{ selected: on }}
+        onPress={() => props.onSelect(on && key !== null ? null : key)}
+        className={
+          on
+            ? "h-8 flex-row items-center gap-1.5 rounded-full bg-gr-button px-3"
+            : "h-8 flex-row items-center gap-1.5 rounded-full border border-gr-hairline bg-gr-raised px-3 active:bg-gr-sunken"
+        }
+      >
+        {key !== null ? <GrTile name={label} size={16} /> : null}
+        <Text
+          className={
+            on
+              ? "text-[13px] font-t3-medium text-gr-button-ink"
+              : "text-[13px] text-gr-ink-2-strong"
+          }
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+      </Pressable>
+    );
+  };
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentInsetAdjustmentBehavior="never"
+      // The pills run to the screen edge, starting on the page margin.
+      style={{ marginHorizontal: -GUTTER }}
+      contentContainerStyle={{ paddingHorizontal: GUTTER, gap: SPACE.sm }}
+    >
+      {pill(null, "All")}
+      {props.keys.map((key) => pill(key, props.titles.get(key) ?? "Project"))}
+    </ScrollView>
   );
 }
 
@@ -310,7 +375,22 @@ export function ShelvesHomeScreen(props: {
   const insets = useSafeAreaInsets();
   const projects = useProjects();
   const openThread = useHomeThreadSelection();
-  const { now, shelves, environmentId, connected, meetingsEnvironmentId, liveMeeting } = props.data;
+  const {
+    now,
+    shelves: allShelves,
+    environmentId,
+    connected,
+    meetingsEnvironmentId,
+    liveMeeting,
+  } = props.data;
+  // Project pills: one project's threads on every row, or all of them.
+  const threads = useThreadShells();
+  const [projectKey, setProjectKey] = useState<string | null>(null);
+  const projectShelves = useMemo(
+    () => (projectKey === null ? null : buildShelves(threads, now, projectKey)),
+    [now, projectKey, threads],
+  );
+  const shelves = projectShelves ?? allShelves;
   const [composing, setComposing] = useState(false);
 
   const projectTitles = useMemo(() => {
@@ -320,6 +400,11 @@ export function ShelvesHomeScreen(props: {
     }
     return titles;
   }, [projects]);
+
+  const pillKeys = useMemo(
+    () => recentProjectKeys(threads).filter((key) => projectTitles.has(key)),
+    [projectTitles, threads],
+  );
 
   const go = props.onShowPage;
   const openMeeting = (meeting: HistoryMeetingSummary) => {
@@ -332,7 +417,9 @@ export function ShelvesHomeScreen(props: {
 
   // One row per status; a status with nothing in it takes no room.
   const visibleShelves = SHELF_ORDER.filter(
-    (kind) => shelves[kind].length > 0 || (kind === "working" && liveMeeting !== null),
+    (kind) =>
+      shelves[kind].length > 0 ||
+      (kind === "working" && liveMeeting !== null && projectKey === null),
   );
   const cardFor = (card: ShelfCard) => (
     <ShelfCardView
@@ -343,6 +430,12 @@ export function ShelvesHomeScreen(props: {
         projectTitles.get(`${card.thread.environmentId}:${card.thread.projectId}`) ?? "Thread"
       }
       onPress={() => openThread(card.thread)}
+      onShowAgents={() =>
+        navigation.navigate("OwnedThreads", {
+          environmentId: card.thread.environmentId,
+          threadId: card.thread.id,
+        })
+      }
     />
   );
 
@@ -354,6 +447,16 @@ export function ShelvesHomeScreen(props: {
         month: "long",
       })}
       title={greeting(new Date(now))}
+      below={
+        pillKeys.length > 1 ? (
+          <ProjectPills
+            keys={pillKeys}
+            titles={projectTitles}
+            selected={projectKey}
+            onSelect={setProjectKey}
+          />
+        ) : undefined
+      }
       note={
         !connected && environmentId ? (
           <Text className="text-[13px] text-gr-attention">
@@ -403,10 +506,13 @@ export function ShelvesHomeScreen(props: {
             key={kind}
             title={SHELF_TITLES[kind]}
             working={kind === "working"}
-            count={shelves[kind].length + (kind === "working" && liveMeeting ? 1 : 0)}
+            count={
+              shelves[kind].length +
+              (kind === "working" && liveMeeting && projectKey === null ? 1 : 0)
+            }
             onSeeAll={() => go("chats")}
           >
-            {kind === "working" && liveMeeting ? (
+            {kind === "working" && liveMeeting && projectKey === null ? (
               <LiveMeetingCard meeting={liveMeeting} onPress={() => openMeeting(liveMeeting)} />
             ) : null}
             {shelves[kind].map(cardFor)}
