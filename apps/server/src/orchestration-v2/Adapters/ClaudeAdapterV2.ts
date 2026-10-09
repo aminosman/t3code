@@ -876,7 +876,12 @@ export function makeClaudeQueryOptions(input: {
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
-    ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+    // Roost owns MCP servers for this session: its own and the user's
+    // connections. Strict config keeps the home's `.claude.json` entries
+    // (the same servers, unauthenticated) from loading beside them.
+    ...(input.mcpServers === undefined
+      ? {}
+      : { mcpServers: input.mcpServers, strictMcpConfig: true }),
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
@@ -944,9 +949,12 @@ export function claudeMcpQueryOverrides(input: {
   if (session === undefined) {
     return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
   }
+  const connections = session.connections ?? [];
+  // User MCP connections are pre-approved like t3-code, except in a
+  // read-only sandbox, where nothing about a third-party tool says it is safe.
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
-    : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+    : [CLAUDE_T3_MCP_TOOL_WILDCARD, ...connections.map((connection) => `mcp__${connection.id}__*`)];
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
@@ -958,6 +966,17 @@ export function claudeMcpQueryOverrides(input: {
         },
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
+      ...Object.fromEntries(
+        connections.map((connection) => [
+          connection.id,
+          {
+            type: "http" as const,
+            url: connection.endpoint,
+            headers: { Authorization: session.authorizationHeader },
+            timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+          },
+        ]),
+      ),
     },
   };
 }
@@ -3804,9 +3823,17 @@ export function makeClaudeAdapterV2(
                   : {
                       ...itemBase,
                       type: "dynamic_tool",
-                      ...(input.presentation?.toolSource === undefined
-                        ? {}
-                        : { toolSource: input.presentation.toolSource }),
+                      ...(() => {
+                        // The CLI brands its MCP tools itself; a user
+                        // connection it did not describe is branded here.
+                        const toolSource =
+                          input.presentation?.toolSource ??
+                          McpProviderSession.toolSourceForMcpServer(
+                            input.threadId,
+                            McpProviderSession.mcpServerFromFlattenedToolName(input.toolName),
+                          );
+                        return toolSource === undefined ? {} : { toolSource };
+                      })(),
                       toolName: input.toolName,
                       ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
                       input: claudeNativeToolInputValue(input.toolInput),

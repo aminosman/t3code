@@ -214,6 +214,16 @@ export function cursorMcpServers(threadId: ThreadId): Record<string, McpServerCo
         Authorization: session.authorizationHeader,
       },
     },
+    ...Object.fromEntries(
+      (session.connections ?? []).map((connection) => [
+        connection.id,
+        {
+          type: "http" as const,
+          url: connection.endpoint,
+          headers: { Authorization: session.authorizationHeader },
+        },
+      ]),
+    ),
   };
 }
 
@@ -1268,6 +1278,16 @@ export function makeCursorAdapterV2(
                 ...base,
                 type: "dynamic_tool",
                 toolName: cursorToolName(toolCall),
+                ...(() => {
+                  const toolSource =
+                    toolCall.type === "mcp"
+                      ? McpProviderSession.toolSourceForMcpServer(
+                          active.target.threadId,
+                          toolCall.args.providerIdentifier,
+                        )
+                      : undefined;
+                  return toolSource === undefined ? {} : { toolSource };
+                })(),
                 input: toolCall.args,
                 ...(cursorToolOutput(toolCall) === undefined
                   ? {}

@@ -76,6 +76,9 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as McpConnectionProxy from "./mcp/connections/McpConnectionProxy.ts";
+import * as McpConnectionService from "./mcp/connections/McpConnectionService.ts";
+import * as McpStdioHost from "./mcp/connections/McpStdioHost.ts";
 import * as Embedder from "./historySearch/Embedder.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -565,6 +568,12 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   ReplayMarkers.layer,
 ).pipe(
   // Core Services
+  // User MCP connections sit above orchestration (the session manager asks
+  // which servers a thread gets) and below settings and the secret store.
+  Layer.provideMerge(McpConnectionService.layer),
+  // The proxy route reaches the stdio host directly, so it is merged, not
+  // just handed to the service.
+  Layer.provideMerge(McpStdioHost.layer),
   Layer.provideMerge(OrchestrationApplicationLayerLive),
   Layer.provideMerge(OrchestrationEventInfrastructureLayerLive),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
@@ -679,6 +688,11 @@ const makeRoutesLayer = Layer.mergeAll(
     attachmentUploadRouteLayer,
     phoneMeetingAudioRouteLayer,
     deviceHubProxyRouteLayer,
+    // User MCP connections: the per-connection proxy agents call and the
+    // OAuth redirect the browser lands on. Outside the environment auth
+    // stack like `/mcp`; the proxy checks the per-thread bearer itself.
+    McpConnectionProxy.mcpConnectionProxyRouteLayer,
+    McpConnectionProxy.mcpConnectionCallbackRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

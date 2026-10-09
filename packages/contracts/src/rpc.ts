@@ -339,6 +339,18 @@ import {
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
+  McpConnectionConnectInput,
+  McpConnectionConnectResult,
+  McpConnectionDisconnectInput,
+  McpConnectionError,
+  McpConnectionRemoveInput,
+  McpConnectionSetBearerTokenInput,
+  McpConnectionStatuses,
+  McpConnectionTestInput,
+  McpConnectionTestResult,
+  McpConnectionUpsertInput,
+} from "./mcpConnections.ts";
+import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
   ScheduledTaskError,
@@ -522,6 +534,15 @@ export const WS_METHODS = {
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
+
+  // MCP connections
+  mcpConnectionsUpsert: "mcpConnections.upsert",
+  mcpConnectionsRemove: "mcpConnections.remove",
+  mcpConnectionsSetBearerToken: "mcpConnections.setBearerToken",
+  mcpConnectionsConnect: "mcpConnections.connect",
+  mcpConnectionsDisconnect: "mcpConnections.disconnect",
+  mcpConnectionsTest: "mcpConnections.test",
+  mcpConnectionsSubscribe: "mcpConnections.subscribe",
 
   // Scheduled tasks
   scheduledTasksList: "scheduledTasks.list",
@@ -1781,6 +1802,45 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const McpConnectionRpcError = Schema.Union([McpConnectionError, EnvironmentAuthorizationError]);
+
+const WsMcpConnectionsUpsertRpc = Rpc.make(WS_METHODS.mcpConnectionsUpsert, {
+  payload: McpConnectionUpsertInput,
+  success: Schema.Void,
+  error: McpConnectionRpcError,
+});
+const WsMcpConnectionsRemoveRpc = Rpc.make(WS_METHODS.mcpConnectionsRemove, {
+  payload: McpConnectionRemoveInput,
+  success: Schema.Void,
+  error: McpConnectionRpcError,
+});
+const WsMcpConnectionsSetBearerTokenRpc = Rpc.make(WS_METHODS.mcpConnectionsSetBearerToken, {
+  payload: McpConnectionSetBearerTokenInput,
+  success: Schema.Void,
+  error: McpConnectionRpcError,
+});
+const WsMcpConnectionsConnectRpc = Rpc.make(WS_METHODS.mcpConnectionsConnect, {
+  payload: McpConnectionConnectInput,
+  success: McpConnectionConnectResult,
+  error: McpConnectionRpcError,
+});
+const WsMcpConnectionsDisconnectRpc = Rpc.make(WS_METHODS.mcpConnectionsDisconnect, {
+  payload: McpConnectionDisconnectInput,
+  success: Schema.Void,
+  error: McpConnectionRpcError,
+});
+const WsMcpConnectionsTestRpc = Rpc.make(WS_METHODS.mcpConnectionsTest, {
+  payload: McpConnectionTestInput,
+  success: McpConnectionTestResult,
+  error: McpConnectionRpcError,
+});
+const WsMcpConnectionsSubscribeRpc = Rpc.make(WS_METHODS.mcpConnectionsSubscribe, {
+  payload: Schema.Struct({}),
+  success: McpConnectionStatuses,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsScheduledTasksListRpc = Rpc.make(WS_METHODS.scheduledTasksList, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -1888,6 +1948,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
+  WsMcpConnectionsUpsertRpc,
+  WsMcpConnectionsRemoveRpc,
+  WsMcpConnectionsSetBearerTokenRpc,
+  WsMcpConnectionsConnectRpc,
+  WsMcpConnectionsDisconnectRpc,
+  WsMcpConnectionsTestRpc,
+  WsMcpConnectionsSubscribeRpc,
   WsScheduledTasksListRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,

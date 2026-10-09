@@ -1,4 +1,24 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  McpConnectionId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  ToolActivitySource,
+} from "@t3tools/contracts";
+
+/**
+ * One user MCP connection as this session sees it: a Roost endpoint beside
+ * `/mcp`, reached with the same per-thread bearer. `projectId` names the
+ * sign-in the proxy uses; `url` is the upstream for timeline icons.
+ */
+export interface McpProviderSessionConnection {
+  readonly id: McpConnectionId;
+  readonly name: string;
+  readonly projectId: ProjectId | null;
+  readonly endpoint: string;
+  readonly url?: string;
+}
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -22,6 +42,67 @@ export interface McpProviderSessionConfig {
    * already pointed at the server's daemon; the agent never handles a token.
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /** User MCP connections usable for this thread's project, injected beside `t3-code`. */
+  readonly connections?: ReadonlyArray<McpProviderSessionConnection>;
+}
+
+/** The connections a thread's session carries, or none when it has no credential yet. */
+export function readMcpProviderSessionConnections(
+  threadId: ThreadId,
+): ReadonlyArray<McpProviderSessionConnection> {
+  return sessionsByThread.get(threadId)?.connections ?? [];
+}
+
+/**
+ * How a tool call from a user MCP connection is branded in the timeline: the
+ * connection's display name and, for remote servers, the site's favicon.
+ * Agents name the server by its id in every flattening they use, so the
+ * lookup tolerates case and `-`/`_` swaps.
+ */
+export function mcpConnectionToolSource(
+  connection: McpProviderSessionConnection,
+): ToolActivitySource {
+  return {
+    key: `mcp:${connection.id}`,
+    name: connection.name,
+    kind: "integration",
+    ...(connection.url === undefined
+      ? {}
+      : { icon: { _tag: "website", pageUrl: new URL(connection.url).origin } }),
+  };
+}
+
+const normalizeServerName = (value: string) => value.toLowerCase().replaceAll("_", "-");
+
+export function findMcpProviderSessionConnection(
+  threadId: ThreadId,
+  serverName: string,
+): McpProviderSessionConnection | undefined {
+  const wanted = normalizeServerName(serverName);
+  return readMcpProviderSessionConnections(threadId).find(
+    (connection) => normalizeServerName(connection.id) === wanted,
+  );
+}
+
+/** The branding for `serverName` when it is one of this thread's connections. */
+export function toolSourceForMcpServer(
+  threadId: ThreadId,
+  serverName: string | undefined,
+): ToolActivitySource | undefined {
+  if (serverName === undefined) return undefined;
+  const connection = findMcpProviderSessionConnection(threadId, serverName);
+  return connection === undefined ? undefined : mcpConnectionToolSource(connection);
+}
+
+/** The server half of a `mcp__<server>__<tool>` name, as Claude and Cursor flatten MCP tools. */
+export function mcpServerFromFlattenedToolName(toolName: string): string | undefined {
+  const match = /^mcp__(?<server>.+?)__(?<tool>.+)$/u.exec(toolName);
+  return match?.groups?.server;
+}
+
+/** The endpoint Roost serves a connection at, beside the `t3-code` endpoint. */
+export function mcpConnectionEndpoint(baseEndpoint: string, id: McpConnectionId): string {
+  return `${baseEndpoint}/connections/${id}`;
 }
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */

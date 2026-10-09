@@ -8,16 +8,13 @@ import {
 } from "./ProviderTextDeltaCoalescer.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  CommandId,
   CheckpointId,
   CodexSettings,
+  CommandId,
   EnvironmentId,
+  McpConnectionId,
   MessageId,
-  type ModelSelection,
   NodeId,
-  type OrchestrationV2AppThread,
-  type OrchestrationV2ProviderThread,
-  type OrchestrationV2ProviderTurn,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -27,6 +24,10 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  type ModelSelection,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -622,6 +623,14 @@ describe("CodexAdapterV2 process spawning", () => {
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-codex-token",
       browserToolsAvailable: true,
+      connections: [
+        {
+          id: McpConnectionId.make("oneleet"),
+          name: "Oneleet",
+          projectId: ProjectId.make("project-codex"),
+          endpoint: "http://127.0.0.1:43123/mcp/connections/oneleet",
+        },
+      ],
     });
 
     try {
@@ -643,6 +652,12 @@ describe("CodexAdapterV2 process spawning", () => {
             mcp_servers: {
               "t3-code": {
                 url: "http://127.0.0.1:43123/mcp",
+                http_headers: {
+                  Authorization: "Bearer secret-codex-token",
+                },
+              },
+              oneleet: {
+                url: "http://127.0.0.1:43123/mcp/connections/oneleet",
                 http_headers: {
                   Authorization: "Bearer secret-codex-token",
                 },

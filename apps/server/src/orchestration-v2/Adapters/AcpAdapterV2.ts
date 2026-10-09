@@ -676,6 +676,8 @@ interface AcpMcpContext {
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly endpoint?: string;
   readonly authorization?: string;
+  /** Every server the MCP-over-ACP bridge may connect, by the id the agent names. */
+  readonly bridgeServers?: ReadonlyMap<string, { endpoint: string; authorization: string }>;
 }
 
 function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpContext {
@@ -690,22 +692,44 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
   // every ACP session gets the `t3 acp-mcp-bridge` stdio server, which
   // forwards JSON-RPC to T3's authenticated MCP endpoint. The credential
   // travels via environment variables, never the command line.
+  const stdioServer = (name: string, endpoint: string): EffectAcpSchema.McpServer => ({
+    name,
+    command: self.command,
+    args: [...selfInvocationArgs(self, ["acp-mcp-bridge"])],
+    env: [
+      { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+      { name: "T3_ACP_MCP_ENDPOINT", value: endpoint },
+      { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+    ],
+  });
+  // User MCP connections ride the same bridge, one process per server, each
+  // pointed at its own Roost endpoint with the same per-thread bearer.
+  const connections = session.connections ?? [];
   return {
     servers: [
-      {
-        name: "t3-code",
-        command: self.command,
-        args: [...selfInvocationArgs(self, ["acp-mcp-bridge"])],
-        env: [
-          { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-          { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
-          { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
-        ],
-      },
+      stdioServer("t3-code", session.endpoint),
+      ...connections.map((connection) => stdioServer(connection.id, connection.endpoint)),
     ],
-    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    acpServers: [
+      { type: "acp", name: "t3-code", serverId: "t3-code" },
+      ...connections.map((connection): EffectAcpSchema.McpServer => ({
+        type: "acp",
+        name: connection.id,
+        serverId: connection.id,
+      })),
+    ],
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
+    bridgeServers: new Map([
+      ["t3-code", { endpoint: session.endpoint, authorization: session.authorizationHeader }],
+      ...connections.map(
+        (connection) =>
+          [
+            connection.id,
+            { endpoint: connection.endpoint, authorization: session.authorizationHeader },
+          ] as const,
+      ),
+    ]),
     processEnvironment: {
       T3_ACP_MCP_ENDPOINT: session.endpoint,
       T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
@@ -3223,6 +3247,9 @@ export function makeAcpAdapterV2(
           // agent-specific shape and project the same branded dynamic_tool
           // item native providers produce (e.g. the T3 orchestration tools).
           const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
+            knownServers: McpProviderSession.readMcpProviderSessionConnections(
+              context.input.threadId,
+            ).map((connection) => connection.id),
             embeddedTerminalCommands: (
               embeddedTerminalsByToolCallId.get(
                 sessionScopedId(context.nativeThreadId, toolCall.toolCallId),
@@ -3263,6 +3290,13 @@ export function makeAcpAdapterV2(
               title: null,
               type: "dynamic_tool",
               toolName: `${mcpIdentity.server}.${mcpIdentity.tool}`,
+              ...(() => {
+                const toolSource = McpProviderSession.toolSourceForMcpServer(
+                  context.input.threadId,
+                  mcpIdentity.server,
+                );
+                return toolSource === undefined ? {} : { toolSource };
+              })(),
               input:
                 mcpIdentity.input ??
                 unknownRecord(rawInputRecord?.arguments) ??
@@ -5841,6 +5875,9 @@ export function makeAcpAdapterV2(
           const mcpBridge = yield* makeAcpMcpOverAcpBridge({
             endpoint: mcpContext.endpoint,
             authorization: mcpContext.authorization,
+            ...(mcpContext.bridgeServers === undefined
+              ? {}
+              : { servers: mcpContext.bridgeServers }),
             allocateConnectionId: options.crypto.randomUUIDv4.pipe(Effect.orDie),
           });
           yield* Scope.addFinalizer(scope, mcpBridge.dispose);

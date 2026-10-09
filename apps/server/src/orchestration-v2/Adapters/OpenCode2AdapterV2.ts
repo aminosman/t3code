@@ -396,6 +396,13 @@ interface ThreadState {
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
+  /** User MCP connections registered for this thread, keyed like `mcp`. */
+  mcpConnections: ReadonlyArray<{
+    readonly name: string;
+    readonly directory: string;
+    readonly credential: string;
+    readonly endpoint: string;
+  }>;
   instructions: string | undefined;
 }
 
@@ -928,6 +935,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       stoppedChildren: new Set(),
       strandedSteers: new Set(),
       mcp: undefined,
+      mcpConnections: [],
       instructions: undefined,
     });
 
@@ -2825,7 +2833,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
-      for (const state of threads.values()) state.mcp = undefined;
+      for (const state of threads.values()) {
+        state.mcp = undefined;
+        state.mcpConnections = [];
+      }
       yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
@@ -3208,7 +3219,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // spawned one forgets them when it stops.
     yield* Effect.addFinalizer(() =>
       Effect.forEach(
-        [...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+        [...threads.values()].flatMap((state) => [
+          ...(state.mcp === undefined ? [] : [state.mcp]),
+          ...state.mcpConnections,
+        ]),
         removeMcp,
         { concurrency: 8, discard: true },
       ),
@@ -3267,6 +3281,56 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           );
         if (added) state.mcp = wanted;
+      }
+      // User MCP connections follow the same per-thread registration; a
+      // changed set (a new sign-in) is re-registered on the next turn.
+      const wantedConnections =
+        wanted === undefined
+          ? []
+          : (mcpSession?.connections ?? []).map((connection) => ({
+              name: `${connection.id}-${turnInput.threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`,
+              directory,
+              credential: wanted.credential,
+              endpoint: connection.endpoint,
+            }));
+      const sameConnection = (
+        left: ThreadState["mcpConnections"][number],
+        right: ThreadState["mcpConnections"][number],
+      ) =>
+        left.name === right.name &&
+        left.directory === right.directory &&
+        left.credential === right.credential &&
+        left.endpoint === right.endpoint;
+      const stale = state.mcpConnections.filter(
+        (current) => !wantedConnections.some((next) => sameConnection(current, next)),
+      );
+      if (stale.length > 0) {
+        yield* Effect.forEach(stale, removeMcp, { discard: true });
+        state.mcpConnections = state.mcpConnections.filter((current) => !stale.includes(current));
+      }
+      for (const next of wantedConnections) {
+        if (state.mcpConnections.some((current) => sameConnection(current, next))) continue;
+        const added = yield* client.mcp
+          .add({
+            server: next.name,
+            location: { directory },
+            config: new Mcp.RemoteConfig({
+              type: "remote",
+              url: next.endpoint,
+              headers: { Authorization: next.credential },
+              oauth: false,
+            }),
+          })
+          .pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
+            Effect.as(true),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not add a user MCP connection to OpenCode.", cause).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        if (added) state.mcpConnections = [...state.mcpConnections, next];
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
@@ -3991,6 +4055,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             threads.delete(child);
           }
           if (state.mcp !== undefined) yield* removeMcp(state.mcp);
+          yield* Effect.forEach(state.mcpConnections, removeMcp, { discard: true });
         }),
       respondToRuntimeRequest: (requestInput) =>
         Effect.gen(function* () {

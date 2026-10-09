@@ -186,6 +186,12 @@ function SettingsIndexSections() {
           disabled={noServerTargets}
         />
         <SettingsRow
+          icon="link"
+          label="MCP connections"
+          target="SettingsMcpConnections"
+          disabled={noServerTargets}
+        />
+        <SettingsRow
           icon="text.bubble"
           label="New threads"
           target="SettingsEnvironmentNewThreads"

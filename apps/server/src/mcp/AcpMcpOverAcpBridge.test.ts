@@ -7,6 +7,45 @@ import * as Fiber from "effect/Fiber";
 import { makeAcpMcpOverAcpBridge } from "./AcpMcpOverAcpBridge.ts";
 
 describe("AcpMcpOverAcpBridge", () => {
+  it.effect("routes each server id to its own endpoint", () =>
+    Effect.gen(function* () {
+      const urls: Array<string> = [];
+      let next = 0;
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        servers: new Map([
+          [
+            "oneleet",
+            {
+              endpoint: "http://127.0.0.1:1/mcp/connections/oneleet",
+              authorization: "Bearer bridge-test",
+            },
+          ],
+        ]),
+        allocateConnectionId: Effect.sync(() => `connection-${++next}`),
+        fetchImplementation: async (url, init) => {
+          urls.push(String(url));
+          const body = init?.body === undefined ? null : JSON.parse(String(init.body));
+          return new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: body?.id, result: { tools: [] } }),
+            { headers: { "content-type": "application/json" } },
+          );
+        },
+      });
+      const t3 = yield* bridge.connect({ serverId: "t3-code" });
+      const oneleet = yield* bridge.connect({ serverId: "oneleet" });
+      yield* bridge.message({ connectionId: t3.connectionId, method: "tools/list" });
+      yield* bridge.message({ connectionId: oneleet.connectionId, method: "tools/list" });
+      expect(urls).toEqual([
+        "http://127.0.0.1:1/mcp",
+        "http://127.0.0.1:1/mcp/connections/oneleet",
+      ]);
+      const unknown = yield* bridge.connect({ serverId: "posthog" }).pipe(Effect.flip);
+      expect(unknown.message).toContain("posthog");
+    }),
+  );
+
   it.effect("forwards authenticated MCP requests and closes the negotiated session", () =>
     Effect.gen(function* () {
       const requests: Array<{

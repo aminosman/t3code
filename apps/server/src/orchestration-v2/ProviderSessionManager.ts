@@ -32,6 +32,7 @@ import * as Stream from "effect/Stream";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpConnectionService from "../mcp/connections/McpConnectionService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
@@ -319,6 +320,9 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      // Optional for the same reason as settings: tests build this layer by
+      // hand. Without it a thread simply gets no user MCP connections.
+      const mcpConnections = yield* Effect.serviceOption(McpConnectionService.McpConnectionService);
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
@@ -357,6 +361,36 @@ export const layerWithOptions = (
                 "Could not resolve agent access; withholding browser and device tools.",
                 { threadId, cause },
               ).pipe(Effect.as({ browser: false, device: false })),
+            ),
+          );
+        },
+      );
+      /**
+       * The user MCP connections this thread's project may use, as endpoints
+       * beside `/mcp`. Read on every prepare so a sign-in made after the
+       * thread started reaches its next session.
+       */
+      const mcpConnectionEntries = Effect.fn("ProviderSessionManagerV2.mcpConnectionEntries")(
+        function* (threadId: ThreadId, endpoint: string) {
+          if (Option.isNone(mcpConnections)) return [];
+          return yield* Effect.gen(function* () {
+            const thread = yield* projectionStore.getThread(threadId);
+            const servers = yield* mcpConnections.value.serversForProject(thread.projectId);
+            return servers.map((server): McpProviderSession.McpProviderSessionConnection => ({
+              id: server.id,
+              name: server.name,
+              projectId: server.projectId,
+              endpoint: McpProviderSession.mcpConnectionEndpoint(endpoint, server.id),
+              ...(server.url === undefined ? {} : { url: server.url }),
+            }));
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not resolve MCP connections; attaching none.", {
+                threadId,
+                cause,
+              }).pipe(
+                Effect.as([] as ReadonlyArray<McpProviderSession.McpProviderSessionConnection>),
+              ),
             ),
           );
         },
@@ -456,6 +490,10 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
+                    McpProviderSession.setMcpProviderSession({
+                      ...existing,
+                      connections: yield* mcpConnectionEntries(threadId, existing.endpoint),
+                    });
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -467,7 +505,10 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                 });
-                McpProviderSession.setMcpProviderSession(credential.config);
+                McpProviderSession.setMcpProviderSession({
+                  ...credential.config,
+                  connections: yield* mcpConnectionEntries(threadId, credential.config.endpoint),
+                });
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),

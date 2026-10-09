@@ -167,6 +167,7 @@ import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ProviderMaintenance from "./provider/providerMaintenance.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/Services/ProviderAuthService.ts";
+import * as McpConnectionService from "./mcp/connections/McpConnectionService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -1198,6 +1199,7 @@ const makeWsRpcLayer = (
         yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
+      const mcpConnections = yield* McpConnectionService.McpConnectionService;
       const providerInstallation = yield* makeProviderInstallation();
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -2447,6 +2449,42 @@ const makeWsRpcLayer = (
             providerAuth.subscribe(input, currentSessionId),
             { "rpc.aggregate": "provider" },
           ),
+        [WS_METHODS.mcpConnectionsUpsert]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpConnectionsUpsert,
+            mcpConnections.upsert(input.id, input.config),
+            { "rpc.aggregate": "mcpConnections" },
+          ),
+        [WS_METHODS.mcpConnectionsRemove]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectionsRemove, mcpConnections.remove(input.id), {
+            "rpc.aggregate": "mcpConnections",
+          }),
+        [WS_METHODS.mcpConnectionsSetBearerToken]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpConnectionsSetBearerToken,
+            mcpConnections.setBearerToken(input.id, input.projectId, input.token),
+            { "rpc.aggregate": "mcpConnections" },
+          ),
+        [WS_METHODS.mcpConnectionsConnect]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectionsConnect, mcpConnections.startOAuth(input), {
+            "rpc.aggregate": "mcpConnections",
+          }),
+        [WS_METHODS.mcpConnectionsDisconnect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpConnectionsDisconnect,
+            mcpConnections.disconnect(input.id, input.projectId),
+            { "rpc.aggregate": "mcpConnections" },
+          ),
+        [WS_METHODS.mcpConnectionsTest]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpConnectionsTest,
+            mcpConnections.test(input.id, input.projectId),
+            { "rpc.aggregate": "mcpConnections" },
+          ),
+        [WS_METHODS.mcpConnectionsSubscribe]: () =>
+          observeRpcStream(WS_METHODS.mcpConnectionsSubscribe, mcpConnections.subscribeStatuses, {
+            "rpc.aggregate": "mcpConnections",
+          }),
         [WS_METHODS.providerInstallStart]: (input) =>
           observeRpcEffect(WS_METHODS.providerInstallStart, providerInstallation.start(input), {
             "rpc.aggregate": "provider",

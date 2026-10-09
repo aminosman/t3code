@@ -1367,6 +1367,61 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recognises a user connection's tools by their server name in any flattening", () => {
+    const options = { knownServers: ["oneleet"] };
+    const flattened = (title: string) =>
+      extractMcpToolCallIdentity(
+        toolCallFromUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: `call-${title}`,
+          kind: "other",
+          title,
+          status: "in_progress",
+        }),
+        options,
+      );
+    expect(flattened("mcp__oneleet__list_controls")).toEqual({
+      server: "oneleet",
+      tool: "list_controls",
+    });
+    expect(flattened("oneleet_list_controls")).toEqual({
+      server: "oneleet",
+      tool: "list_controls",
+    });
+    expect(flattened("oneleet___list_controls: {}")).toEqual({
+      server: "oneleet",
+      tool: "list_controls",
+    });
+    // A server that was not injected never brands a call.
+    expect(flattened("mcp__posthog__query")).toBeUndefined();
+    // Without the option the same titles are not T3's inventory either.
+    expect(
+      extractMcpToolCallIdentity(
+        toolCallFromUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "call-plain",
+          kind: "other",
+          title: "mcp__oneleet__list_controls",
+          status: "in_progress",
+        }),
+      ),
+    ).toBeUndefined();
+    // An explicit origin assertion wins over the title.
+    expect(
+      extractMcpToolCallIdentity(
+        toolCallFromUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "call-meta",
+          kind: "other",
+          title: "Ran a tool",
+          status: "in_progress",
+          _meta: { serverId: "one_leet", toolName: "list_controls" },
+        }),
+        { knownServers: ["one-leet"] },
+      ),
+    ).toEqual({ server: "one-leet", tool: "list_controls" });
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",

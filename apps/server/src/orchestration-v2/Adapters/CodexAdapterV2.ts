@@ -482,6 +482,8 @@ function codexDynamicToolOutput(
 
 export function projectCodexDynamicToolItem(
   item: CodexDynamicToolItem,
+  /** The thread whose user MCP connections brand `mcpToolCall` items. */
+  threadId?: ThreadId,
 ): CodexDynamicToolProjection {
   const output =
     item.type === "mcpToolCall" ? codexMcpToolOutput(item) : codexDynamicToolOutput(item);
@@ -490,8 +492,14 @@ export function projectCodexDynamicToolItem(
       ? `${item.server}.${item.tool}`
       : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
   const title = dynamicToolTitle(toolName, item.arguments);
+  const presentation = item.type === "mcpToolCall" ? mcpToolPresentation(item) : {};
+  const connectionSource =
+    item.type === "mcpToolCall" && threadId !== undefined && presentation.toolSource === undefined
+      ? McpProviderSession.toolSourceForMcpServer(threadId, item.server)
+      : undefined;
   const projection: CodexDynamicToolProjection = {
-    ...(item.type === "mcpToolCall" ? mcpToolPresentation(item) : {}),
+    ...presentation,
+    ...(connectionSource === undefined ? {} : { toolSource: connectionSource }),
     toolName,
     ...(title ? { title } : {}),
     input: item.arguments,
@@ -1222,6 +1230,16 @@ export function codexThreadRuntimeParams(input: {
                   Authorization: mcpSession.authorizationHeader,
                 },
               },
+              // User MCP connections, each its own server named by its id.
+              ...Object.fromEntries(
+                (mcpSession.connections ?? []).map((connection) => [
+                  connection.id,
+                  {
+                    url: connection.endpoint,
+                    http_headers: { Authorization: mcpSession.authorizationHeader },
+                  },
+                ]),
+              ),
             },
           }),
     },
@@ -3329,7 +3347,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemId: item.id,
             });
             const { ordinal, startedAt } = yield* resolveItemPosition(context, item.id);
-            const projection = projectCodexDynamicToolItem(item);
+            const projection = projectCodexDynamicToolItem(item, context.projectionThreadId);
             const node: OrchestrationV2ExecutionNode = {
               id: nodeId,
               threadId: context.projectionThreadId,

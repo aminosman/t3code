@@ -987,6 +987,42 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.providerAuthSubscribe,
       idleTtlMs: 0,
     }),
+    // User MCP connections: definitions arrive with settings; sign-in state
+    // per project is this stream.
+    mcpConnectionStatuses: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:mcp-connections:statuses",
+      tag: WS_METHODS.mcpConnectionsSubscribe,
+      idleTtlMs: 0,
+    }),
+    upsertMcpConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connections:upsert",
+      tag: WS_METHODS.mcpConnectionsUpsert,
+    }),
+    removeMcpConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connections:remove",
+      tag: WS_METHODS.mcpConnectionsRemove,
+    }),
+    setMcpConnectionBearerToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connections:set-bearer-token",
+      tag: WS_METHODS.mcpConnectionsSetBearerToken,
+    }),
+    connectMcpConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connections:connect",
+      tag: WS_METHODS.mcpConnectionsConnect,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.id, input.projectId]),
+      },
+    }),
+    disconnectMcpConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connections:disconnect",
+      tag: WS_METHODS.mcpConnectionsDisconnect,
+    }),
+    testMcpConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connections:test",
+      tag: WS_METHODS.mcpConnectionsTest,
+    }),
     startProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-start",
       tag: WS_METHODS.providerAuthStart,

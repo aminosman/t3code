@@ -7,8 +7,10 @@ import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
   T3_MCP_BEARER_ENV,
+  T3_MCP_SERVERS_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
+  encodePiMcpServers,
 } from "./piT3McpExtensionSource.ts";
 
 const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
@@ -291,6 +293,7 @@ export function buildPiRpcLaunch(input: {
   // credentials inherited from the server or a parent provider process.
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
+  delete environment[T3_MCP_SERVERS_ENV];
 
   return {
     args,
@@ -308,6 +311,19 @@ export function buildPiRpcLaunch(input: {
             [T3_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(
               input.mcpSession.authorizationHeader,
             ),
+            ...((input.mcpSession.connections?.length ?? 0) > 0
+              ? {
+                  [T3_MCP_SERVERS_ENV]: encodePiMcpServers(
+                    (input.mcpSession.connections ?? []).map((connection) => ({
+                      name: connection.id,
+                      url: connection.endpoint,
+                      token: bearerTokenFromAuthorizationHeader(
+                        input.mcpSession!.authorizationHeader,
+                      ),
+                    })),
+                  ),
+                }
+              : {}),
           }
         : {}),
     },

@@ -1,12 +1,19 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  McpConnectionId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   T3_MCP_BEARER_ENV,
+  T3_MCP_SERVERS_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
 } from "./piT3McpExtensionSource.ts";
@@ -29,6 +36,39 @@ const mcpSession = {
 };
 
 describe("pi T3 MCP injection", () => {
+  it("hands the extension every user MCP connection beside t3-code", () => {
+    const launch = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: { PATH: "/usr/bin", [T3_MCP_SERVERS_ENV]: "[stale]" },
+      mcpSession: {
+        ...mcpSession,
+        connections: [
+          {
+            id: McpConnectionId.make("oneleet"),
+            name: "Oneleet",
+            projectId: ProjectId.make("project-pi"),
+            endpoint: "http://127.0.0.1:43123/mcp/connections/oneleet",
+          },
+        ],
+      },
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+    });
+    assert.deepEqual(JSON.parse(launch.env[T3_MCP_SERVERS_ENV]!), [
+      {
+        name: "oneleet",
+        url: "http://127.0.0.1:43123/mcp/connections/oneleet",
+        token: "secret-pi-token",
+      },
+    ]);
+    const bare = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: { [T3_MCP_SERVERS_ENV]: "[stale]" },
+      mcpSession,
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+    });
+    assert.isUndefined(bare.env[T3_MCP_SERVERS_ENV]);
+  });
+
   it("always adds the permission bridge and configures MCP when available", () => {
     const resolvedArgs = resolvePiLaunchArgs(
       "--extension=/home/user/.pi/agent/extensions/demo.ts --session-dir=/tmp/pi-sessions --provider=anthropic --model=claude-sonnet --tools='' --name=-review --extension-flag=kept",
@@ -161,7 +201,8 @@ describe("pi T3 MCP injection", () => {
       assert.include(mcpSource, "Allow ${event.toolName}?");
       assert.include(mcpSource, '"mcp-protocol-version"');
       assert.include(mcpSource, '"tools/call"');
-      assert.include(mcpSource, "mcp__t3-code__");
+      assert.include(mcpSource, "mcp__${server.name}__");
+      assert.include(mcpSource, '{ name: "t3-code", url: endpoint, token }');
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

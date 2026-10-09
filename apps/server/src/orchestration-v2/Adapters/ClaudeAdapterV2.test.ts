@@ -14,19 +14,20 @@ import {
   ChatImageAttachment,
   ClaudeSettings,
   EnvironmentId,
+  McpConnectionId,
   MessageId,
-  type ModelSelection,
   NodeId,
-  type OrchestrationV2AppThread,
-  type OrchestrationV2ProviderThread,
   ProjectId,
   ProviderInstanceId,
-  type ProviderApprovalDecision,
   ProviderSessionId,
   ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
+  type ModelSelection,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderThread,
+  type ProviderApprovalDecision,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -526,6 +527,50 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
         mcpServers: T3_MCP_SERVERS,
       });
     });
+  });
+
+  it("adds every user MCP connection as its own server and pre-approves its tools", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-connections");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("environment-claude-mcp"),
+      threadId,
+      providerSessionId: "mcp-session-claude-connections",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-claude-token",
+      browserToolsAvailable: true,
+      connections: [
+        {
+          id: McpConnectionId.make("oneleet"),
+          name: "Oneleet",
+          projectId: ProjectId.make("project-1"),
+          endpoint: "http://127.0.0.1:43123/mcp/connections/oneleet",
+          url: "https://api.oneleet.com/mcp",
+        },
+      ],
+    });
+    try {
+      const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+        threadId,
+        readOnlySandbox: false,
+      });
+      assert.deepEqual(overrides.allowedTools, [
+        ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD,
+        "mcp__oneleet__*",
+      ]);
+      assert.deepEqual(overrides.mcpServers?.oneleet, {
+        type: "http",
+        url: "http://127.0.0.1:43123/mcp/connections/oneleet",
+        headers: { Authorization: "Bearer secret-claude-token" },
+        timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+      });
+      // A read-only sandbox never pre-approves third-party tools.
+      const readOnly = ClaudeAdapterV2.claudeMcpQueryOverrides({ threadId, readOnlySandbox: true });
+      assert.notInclude(readOnly.allowedTools ?? [], "mcp__oneleet__*");
+      assert.isDefined(readOnly.mcpServers?.oneleet);
+    } finally {
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }
   });
 
   it("extends an explicit allowlist with the t3-code wildcard", () => {

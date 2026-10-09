@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
+import { McpConnectionId, McpConnectionUpsertInput } from "./mcpConnections.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
@@ -1104,4 +1105,59 @@ describe("branch naming settings", () => {
       expect(decodeServerSettingsPatch(input)).toEqual(input);
     },
   );
+});
+
+describe("ServerSettings mcpConnections", () => {
+  it("defaults to no connections and round-trips both transports", () => {
+    expect(decodeServerSettings({}).mcpConnections).toEqual({});
+    const decoded = decodeServerSettings({
+      mcpConnections: {
+        oneleet: {
+          name: "Oneleet",
+          transport: { type: "http", url: "https://api.oneleet.com/mcp", auth: "oauth" },
+        },
+        files: {
+          name: "Files",
+          enabled: false,
+          transport: { type: "stdio", command: "fs-server" },
+        },
+      },
+    });
+    expect(decoded.mcpConnections[McpConnectionId.make("oneleet")]).toEqual({
+      name: "Oneleet",
+      enabled: true,
+      transport: { type: "http", url: "https://api.oneleet.com/mcp", auth: "oauth" },
+    });
+    expect(decoded.mcpConnections[McpConnectionId.make("files")]).toEqual({
+      name: "Files",
+      enabled: false,
+      transport: { type: "stdio", command: "fs-server", args: [], env: [] },
+    });
+    expect(encodeServerSettings(decoded).mcpConnections).toEqual(decoded.mcpConnections);
+  });
+
+  it("rejects server keys agents could not name and non-HTTP URLs", () => {
+    const decodeUpsert = Schema.decodeUnknownSync(McpConnectionUpsertInput);
+    expect(() =>
+      decodeUpsert({
+        id: "Bad Key",
+        config: { name: "x", transport: { type: "http", url: "https://a/mcp", auth: "none" } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeUpsert({
+        id: "ok",
+        config: { name: "x", transport: { type: "http", url: "ftp://a/mcp", auth: "none" } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettings({
+        mcpConnections: {
+          ok: { name: "x", transport: { type: "http", url: "ftp://a/mcp", auth: "none" } },
+        },
+      }),
+    ).toThrow();
+    const patch = decodeServerSettingsPatch({ mcpConnections: { oneleet: null } });
+    expect(patch.mcpConnections).toEqual({ oneleet: null });
+  });
 });

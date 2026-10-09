@@ -983,6 +983,27 @@ export function makeOpenCodeAdapterV2(
               },
             }),
           );
+          // User MCP connections: the same shape, one server per connection.
+          for (const connection of mcpSession.connections ?? []) {
+            yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+              client.mcp.add({
+                name: connection.id,
+                config: {
+                  type: "remote",
+                  url: connection.endpoint,
+                  headers: { Authorization: mcpSession.authorizationHeader },
+                  oauth: false,
+                },
+              }),
+            ).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not add a user MCP connection to OpenCode.", {
+                  connection: connection.id,
+                  cause,
+                }),
+              ),
+            );
+          }
         }
 
         const now = yield* DateTime.now;

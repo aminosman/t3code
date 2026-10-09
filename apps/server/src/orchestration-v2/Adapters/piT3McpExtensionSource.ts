@@ -8,13 +8,22 @@
  * Do not import t3code modules from the string body. The Pi process resolves
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
  */
+import * as Schema from "effect/Schema";
+
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
+/** JSON array of `{ name, url, token }`: the user MCP connections beside t3-code. */
+export const T3_MCP_SERVERS_ENV = "T3_MCP_SERVERS";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
+
+const PiMcpServersJson = Schema.fromJsonString(
+  Schema.Array(Schema.Struct({ name: Schema.String, url: Schema.String, token: Schema.String })),
+);
+export const encodePiMcpServers = Schema.encodeSync(PiMcpServersJson);
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -28,6 +37,7 @@ import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
+const SERVERS_ENV = ${JSON.stringify(T3_MCP_SERVERS_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PROTOCOL = "2025-06-18";
@@ -258,42 +268,75 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     return;
   }
 
-  const client = createMcpClient(endpoint, token);
+  // Every server Roost hands this session: its own, then the user's
+  // connections, each registered under its own name.
+  const servers: Array<{ name: string; url: string; token: string }> = [
+    { name: "t3-code", url: endpoint, token },
+  ];
+  const extra = env(SERVERS_ENV);
+  if (extra !== undefined) {
+    try {
+      const parsed = JSON.parse(extra);
+      if (Array.isArray(parsed)) {
+        for (const entry of parsed) {
+          if (
+            typeof entry === "object" && entry !== null &&
+            typeof entry.name === "string" && typeof entry.url === "string" && typeof entry.token === "string"
+          ) {
+            servers.push({ name: entry.name, url: entry.url, token: entry.token });
+          }
+        }
+      }
+    } catch {
+      // A malformed list drops the connections, never the t3-code server.
+    }
+  }
   let started: Promise<void> | undefined;
+
+  const registerServer = async (server: { name: string; url: string; token: string }) => {
+    const client = createMcpClient(server.url, server.token);
+    const signal = AbortSignal.timeout(10_000);
+    await client.connect(signal);
+    const tools = await client.listTools(signal);
+    for (const tool of tools) {
+      const name = tool.name;
+      const registeredName = \`mcp__\${server.name}__\${name}\`;
+      const description = tool.description ?? name;
+      pi.registerTool({
+        name: registeredName,
+        label: name,
+        description,
+        promptSnippet: description.split("\\n")[0] ?? name,
+        promptGuidelines: [
+          server.name === "t3-code"
+            ? \`Use \${registeredName} from the t3-code MCP server when the user asks for T3 orchestration that this tool covers.\`
+            : \`Use \${registeredName} from the \${server.name} MCP server when the task calls for it.\`,
+        ],
+        parameters: jsonSchemaToTypebox(tool.inputSchema),
+        async execute(_toolCallId, params, signal) {
+          const result = await client.callTool(
+            name,
+            (params ?? {}) as Record<string, unknown>,
+            signal,
+          );
+          const text = formatMcpContent(result);
+          return {
+            content: [{ type: "text", text }],
+            details: { server: server.name, tool: name },
+            ...(isMcpToolError(result) ? { isError: true } : {}),
+          };
+        },
+      });
+    }
+  };
 
   const ensureStarted = () => {
     if (started !== undefined) return started;
     const attempt = (async () => {
-      const signal = AbortSignal.timeout(10_000);
-      await client.connect(signal);
-      const tools = await client.listTools(signal);
-      for (const tool of tools) {
-        const name = tool.name;
-        const registeredName = \`mcp__t3-code__\${name}\`;
-        const description = tool.description ?? name;
-        pi.registerTool({
-          name: registeredName,
-          label: name,
-          description,
-          promptSnippet: description.split("\\n")[0] ?? name,
-          promptGuidelines: [
-            \`Use \${registeredName} from the t3-code MCP server when the user asks for T3 orchestration that this tool covers.\`,
-          ],
-          parameters: jsonSchemaToTypebox(tool.inputSchema),
-          async execute(_toolCallId, params, signal) {
-            const result = await client.callTool(
-              name,
-              (params ?? {}) as Record<string, unknown>,
-              signal,
-            );
-            const text = formatMcpContent(result);
-            return {
-              content: [{ type: "text", text }],
-              details: { server: "t3-code", tool: name },
-              ...(isMcpToolError(result) ? { isError: true } : {}),
-            };
-          },
-        });
+      // t3-code must come up; a user connection that fails only logs.
+      await registerServer(servers[0]!);
+      for (const server of servers.slice(1)) {
+        await registerServer(server).catch(() => undefined);
       }
     })();
     started = attempt;

@@ -1106,6 +1106,46 @@ const T3_MCP_TITLE_SUFFIX_CALL =
  */
 const T3_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s|$)/;
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+/**
+ * A user connection's tool, flattened the way agents flatten `t3-code`'s:
+ * `<server>_<tool>`, `mcp__<server>__<tool>`, `<server>___<tool>`,
+ * `<server>-<tool>`, with `-` and `_` interchangeable in the server part.
+ */
+function matchKnownServerToolCall(
+  toolCall: AcpToolCallState,
+  meta: Record<string, unknown> | undefined,
+  knownServers: ReadonlyArray<string> | undefined,
+): AcpMcpToolCallIdentity | undefined {
+  if (knownServers === undefined || knownServers.length === 0) return undefined;
+  const metaServerId = typeof meta?.serverId === "string" ? meta.serverId.trim() : "";
+  const metaToolName = typeof meta?.toolName === "string" ? meta.toolName.trim() : "";
+  const normalize = (value: string) => value.toLowerCase().replaceAll("_", "-");
+  for (const server of knownServers) {
+    if (metaServerId.length > 0 && normalize(metaServerId) === normalize(server)) {
+      return metaToolName.length > 0 ? { server, tool: metaToolName } : undefined;
+    }
+  }
+  const claudeCode = isRecord(meta?.claudeCode) ? meta.claudeCode : undefined;
+  const candidates = [meta?.toolName, claudeCode?.toolName, toolCall.data.title].filter(
+    (value): value is string => typeof value === "string",
+  );
+  for (const server of knownServers) {
+    const serverPattern = escapeRegExp(server).replaceAll(/[-_]/gu, "[-_]");
+    const pattern = new RegExp(
+      `^(?:mcp[-_]{1,2})?${serverPattern}[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$`,
+      "i",
+    );
+    for (const candidate of candidates) {
+      const match = pattern.exec(candidate.trim());
+      const matchedTool = match?.groups?.tool;
+      if (matchedTool !== undefined) return { server, tool: matchedTool };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Best-effort recovery of MCP identity from a generic ACP tool call.
  *
@@ -1121,6 +1161,12 @@ export function extractMcpToolCallIdentity(
   options?: {
     /** Command lines of client terminals embedded in this tool call. */
     readonly embeddedTerminalCommands?: ReadonlyArray<string>;
+    /**
+     * Ids of the user MCP connections injected beside `t3-code`. Their tools
+     * are not in T3's inventory, so a flattened name is recognised by the
+     * server part alone, in the same loose forms agents use for `t3-code`.
+     */
+    readonly knownServers?: ReadonlyArray<string>;
   },
 ): AcpMcpToolCallIdentity | undefined {
   const rawInput = isRecord(toolCall.data.rawInput) ? toolCall.data.rawInput : undefined;
@@ -1130,6 +1176,8 @@ export function extractMcpToolCallIdentity(
   if (meta?.is_mcp_tool_call === true && server.length > 0 && tool.length > 0) {
     return { server, tool };
   }
+  const knownServerIdentity = matchKnownServerToolCall(toolCall, meta, options?.knownServers);
+  if (knownServerIdentity !== undefined) return knownServerIdentity;
   // Agents without tagged rawInput identify their MCP calls through _meta
   // (goose, qwen, claude-acp) or only through the namespaced function name
   // in the title. The verbatim wire title survives merges even when a later

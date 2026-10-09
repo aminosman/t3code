@@ -19,6 +19,8 @@ interface JsonRpcEnvelope {
 
 interface Connection {
   readonly mutex: Semaphore.Semaphore;
+  readonly endpoint: string;
+  readonly authorization: string;
   sessionId: string | null;
   protocolVersion: string | null;
   nextRequestId: number;
@@ -57,8 +59,14 @@ function errorMessage(error: unknown): string {
 }
 
 export interface AcpMcpOverAcpBridgeOptions {
+  /** The `t3-code` server. */
   readonly endpoint: string;
   readonly authorization: string;
+  /** Other servers the agent may name (user MCP connections), by server id. */
+  readonly servers?: ReadonlyMap<
+    string,
+    { readonly endpoint: string; readonly authorization: string }
+  >;
   readonly allocateConnectionId: Effect.Effect<string>;
   readonly fetchImplementation?: (url: string, init?: RequestInit) => Promise<Response>;
 }
@@ -106,13 +114,13 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         }
         const response = yield* Effect.tryPromise({
           try: (signal) =>
-            fetchImplementation(options.endpoint, {
+            fetchImplementation(connection.endpoint, {
               method: "POST",
               signal,
               headers: {
                 "content-type": "application/json",
                 accept: "application/json, text/event-stream",
-                authorization: options.authorization,
+                authorization: connection.authorization,
                 ...(connection.sessionId === null
                   ? {}
                   : { "mcp-session-id": connection.sessionId }),
@@ -151,11 +159,11 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       if (sessionId !== null) {
         const response = yield* Effect.tryPromise({
           try: (signal) =>
-            fetchImplementation(options.endpoint, {
+            fetchImplementation(connection.endpoint, {
               method: "DELETE",
               signal,
               headers: {
-                authorization: options.authorization,
+                authorization: connection.authorization,
                 "mcp-session-id": sessionId,
                 ...(connection.protocolVersion === null
                   ? {}
@@ -181,7 +189,11 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
   return {
     connect: (request) =>
       Effect.gen(function* () {
-        if (request.serverId !== "t3-code") {
+        const target =
+          request.serverId === "t3-code"
+            ? { endpoint: options.endpoint, authorization: options.authorization }
+            : options.servers?.get(request.serverId);
+        if (target === undefined) {
           return yield* Effect.fail(
             new AcpMcpOverAcpError(`Unknown ACP MCP server "${request.serverId}".`),
           );
@@ -192,6 +204,8 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         const connectionId = yield* options.allocateConnectionId;
         connections.set(connectionId, {
           mutex: yield* Semaphore.make(1),
+          endpoint: target.endpoint,
+          authorization: target.authorization,
           sessionId: null,
           protocolVersion: null,
           nextRequestId: 0,

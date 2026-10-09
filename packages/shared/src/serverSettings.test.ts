@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  McpConnectionId,
+  type McpConnection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -533,6 +535,25 @@ describe("serverSettings helpers", () => {
       enabled: true,
       config: { homePath: "~/.codex" },
     });
+  });
+
+  it("upserts and removes mcpConnections per entry", () => {
+    const oneleet = McpConnectionId.make("oneleet");
+    const posthog = McpConnectionId.make("posthog");
+    const connection = (url: string): McpConnection => ({
+      name: url,
+      enabled: true,
+      transport: { type: "http", url, auth: "oauth" },
+    });
+    const added = applyServerSettingsPatch(
+      applyServerSettingsPatch(FOLDED_SERVER_SETTINGS, {
+        mcpConnections: { [oneleet]: connection("https://a/mcp") },
+      }),
+      { mcpConnections: { [posthog]: connection("https://b/mcp") } },
+    );
+    expect(Object.keys(added.mcpConnections)).toEqual([oneleet, posthog]);
+    const removed = applyServerSettingsPatch(added, { mcpConnections: { [oneleet]: null } });
+    expect(Object.keys(removed.mcpConnections)).toEqual([posthog]);
   });
 
   it("upserts and removes usageLimitSources per entry so concurrent edits cannot clobber", () => {
