@@ -21,5 +21,6 @@ export const ClaudeAccountRouterNoopLayer = Layer.succeed(
         reason: "ungrouped" as const,
         standing: undefined,
       }),
+    noteLimited: () => Effect.void,
   }),
 );

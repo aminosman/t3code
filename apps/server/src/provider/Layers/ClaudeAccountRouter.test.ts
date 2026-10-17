@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -267,6 +268,78 @@ describe("ClaudeAccountRouter", () => {
               { kind: "weeklyScoped", model: "fable", usedPercent: 40 },
             ],
           },
+        }),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAccountRouter.noteLimited", () => {
+  const twoFresh = () =>
+    harness({
+      settings: settingsWith({ a: { accountGroup: "max" }, b: { accountGroup: "max" } }),
+      instances: [
+        // a is the account being drained; b is the fresher sibling.
+        fakeInstance({ id: "a", usageLimits: sessionLimits(3, 60) }),
+        fakeInstance({ id: "b", usageLimits: sessionLimits(3, 10) }),
+      ],
+    });
+  const inAnHour = DateTime.now.pipe(
+    Effect.map((now) => DateTime.formatIso(DateTime.add(now, { hours: 1 }))),
+  );
+
+  // Oct 17 2026 incident: a 429 arrived with usage at 3%, so the
+  // windows alone would have sent the retry straight back.
+  it.effect("keeps a refusing account out for that model even with usage low", () =>
+    Effect.gen(function* () {
+      const router = yield* ClaudeAccountRouter;
+      const a = ProviderInstanceId.make("a");
+      yield* router.noteLimited(a, "claude-opus-5-5", yield* inAnHour);
+
+      expect(yield* router.resolve(a, "claude-opus-5-5")).toMatchObject({
+        _tag: "Switch",
+        from: "a",
+        to: "b",
+        reason: "blocked",
+      });
+      // Another model on the same account is not refused by this note.
+      expect(yield* router.resolve(a, "claude-fable-5-1")).toMatchObject({
+        _tag: "Stay",
+        reason: "preferred",
+      });
+    }).pipe(Effect.provide(twoFresh())),
+  );
+
+  it.effect("is exhausted once every account has refused the model", () =>
+    Effect.gen(function* () {
+      const router = yield* ClaudeAccountRouter;
+      const a = ProviderInstanceId.make("a");
+      yield* router.noteLimited(a, "claude-opus-5-5", yield* inAnHour);
+      // No reset named: a short cooldown still applies.
+      yield* router.noteLimited(ProviderInstanceId.make("b"), "claude-opus-5-5", null);
+
+      expect(yield* router.resolve(a, "claude-opus-5-5")).toMatchObject({ _tag: "Exhausted" });
+    }).pipe(Effect.provide(twoFresh())),
+  );
+
+  it.effect("routes away from a refusing account that has no usage reading", () =>
+    Effect.gen(function* () {
+      const router = yield* ClaudeAccountRouter;
+      const a = ProviderInstanceId.make("a");
+      yield* router.noteLimited(a, "claude-opus-5-5", yield* inAnHour);
+
+      expect(yield* router.resolve(a, "claude-opus-5-5")).toMatchObject({
+        _tag: "Switch",
+        to: "b",
+      });
+    }).pipe(
+      Effect.provide(
+        harness({
+          settings: settingsWith({ a: { accountGroup: "max" }, b: { accountGroup: "max" } }),
+          instances: [
+            fakeInstance({ id: "a" }),
+            fakeInstance({ id: "b", usageLimits: sessionLimits(10, 10) }),
+          ],
         }),
       ),
     ),

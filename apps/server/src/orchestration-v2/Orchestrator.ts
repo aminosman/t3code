@@ -9681,9 +9681,87 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
     threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
 
+  // Roost: a turn the provider refused on its limit moves to a sibling in its
+  // `accountGroup`, as the next turn would, before anything reports the run
+  // failed. Routing otherwise only happens when a turn starts, so a long turn
+  // that drains its account mid-way, or a throughput 429 that arrives with
+  // usage far from the threshold, would fail a delegated task outright. The
+  // refusing account is noted out for the model until its reset, so the
+  // continuation cannot bounce back to it; once every member is out the run
+  // fails as before, with the provider's reset time.
+  const failOverLimitedRun = (threadId: ThreadId, runId: RunId) =>
+    Effect.gen(function* () {
+      if (Option.isNone(accountRouter)) return false;
+      const projection = yield* readCommandProjection(threadId);
+      const run = latestExecutedRun(projection.runs);
+      if (run?.id !== runId || run.status !== "failed") return false;
+      const failure = latestRootProviderFailure(run, projection.turnItems);
+      if (failure?.class !== "usage_limit") return false;
+      const model = run.modelSelection.model;
+      yield* accountRouter.value.noteLimited(run.providerInstanceId, model, failure.resetAt);
+      if (
+        projection.thread.archivedAt !== null ||
+        projection.thread.deletedAt !== null ||
+        projection.thread.settledOverride === "settled" ||
+        projection.runtimeRequests.some((request) => request.status === "pending")
+      ) {
+        return false;
+      }
+      const route = yield* accountRouter.value.resolve(run.providerInstanceId, model);
+      if (route._tag !== "Switch") {
+        yield* Effect.logInfo("orchestrator found no account to fail over to", {
+          threadId,
+          runId,
+          model,
+          instanceId: run.providerInstanceId,
+          decision: route._tag,
+        });
+        return false;
+      }
+      yield* Effect.logInfo("orchestrator failing over limited run", {
+        threadId,
+        runId,
+        model,
+        from: route.from,
+        to: route.to,
+        failure: failure.message,
+        resetAt: failure.resetAt,
+        toPressure: route.toStanding.pressurePercent,
+      });
+      yield* dispatchWithReceipt({
+        type: "message.dispatch",
+        commandId: CommandId.make(`limit-failover:${run.id}`),
+        messageId: MessageId.make(`limit-failover:${run.id}`),
+        threadId,
+        manualContinuationOfRunId: run.id,
+        modelSelection: { ...run.modelSelection, instanceId: route.to },
+        text: "Continue where you left off.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "server",
+      });
+      return true;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to fail over limited run", { threadId, runId, cause }).pipe(
+          Effect.as(false),
+        ),
+      ),
+    );
+
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
+      // The continuation is a new run on this thread, so the task stays open
+      // and its parent hears only how the continuation ends.
+      if (
+        stored.event.type === "run.updated" &&
+        stored.event.payload.status === "failed" &&
+        (yield* failOverLimitedRun(threadId, stored.event.payload.id))
+      ) {
+        return;
+      }
       // finalize writes the parent thread and startNextQueuedRun writes this
       // thread, so each takes its own thread's lock, sequentially and never
       // nested: dispatchDelegatedTaskRequest already writes child events

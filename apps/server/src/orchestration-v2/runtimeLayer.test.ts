@@ -47,6 +47,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
+import { ClaudeAccountRouter } from "../provider/Layers/ClaudeAccountRouter.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -4650,6 +4651,209 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         assert.equal(resumed.runs[1]?.status, "starting");
         assert.isFalse(resumed.runs[1]?.queueHeld);
       }
+    }),
+  );
+});
+
+// A fake group of two accounts: an account the provider refused moves the
+// thread to its sibling, unless the model is spent on every account.
+const SPENT_MODEL = "spent-everywhere";
+const notedLimits: Array<{ readonly instanceId: string; readonly resetAt: string | null }> = [];
+const limitedInstances = new Set<string>();
+/** The decision the fake router made for each refused account. */
+const failoverDecisions = Effect.runSync(Queue.unbounded<string>());
+const FailoverRouterLayer = Layer.succeed(
+  ClaudeAccountRouter,
+  ClaudeAccountRouter.of({
+    listCandidates: () => Effect.succeed([]),
+    noteLimited: (instanceId, _model, resetAt) =>
+      Effect.sync(() => {
+        notedLimits.push({ instanceId, resetAt: resetAt ?? null });
+        limitedInstances.add(instanceId);
+      }),
+    resolve: (instanceId, model) =>
+      Effect.sync(() => {
+        const standing = (id: ProviderInstanceId) => ({
+          instanceId: id,
+          pressurePercent: limitedInstances.has(id) ? 100 : 3,
+          resetsAt: undefined,
+          blockedBy: limitedInstances.has(id) ? ("session" as const) : undefined,
+        });
+        if (!limitedInstances.has(instanceId)) {
+          return {
+            _tag: "Stay" as const,
+            instanceId,
+            reason: "preferred" as const,
+            standing: standing(instanceId),
+          };
+        }
+        if (model === SPENT_MODEL) {
+          Queue.offerUnsafe(failoverDecisions, "Exhausted");
+          return {
+            _tag: "Exhausted" as const,
+            instanceId,
+            standing: standing(instanceId),
+            retryAt: undefined,
+          };
+        }
+        const sibling =
+          instanceId === modelSelection.instanceId
+            ? alternateInstanceId
+            : modelSelection.instanceId;
+        Queue.offerUnsafe(failoverDecisions, "Switch");
+        return {
+          _tag: "Switch" as const,
+          from: instanceId,
+          to: sibling,
+          reason: "blocked" as const,
+          fromStanding: standing(instanceId),
+          toStanding: standing(sibling),
+        };
+      }),
+  }),
+);
+
+const FailoverTestLayer = TestLayer.pipe(Layer.provide(FailoverRouterLayer));
+
+it.layer(FailoverTestLayer)("Claude account failover", (it) => {
+  const failRunOnLimit = (threadId: ThreadId, model: string) =>
+    Effect.gen(function* () {
+      limitedInstances.clear();
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const selection = { ...modelSelection, model } satisfies ModelSelection;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Limited",
+        modelSelection: selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:message`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:message`),
+        text: "Long task",
+        attachments: [],
+        modelSelection: selection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = before.runs.find((run) => run.status === "starting");
+      assert.isDefined(activeRun);
+      assert.isNotNull(activeRun.rootNodeId);
+
+      const createdRunIds = yield* Queue.unbounded<RunId>();
+      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.runForEach((stored) =>
+          stored.event.type === "run.created"
+            ? Queue.offer(createdRunIds, stored.event.payload.id)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      const now = yield* DateTime.now;
+      const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId,
+            providerInstanceId: activeRun.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: activeRun.id,
+              nodeId: activeRun.rootNodeId,
+              providerThreadId: activeRun.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit reached",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Claude API rate limit reached. Try again later.",
+                code: "api_error_429",
+                retryable: true,
+                resetAt,
+              },
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId,
+            providerInstanceId: activeRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...activeRun, status: "failed", completedAt: now },
+          },
+        ],
+      });
+      return { activeRun, resetAt, createdRunIds };
+    });
+
+  it.effect("continues a run the provider refused on its limit on the sibling account", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("claude-failover-switch");
+      const { activeRun, resetAt, createdRunIds } = yield* failRunOnLimit(
+        threadId,
+        "claude-opus-5-5",
+      );
+
+      assert.equal(yield* Queue.take(failoverDecisions), "Switch");
+      const continuationRunId = yield* Queue.take(createdRunIds);
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const continuation = after.runs.find((run) => run.id === continuationRunId);
+      assert.isDefined(continuation);
+      assert.equal(continuation.providerInstanceId, alternateInstanceId);
+      assert.equal(continuation.modelSelection.model, "claude-opus-5-5");
+      assert.equal(continuation.userMessageId, MessageId.make(`limit-failover:${activeRun.id}`));
+      assert.deepInclude(notedLimits, { instanceId: modelSelection.instanceId, resetAt });
+    }),
+  );
+
+  it.effect("lets the run fail when every account is spent for the model", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("claude-failover-exhausted");
+      const { activeRun } = yield* failRunOnLimit(threadId, SPENT_MODEL);
+
+      // The reactor dispatches only on a switch, in the same fiber as this
+      // decision, so after it the thread has nothing more to start.
+      assert.equal(yield* Queue.take(failoverDecisions), "Exhausted");
+      yield* Effect.yieldNow;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        after.runs.map((run) => run.id),
+        [activeRun.id],
+      );
+      assert.equal(after.runs[0]?.status, "failed");
     }),
   );
 });
