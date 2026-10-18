@@ -16,6 +16,7 @@ import {
   makeBrowserGitHubRoutingPermissions,
   makeCatalogBackend,
   makeCatalogStore,
+  makeDatabaseConnection,
 } from "./storage";
 
 const emptyCatalog = {
@@ -78,7 +79,9 @@ describe("makeCatalogBackend", () => {
           setConnectionCatalog,
         },
       });
-      const backend = makeCatalogBackend({} as IDBDatabase);
+      const backend = makeCatalogBackend(
+        yield* makeDatabaseConnection(Effect.succeed(new EventTarget() as IDBDatabase)),
+      );
 
       const error = yield* backend.write("{}").pipe(Effect.flip);
 
@@ -103,11 +106,69 @@ describe("makeCatalogBackend", () => {
           },
         }),
       });
-      const backend = makeCatalogBackend({ transaction: () => transaction } as never);
+      const backend = makeCatalogBackend(
+        yield* makeDatabaseConnection(
+          Effect.succeed(
+            Object.assign(new EventTarget(), { transaction: () => transaction }) as never,
+          ),
+        ),
+      );
 
       const error = yield* backend.write("{}").pipe(Effect.flip);
 
       expect(error.message).toContain("QuotaExceededError");
+    }),
+  );
+
+  it.effect("reopens IndexedDB after the browser closes the connection", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const closed = Object.assign(new EventTarget(), {
+        close: () => {},
+        transaction: () => {
+          throw new DOMException("The database connection is closing.", "InvalidStateError");
+        },
+      });
+      const request = Object.assign(new EventTarget(), { result: "{}" });
+      const reopened = Object.assign(new EventTarget(), {
+        close: () => {},
+        transaction: () => ({
+          objectStore: () => ({
+            get: () => {
+              queueMicrotask(() => request.dispatchEvent(new Event("success")));
+              return request;
+            },
+          }),
+        }),
+      });
+      const databases = [closed, reopened];
+      let opens = 0;
+      const backend = makeCatalogBackend(
+        yield* makeDatabaseConnection(Effect.sync(() => databases[opens++] as never)),
+      );
+
+      expect(yield* backend.read).toBe("{}");
+      expect(opens).toBe(2);
+    }),
+  );
+
+  it.effect("fails, rather than dies, when IndexedDB stays closed", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const closed = Object.assign(new EventTarget(), {
+        close: () => {},
+        transaction: () => {
+          throw new DOMException("The database connection is closing.", "InvalidStateError");
+        },
+      });
+      const backend = makeCatalogBackend(
+        yield* makeDatabaseConnection(Effect.succeed(closed as never)),
+      );
+
+      const error = yield* backend.read.pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(ConnectionTransientError);
+      expect(error.message).toContain("InvalidStateError");
     }),
   );
 });
