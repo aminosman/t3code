@@ -147,6 +147,13 @@ export const TuiInboxPost = Schema.Union([
     promptId: TrimmedNonEmptyString,
     outcome: Schema.Literals(["up", "down", "expired"]),
   }),
+  /** The screen needs the user's own hands (a sign-in, a code): the phone
+   * shows a way into the Screen view, and is pushed. */
+  Schema.Struct({
+    type: Schema.Literal("screen"),
+    text: InboxText,
+    utteranceId: Schema.optional(Schema.String),
+  }),
   /** A hands run on the Mac: started, a step, or ended. */
   Schema.Struct({
     type: Schema.Literal("hands"),

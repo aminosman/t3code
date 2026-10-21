@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text, AppTextInput } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -147,12 +147,23 @@ export function TuiInboxScreen({ route }: TuiInboxScreenProps) {
     await control({ environmentId, input: { type: "stop" } });
   };
 
+  const openScreen = () =>
+    navigation.navigate("TuiScreen", environmentId ? { environmentId } : undefined);
+
   const scroller = useRef<ScrollViewInstance>(null);
   const openPromptIds = new Set(inbox.openPrompts.map((prompt) => prompt.promptId));
 
   return (
     <>
       <NativeStackScreenOptions options={{ title: "tui", headerShown: true }} />
+      <NativeHeaderToolbar placement="right">
+        <NativeHeaderToolbar.Button
+          icon="display"
+          accessibilityLabel="See the Mac's screen"
+          disabled={environmentId === null}
+          onPress={() => openScreen()}
+        />
+      </NativeHeaderToolbar>
       <KeyboardAvoidingView
         className="flex-1 bg-screen"
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -221,6 +232,7 @@ export function TuiInboxScreen({ route }: TuiInboxScreenProps) {
               entry={entry}
               open={entry.post?.type === "prompt" && openPromptIds.has(entry.post.promptId)}
               onAnswer={answer}
+              onOpenScreen={openScreen}
             />
           ))}
         </ScrollView>
@@ -297,6 +309,7 @@ function TuiEntryRow(props: {
   readonly entry: TuiInboxEntry;
   readonly open: boolean;
   readonly onAnswer: (promptId: string, verdict: "up" | "down") => void;
+  readonly onOpenScreen: () => void;
 }) {
   const { entry } = props;
   if (entry.from === "me") {
@@ -371,6 +384,18 @@ function TuiEntryRow(props: {
               ? "↓ declined"
               : "no answer in time"}
         </Text>
+      );
+    case "screen":
+      return (
+        <View className="gap-2.5 self-stretch rounded-[20px] border border-border bg-card-alt p-4">
+          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
+            tui needs you at the screen
+          </Text>
+          <Text className="font-sans text-base leading-normal text-foreground">{post.text}</Text>
+          <View className="flex-row flex-wrap gap-2.5">
+            <RequestActionButton label="Open screen" tone="primary" onPress={props.onOpenScreen} />
+          </View>
+        </View>
       );
     case "hands":
       return post.phase === "step" ? null : (

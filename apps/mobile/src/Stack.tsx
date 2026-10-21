@@ -42,6 +42,7 @@ import {
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { VoiceOracleScreen } from "./features/voice/VoiceOracleScreen";
 import { TuiInboxScreen } from "./features/tui/TuiInboxScreen";
+import { TuiScreenScreen } from "./features/tui/TuiScreenScreen";
 import { useTuiNotificationAnswers } from "./features/tui/useTuiNotificationAnswers";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
@@ -744,6 +745,14 @@ const RootStackConfig = createNativeStackNavigator({
       options: {
         ...GLASS_HEADER_OPTIONS,
         title: "tui",
+      },
+    }),
+    TuiScreen: createNativeStackScreen({
+      screen: TuiScreenScreen,
+      linking: "tui-screen/:environmentId?",
+      options: {
+        ...SOLID_HEADER_OPTIONS,
+        title: "Screen",
       },
     }),
     Thread: createNativeStackScreen({

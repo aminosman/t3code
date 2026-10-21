@@ -283,6 +283,15 @@ import {
   TuiInboxSendResult,
 } from "./tuiInbox.ts";
 import {
+  TuiScreenEvent,
+  TuiScreenError,
+  TuiScreenFrame,
+  TuiScreenHost,
+  TuiScreenHostEvent,
+  TuiScreenInput,
+  TuiScreenStatus,
+} from "./tuiScreen.ts";
+import {
   HistoryApiError,
   HistoryMeetingListInput,
   HistoryMeetingListOutput,
@@ -473,6 +482,12 @@ export const WS_METHODS = {
   tuiInboxSend: "tuiInbox.send",
   tuiInboxSubscribe: "tuiInbox.subscribe",
   tuiInboxControl: "tuiInbox.control",
+  // tui screen (Roost): the Mac's display on the phone, and its taps back
+  tuiScreenConnect: "tuiScreen.connect",
+  tuiScreenFrame: "tuiScreen.frame",
+  tuiScreenStatus: "tuiScreen.status",
+  tuiScreenSubscribe: "tuiScreen.subscribe",
+  tuiScreenControl: "tuiScreen.control",
   pushListDevices: "push.listDevices",
   pushRemoveDevice: "push.removeDevice",
   pushTestDevice: "push.testDevice",
@@ -1551,6 +1566,35 @@ const WsTuiInboxControlRpc = Rpc.make(WS_METHODS.tuiInboxControl, {
   error: Schema.Union([TuiInboxError, EnvironmentAuthorizationError]),
 });
 
+const WsTuiScreenConnectRpc = Rpc.make(WS_METHODS.tuiScreenConnect, {
+  payload: TuiScreenHost,
+  success: TuiScreenHostEvent,
+  error: Schema.Union([TuiScreenError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsTuiScreenFrameRpc = Rpc.make(WS_METHODS.tuiScreenFrame, {
+  payload: TuiScreenFrame,
+  error: Schema.Union([TuiScreenError, EnvironmentAuthorizationError]),
+});
+
+const WsTuiScreenStatusRpc = Rpc.make(WS_METHODS.tuiScreenStatus, {
+  payload: TuiScreenStatus,
+  error: Schema.Union([TuiScreenError, EnvironmentAuthorizationError]),
+});
+
+const WsTuiScreenSubscribeRpc = Rpc.make(WS_METHODS.tuiScreenSubscribe, {
+  payload: Schema.Struct({}),
+  success: TuiScreenEvent,
+  error: Schema.Union([TuiScreenError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsTuiScreenControlRpc = Rpc.make(WS_METHODS.tuiScreenControl, {
+  payload: TuiScreenInput,
+  error: Schema.Union([TuiScreenError, EnvironmentAuthorizationError]),
+});
+
 const WsHistorySearchRpc = Rpc.make(WS_METHODS.historySearch, {
   payload: HistorySearchInput,
   success: HistorySearchOutput,
@@ -2062,6 +2106,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsPushTestDeviceRpc,
   WsTuiInboxSubscribeRpc,
   WsTuiInboxControlRpc,
+  WsTuiScreenConnectRpc,
+  WsTuiScreenFrameRpc,
+  WsTuiScreenStatusRpc,
+  WsTuiScreenSubscribeRpc,
+  WsTuiScreenControlRpc,
   WsHistorySearchRpc,
   WsHistoryMeetingListRpc,
   WsHistoryMeetingReadRpc,

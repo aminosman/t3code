@@ -37,6 +37,7 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EMPTY_TUI_INBOX, reduceTuiInbox } from "../tuiInbox/state.ts";
+import { EMPTY_TUI_SCREEN, reduceTuiScreen } from "../tuiScreen/state.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import {
@@ -1117,6 +1118,15 @@ export function createServerEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
       transform: (stream) => stream.pipe(Stream.scan(EMPTY_TUI_INBOX, reduceTuiInbox)),
     }),
+    /** The Mac's screen (Roost's tui screen relay), newest frame only. */
+    tuiScreen: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:tui-screen",
+      tag: WS_METHODS.tuiScreenSubscribe,
+      // Drop the stream the moment the screen goes: an open subscription is
+      // what keeps the Mac capturing.
+      idleTtlMs: 0,
+      transform: (stream) => stream.pipe(Stream.scan(EMPTY_TUI_SCREEN, reduceTuiScreen)),
+    }),
     // Roost meetings: the recorded meetings and the search over them (and threads).
     meetingList: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:history:meeting-list",
@@ -1359,6 +1369,11 @@ export function createServerEnvironmentAtoms<R, E>(
     controlTui: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:tui-inbox:control",
       tag: WS_METHODS.tuiInboxControl,
+    }),
+    /** A tap, scroll or keystroke on the Mac's screen. */
+    controlTuiScreen: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tui-screen:control",
+      tag: WS_METHODS.tuiScreenControl,
     }),
     writeMeetingNotes: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:history:meeting-notes-write",

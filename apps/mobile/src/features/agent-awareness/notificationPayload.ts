@@ -86,11 +86,12 @@ export function extractAgentNotificationDeepLink(response: unknown): string | nu
   const data = dataFromNotificationResponse(response);
   const deepLink = data?.deepLink;
   // tui (the Mac's voice assistant) talking back through the tui inbox.
-  if (deepLink === "/tui") {
+  // "/tui-screen" is the Mac's screen, when it needs the user's own hands.
+  if (deepLink === "/tui" || deepLink === "/tui-screen") {
     const environmentId = data?.environmentId;
     return typeof environmentId === "string" && environmentId.length > 0
-      ? `/tui/${encodeURIComponent(environmentId)}`
-      : "/tui";
+      ? `${deepLink}/${encodeURIComponent(environmentId)}`
+      : deepLink;
   }
   if (typeof deepLink === "string") {
     const normalizedDeepLink = normalizeThreadDeepLink(deepLink);

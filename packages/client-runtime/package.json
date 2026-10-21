@@ -386,6 +386,10 @@
     "./tui-inbox": {
       "types": "./src/tuiInbox/state.ts",
       "default": "./src/tuiInbox/state.ts"
+    },
+    "./tui-screen": {
+      "types": "./src/tuiScreen/state.ts",
+      "default": "./src/tuiScreen/state.ts"
     }
   },
   "scripts": {

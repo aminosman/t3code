@@ -109,6 +109,8 @@ export const make = Effect.gen(function* () {
     readonly collapseId: string;
     readonly category?: string;
     readonly data: Record<string, string>;
+    /** Where a tap on it opens; the tui conversation unless said. */
+    readonly deepLink?: string;
   }) {
     const devices = yield* registry.list;
     if (devices.length === 0) return;
@@ -126,7 +128,11 @@ export const make = Effect.gen(function* () {
             production: device.pushEnvironment === "production",
             title: notification.title,
             body: notification.body,
-            data: { ...notification.data, environmentId, deepLink: "/tui" },
+            data: {
+              ...notification.data,
+              environmentId,
+              deepLink: notification.deepLink ?? "/tui",
+            },
             collapseId: notification.collapseId,
             ...(notification.category ? { category: notification.category } : {}),
           })
@@ -215,6 +221,17 @@ export const make = Effect.gen(function* () {
       }
       case "settled": {
         openPrompts.delete(message.promptId);
+        return;
+      }
+      case "screen": {
+        // Always pushed: the user is wanted at the screen, wherever they are.
+        yield* notifyInBackground({
+          title: "tui needs you at the screen",
+          body: pushBody(message.text),
+          collapseId: "tui-screen",
+          data: {},
+          deepLink: "/tui-screen",
+        });
         return;
       }
       case "say": {

@@ -177,6 +177,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as TuiInbox from "./tuiInbox/TuiInbox.ts";
+import * as TuiScreen from "./tuiScreen/TuiScreen.ts";
 import * as PushDeviceRegistry from "./push/PushDeviceRegistry.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
 import { listPushDevices, removePushDevice } from "./push/pushDevices.ts";
@@ -1131,6 +1132,7 @@ const makeWsRpcLayer = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const tuiInbox = yield* TuiInbox.TuiInbox;
+      const tuiScreen = yield* TuiScreen.TuiScreen;
       const pushRegistry = yield* PushDeviceRegistry.PushDeviceRegistry;
       const pushNotifier = yield* PushNotifier.PushNotifier;
       const settingsForPush = yield* ServerSettings.ServerSettingsService;
@@ -3519,6 +3521,26 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.tuiInboxControl, tuiInbox.control(input), {
             "rpc.aggregate": "tui-inbox",
           }),
+        [WS_METHODS.tuiScreenConnect]: (input) =>
+          observeRpcStreamEffect(WS_METHODS.tuiScreenConnect, tuiScreen.connect(input), {
+            "rpc.aggregate": "tui-screen",
+          }),
+        [WS_METHODS.tuiScreenFrame]: (input) =>
+          observeRpcEffect(WS_METHODS.tuiScreenFrame, tuiScreen.frame(input), {
+            "rpc.aggregate": "tui-screen",
+          }),
+        [WS_METHODS.tuiScreenStatus]: (input) =>
+          observeRpcEffect(WS_METHODS.tuiScreenStatus, tuiScreen.status(input), {
+            "rpc.aggregate": "tui-screen",
+          }),
+        [WS_METHODS.tuiScreenSubscribe]: (_input) =>
+          observeRpcStreamEffect(WS_METHODS.tuiScreenSubscribe, tuiScreen.subscribe, {
+            "rpc.aggregate": "tui-screen",
+          }),
+        [WS_METHODS.tuiScreenControl]: (input) =>
+          observeRpcEffect(WS_METHODS.tuiScreenControl, tuiScreen.control(input), {
+            "rpc.aggregate": "tui-screen",
+          }),
         [WS_METHODS.pushListDevices]: (_input) =>
           observeRpcEffect(WS_METHODS.pushListDevices, withPushServices(listPushDevices), {
             "rpc.aggregate": "push",
@@ -3901,6 +3923,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const tuiInbox = yield* TuiInbox.TuiInbox;
+    const tuiScreen = yield* TuiScreen.TuiScreen;
     const historySearch = yield* HistorySearch.HistorySearch;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
@@ -3962,6 +3985,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One inbox for the server's life: tui's stream and the phone's share it.
               Layer.provide(Layer.succeed(TuiInbox.TuiInbox, tuiInbox)),
+              // One screen relay likewise: tui's frames and the phone's taps meet here.
+              Layer.provide(Layer.succeed(TuiScreen.TuiScreen, tuiScreen)),
               // One index for the server's life, shared with the MCP tools.
               Layer.provide(Layer.succeed(HistorySearch.HistorySearch, historySearch)),
               // One server-lifetime service means clients share the same PR caches, and a WS

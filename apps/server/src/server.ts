@@ -84,6 +84,7 @@ import * as HistorySearch from "./historySearch/HistorySearch.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as TuiInbox from "./tuiInbox/TuiInbox.ts";
+import * as TuiScreen from "./tuiScreen/TuiScreen.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -712,6 +713,7 @@ const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PullRequestServiceLive),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(TuiInbox.layer),
+  Layer.provide(TuiScreen.layer),
   // The index behind t3_history_search (threads and meetings), built at launch
   // and kept current by following thread events and the meetings folder. One
   // instance for both doors: agents reach it over MCP, clients (tui's meetings
