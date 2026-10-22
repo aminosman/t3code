@@ -117,7 +117,10 @@ TMP="$(mktemp -d)"; unzip -q "$OUT/Roost-$VERSION-arm64.zip" -d "$TMP"
 BUILT="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$TMP/Roost.app/Contents/Info.plist")"
 [ "$BUILT" = "$VERSION" ] || die "the app says $BUILT, not $VERSION"
 codesign --verify --deep "$TMP/Roost.app" 2>/dev/null || die "the app's signature does not verify"
-codesign -dv "$TMP/Roost.app" 2>&1 | grep -qx "TeamIdentifier=$MAC_TEAM" || die "the app is not signed by team $MAC_TEAM"
+# Read into a variable first: under pipefail, grep -q quitting early
+# SIGPIPEs codesign and fails the pipe even when the team matches.
+SIGNED_BY="$(codesign -dv "$TMP/Roost.app" 2>&1)"
+grep -qx "TeamIdentifier=$MAC_TEAM" <<<"$SIGNED_BY" || die "the app is not signed by team $MAC_TEAM"
 rm -rf "$TMP"
 say "artifacts verified"
 du -h $ASSETS | sed 's/^/  /'
