@@ -52,6 +52,14 @@ CARGO_BIN="$(dirname "$(rustup which cargo 2>/dev/null || true)")"
 [ -x "$CARGO_BIN/cargo" ] || die "cargo not found (rustup which cargo)"
 export PATH="$CARGO_BIN:$PATH"
 rustup target list --installed | grep -q aarch64-apple-darwin || die "rustup target add aarch64-apple-darwin"
+# Roost is signed with the Developer ID certificate Tui is signed with. An
+# ad-hoc Roost is a new app to the keychain on every update, and asked for
+# the login password at every first launch to read "t3code Safe Storage"
+# (Oct 22 2026); a certificate's team ID survives the update.
+MAC_IDENTITY="${ROOST_MAC_IDENTITY:-Amin Osman (42858ET9MX)}"
+MAC_TEAM="${MAC_IDENTITY##*\(}"; MAC_TEAM="${MAC_TEAM%\)}"
+security find-identity -v -p codesigning | grep -qF "Developer ID Application: $MAC_IDENTITY" \
+  || die "no \"Developer ID Application: $MAC_IDENTITY\" in the keychain (ROOST_MAC_IDENTITY names another)"
 
 # --- version ---------------------------------------------------------------
 CURRENT="$(node -p "require('./apps/desktop/package.json').version")"
@@ -92,6 +100,7 @@ say "building Roost $VERSION for macOS arm64 → $OUT"
 # failing an install every hour.
 T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR="${T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR:-true}" \
 T3CODE_DESKTOP_PRODUCT_NAME=Roost \
+T3CODE_DESKTOP_MAC_IDENTITY="$MAC_IDENTITY" \
 T3CODE_DESKTOP_MAC_ICON_PNG=assets/roost/roost-macos-1024.png \
   node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --output-dir "$OUT"
 
@@ -108,6 +117,7 @@ TMP="$(mktemp -d)"; unzip -q "$OUT/Roost-$VERSION-arm64.zip" -d "$TMP"
 BUILT="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$TMP/Roost.app/Contents/Info.plist")"
 [ "$BUILT" = "$VERSION" ] || die "the app says $BUILT, not $VERSION"
 codesign --verify --deep "$TMP/Roost.app" 2>/dev/null || die "the app's signature does not verify"
+codesign -dv "$TMP/Roost.app" 2>&1 | grep -qx "TeamIdentifier=$MAC_TEAM" || die "the app is not signed by team $MAC_TEAM"
 rm -rf "$TMP"
 say "artifacts verified"
 du -h $ASSETS | sed 's/^/  /'
@@ -127,7 +137,7 @@ if [ -z "$NOTES" ]; then
   if [ -n "$LAST" ]; then
     NOTES+="$(git log --no-merges --format='- %s' "$LAST..HEAD~1" | grep -v '^- release:' | head -30)"$'\n\n'
   fi
-  NOTES+="macOS arm64, ad-hoc signed. Same bundle id and \`~/.t3\` home as T3 Code. Tui installs this for you: it reads the shared update feed hourly and swaps Roost the next time it is not running."
+  NOTES+="macOS arm64, signed with Developer ID (team $MAC_TEAM), not notarized. Same bundle id and \`~/.t3\` home as T3 Code. Tui installs this for you: it reads the shared update feed hourly and swaps Roost the next time it is not running."
 fi
 gh release create "$TAG" -R "$REPO" --title "Roost $VERSION" --notes "$NOTES" $ASSETS
 say "released: https://github.com/$REPO/releases/tag/$TAG"

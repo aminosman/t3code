@@ -2765,8 +2765,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           // hardened runtime auto-denies microphone access (silently,
           // promptlessly) without device.audio-input, which Electron's
           // defaults omit.
+          //
+          // T3CODE_DESKTOP_MAC_IDENTITY names a keychain certificate to use
+          // instead of "-", without its "Developer ID Application:" prefix
+          // (Roost: "Amin Osman (42858ET9MX)"). An ad-hoc app is known to
+          // the keychain and TCC by its cdhash, which every build changes,
+          // so each update asked for the login password again to read the
+          // "t3code Safe Storage" key (Oct 22 2026). A certificate's team
+          // ID stays the same from build to build.
           {
-            identity: "-",
+            identity: process.env.T3CODE_DESKTOP_MAC_IDENTITY?.trim() || "-",
             ...(adhocEntitlementsPath
               ? {
                   entitlements: adhocEntitlementsPath,
