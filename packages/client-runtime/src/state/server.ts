@@ -1375,6 +1375,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:tui-screen:control",
       tag: WS_METHODS.tuiScreenControl,
     }),
+    resolveTuiScreen: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tui-screen:resolve",
+      tag: WS_METHODS.tuiScreenResolve,
+    }),
     writeMeetingNotes: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:history:meeting-notes-write",
       tag: WS_METHODS.historyMeetingNotesWrite,

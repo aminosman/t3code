@@ -289,6 +289,7 @@ import {
   TuiScreenHost,
   TuiScreenHostEvent,
   TuiScreenInput,
+  TuiScreenResolve,
   TuiScreenStatus,
 } from "./tuiScreen.ts";
 import {
@@ -488,6 +489,7 @@ export const WS_METHODS = {
   tuiScreenStatus: "tuiScreen.status",
   tuiScreenSubscribe: "tuiScreen.subscribe",
   tuiScreenControl: "tuiScreen.control",
+  tuiScreenResolve: "tuiScreen.resolve",
   pushListDevices: "push.listDevices",
   pushRemoveDevice: "push.removeDevice",
   pushTestDevice: "push.testDevice",
@@ -1595,6 +1597,11 @@ const WsTuiScreenControlRpc = Rpc.make(WS_METHODS.tuiScreenControl, {
   error: Schema.Union([TuiScreenError, EnvironmentAuthorizationError]),
 });
 
+const WsTuiScreenResolveRpc = Rpc.make(WS_METHODS.tuiScreenResolve, {
+  payload: TuiScreenResolve,
+  error: Schema.Union([TuiScreenError, EnvironmentAuthorizationError]),
+});
+
 const WsHistorySearchRpc = Rpc.make(WS_METHODS.historySearch, {
   payload: HistorySearchInput,
   success: HistorySearchOutput,
@@ -2111,6 +2118,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTuiScreenStatusRpc,
   WsTuiScreenSubscribeRpc,
   WsTuiScreenControlRpc,
+  WsTuiScreenResolveRpc,
   WsHistorySearchRpc,
   WsHistoryMeetingListRpc,
   WsHistoryMeetingReadRpc,

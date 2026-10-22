@@ -57,8 +57,20 @@ export class TuiInbox extends Context.Service<
     readonly send: (input: TuiInboxSendInput) => Effect.Effect<TuiInboxSendResult, TuiInboxError>;
     readonly subscribe: Effect.Effect<Stream.Stream<TuiInboxEvent>>;
     readonly control: (input: TuiInboxControlInput) => Effect.Effect<void, TuiInboxError>;
+    /** A push to every phone, in the background; for the screen's asks. */
+    readonly notify: (notification: TuiInboxNotification) => Effect.Effect<void>;
   }
 >()("t3/tuiInbox/TuiInbox") {}
+
+export interface TuiInboxNotification {
+  readonly title: string;
+  readonly body: string;
+  readonly collapseId: string;
+  readonly category?: string;
+  readonly data: Record<string, string>;
+  /** Where a tap on it opens; the tui conversation unless said. */
+  readonly deepLink?: string;
+}
 
 interface Host {
   readonly clientId: string;
@@ -103,15 +115,9 @@ export const make = Effect.gen(function* () {
     return full;
   });
 
-  const notifyDevices = Effect.fn("TuiInbox.notifyDevices")(function* (notification: {
-    readonly title: string;
-    readonly body: string;
-    readonly collapseId: string;
-    readonly category?: string;
-    readonly data: Record<string, string>;
-    /** Where a tap on it opens; the tui conversation unless said. */
-    readonly deepLink?: string;
-  }) {
+  const notifyDevices = Effect.fn("TuiInbox.notifyDevices")(function* (
+    notification: TuiInboxNotification,
+  ) {
     const devices = yield* registry.list;
     if (devices.length === 0) return;
     const credentials = yield* readApnsCredentials({ devicesWaiting: devices.length }).pipe(
@@ -331,7 +337,7 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  return TuiInbox.of({ connect, post, send, subscribe, control });
+  return TuiInbox.of({ connect, post, send, subscribe, control, notify: notifyInBackground });
 });
 
 export const layer = Layer.effect(TuiInbox, make).pipe(Layer.provide(ApnsClient.layer));

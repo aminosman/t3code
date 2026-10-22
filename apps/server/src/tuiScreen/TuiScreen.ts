@@ -9,6 +9,12 @@
  * for: an agent opens a sign-in page the user must click through themselves,
  * from wherever they are.
  *
+ * An agent thread blocked on the user at the Mac asks with `ask` (the
+ * `t3_screen_hand_over` MCP tool). The ask is listed to phones and to tui,
+ * which shows the display holding the window it names; the phone's Done or
+ * Not now comes back through `resolve` and is handed to the asker's answer,
+ * which sends it into the thread.
+ *
  * Frames are not queued: a phone that falls behind gets the newest frame
  * next, not the one after the last it saw. Nothing is kept across a restart.
  */
@@ -19,8 +25,12 @@ import {
   type TuiScreenHost,
   type TuiScreenHostEvent,
   type TuiScreenInput,
+  type TuiScreenRequest,
+  type TuiScreenResolve,
   type TuiScreenStatus,
+  type TuiScreenTarget,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -37,8 +47,35 @@ export class TuiScreen extends Context.Service<
     readonly status: (status: TuiScreenStatus) => Effect.Effect<void>;
     readonly subscribe: Effect.Effect<Stream.Stream<TuiScreenEvent>>;
     readonly control: (input: TuiScreenInput) => Effect.Effect<void, TuiScreenError>;
+    /**
+     * Ask the user to do something at the screen. `answer` runs once, in
+     * the background, when a phone says Done or Not now. A thread that asks
+     * again replaces its earlier ask, whose answer is never run.
+     */
+    readonly ask: (
+      input: TuiScreenAsk,
+      answer: (resolution: TuiScreenResolve) => Effect.Effect<void>,
+    ) => Effect.Effect<{ readonly request: TuiScreenRequest; readonly hostConnected: boolean }>;
+    readonly resolve: (input: TuiScreenResolve) => Effect.Effect<void, TuiScreenError>;
+    /** Whether tui holds the stream now. */
+    readonly hostConnected: Effect.Effect<boolean>;
   }
 >()("t3/tuiScreen/TuiScreen") {}
+
+export interface TuiScreenAsk {
+  readonly reason: string;
+  readonly threadId?: string;
+  readonly threadTitle?: string;
+  readonly target?: TuiScreenTarget;
+}
+
+interface Pending {
+  readonly request: TuiScreenRequest;
+  readonly answer: (resolution: TuiScreenResolve) => Effect.Effect<void>;
+}
+
+/** An ask nobody answers is let go after this long. */
+const ASK_TTL_MS = 60 * 60 * 1000;
 
 interface Host {
   readonly clientId: string;
@@ -51,6 +88,7 @@ const FRAME_BACKLOG = 2;
 
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const scope = yield* Effect.scope;
 
   // JavaScript runs one fiber at a time and none of these blocks yields, so
   // plain mutable state inside Effect.sync is atomic.
@@ -58,11 +96,24 @@ export const make = Effect.gen(function* () {
   let lastStatus: TuiScreenStatus = { state: "idle" };
   let lastFrame: TuiScreenFrame | null = null;
   const subscribers = new Set<Queue.Queue<TuiScreenEvent, Cause.Done>>();
+  const pending = new Map<string, Pending>();
 
   const uuid = crypto.randomUUIDv4.pipe(Effect.orDie);
 
   const broadcast = (event: TuiScreenEvent) =>
     Effect.forEach(subscribers, (queue) => Queue.offer(queue, event), { discard: true });
+
+  const requests = Effect.gen(function* () {
+    const cutoff = (yield* Clock.currentTimeMillis) - ASK_TTL_MS;
+    for (const [id, entry] of pending) if (entry.request.createdAt < cutoff) pending.delete(id);
+    return Array.from(pending.values(), (entry) => entry.request);
+  });
+
+  const tellRequests = Effect.gen(function* () {
+    const list = yield* requests;
+    yield* broadcast({ type: "requests", requests: list });
+    if (host) yield* Queue.offer(host.queue, { type: "requests", requests: list });
+  });
 
   const tellViewers = Effect.gen(function* () {
     if (!host) return;
@@ -96,6 +147,9 @@ export const make = Effect.gen(function* () {
               yield* Queue.offer(previous.queue, { type: "superseded" });
               yield* Queue.end(previous.queue);
             }
+            const asks = yield* requests;
+            // Only when there are any: a fresh connection starts with none.
+            if (asks.length > 0) yield* Queue.offer(queue, { type: "requests", requests: asks });
             yield* Queue.offer(queue, { type: "viewers", count: subscribers.size });
             yield* broadcast({ type: "host", connected: true, status: lastStatus });
             yield* Effect.logInfo("tui screen: tui connected", {
@@ -139,6 +193,8 @@ export const make = Effect.gen(function* () {
           const queue = yield* Queue.unbounded<TuiScreenEvent, Cause.Done>();
           yield* Queue.offer(queue, { type: "host", connected: host !== null, status: lastStatus });
           if (lastFrame) yield* Queue.offer(queue, { type: "frame", frame: lastFrame });
+          const asks = yield* requests;
+          if (asks.length > 0) yield* Queue.offer(queue, { type: "requests", requests: asks });
           subscribers.add(queue);
           yield* tellViewers;
           return queue;
@@ -161,7 +217,55 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return TuiScreen.of({ connect, frame, status, subscribe, control });
+  const ask: TuiScreen["Service"]["ask"] = Effect.fn("TuiScreen.ask")(function* (input, answer) {
+    if (input.threadId !== undefined) {
+      for (const [id, entry] of pending)
+        if (entry.request.threadId === input.threadId) pending.delete(id);
+    }
+    const request: TuiScreenRequest = {
+      id: yield* uuid,
+      reason: input.reason,
+      ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+      ...(input.threadTitle === undefined ? {} : { threadTitle: input.threadTitle }),
+      ...(input.target === undefined ? {} : { target: input.target }),
+      createdAt: yield* Clock.currentTimeMillis,
+    };
+    pending.set(request.id, { request, answer });
+    yield* tellRequests;
+    yield* Effect.logInfo("tui screen: an agent asked for the user", {
+      threadId: input.threadId,
+      hostConnected: host !== null,
+    });
+    return { request, hostConnected: host !== null };
+  });
+
+  const resolve: TuiScreen["Service"]["resolve"] = Effect.fn("TuiScreen.resolve")(
+    function* (input) {
+      const entry = pending.get(input.id);
+      if (!entry) {
+        return yield* new TuiScreenError({ message: "That ask has already been answered." });
+      }
+      pending.delete(input.id);
+      yield* tellRequests;
+      yield* entry.answer(input).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("tui screen: answering the ask failed", { cause }),
+        ),
+        Effect.forkIn(scope),
+      );
+    },
+  );
+
+  return TuiScreen.of({
+    connect,
+    frame,
+    status,
+    subscribe,
+    control,
+    ask,
+    resolve,
+    hostConnected: Effect.sync(() => host !== null),
+  });
 });
 
 export const layer = Layer.effect(TuiScreen, make);

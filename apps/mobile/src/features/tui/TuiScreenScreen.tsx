@@ -1,4 +1,9 @@
-import { EnvironmentId, type TuiScreenInput, type TuiScreenKey } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type TuiScreenInput,
+  type TuiScreenKey,
+  type TuiScreenRequest,
+} from "@t3tools/contracts";
 import { EMPTY_TUI_SCREEN } from "@t3tools/client-runtime/tui-screen";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { Image } from "expo-image";
@@ -54,7 +59,9 @@ const SHORTCUTS: ReadonlyArray<{ readonly keys: string; readonly label: string }
  * The Mac's screen, live, with the phone's finger on it: tap to click,
  * double-tap to double-click, hold for a right click, drag to scroll, and a
  * keyboard row for what a sign-in page needs. tui captures only while this
- * screen is open; closing it stops the capture.
+ * screen is open; closing it stops the capture. An agent thread waiting on
+ * the user here (`t3_screen_hand_over`) is listed above the picture, and its
+ * Done or Not now goes back into that thread.
  */
 export function TuiScreenScreen({ route }: TuiScreenScreenProps) {
   const insets = useSafeAreaInsets();
@@ -112,7 +119,22 @@ export function TuiScreenScreen({ route }: TuiScreenScreenProps) {
     [control, environmentId],
   );
 
+  const resolve = useAtomCommand(serverEnvironment.resolveTuiScreen, {
+    label: "tui screen answer",
+    reportFailure: false,
+  });
+  const answer = useCallback(
+    async (request: TuiScreenRequest, outcome: "done" | "declined") => {
+      if (!environmentId) return;
+      const result = await resolve({ environmentId, input: { id: request.id, outcome } });
+      setProblem(result._tag === "Failure" ? "That answer did not reach the agent." : null);
+    },
+    [resolve, environmentId],
+  );
+
   const frame = screen.frame;
+  const displayCount = frame?.displayCount ?? 1;
+  const displayIndex = frame?.displayIndex ?? 0;
   const [box, setBox] = useState({ width: 0, height: 0 });
   const onLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -262,6 +284,32 @@ export function TuiScreenScreen({ route }: TuiScreenScreenProps) {
           </ScrollView>
         ) : null}
 
+        {screen.requests.map((request) => (
+          <View
+            key={request.id}
+            className="mx-3 mt-2 gap-2 rounded-2xl border border-primary/40 bg-card px-3.5 py-3"
+          >
+            <Text className="font-sans text-sm font-semibold text-foreground">
+              {`${request.threadTitle ?? "An agent"} needs you`}
+            </Text>
+            <Text className="font-sans text-sm leading-5 text-foreground/80">{request.reason}</Text>
+            <View className="flex-row gap-2">
+              <Pressable
+                onPress={() => void answer(request, "done")}
+                className="rounded-full bg-primary px-4 py-1.5"
+              >
+                <Text className="font-sans text-sm text-primary-foreground">Done</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void answer(request, "declined")}
+                className="rounded-full border border-border px-4 py-1.5"
+              >
+                <Text className="font-sans text-sm text-foreground">Not now</Text>
+              </Pressable>
+            </View>
+          </View>
+        ))}
+
         <GestureDetector gesture={gesture}>
           <View className="flex-1" onLayout={onLayout} collapsable={false}>
             {frame && picture ? (
@@ -300,6 +348,14 @@ export function TuiScreenScreen({ route }: TuiScreenScreenProps) {
           showsHorizontalScrollIndicator={false}
           keyboardShouldPersistTaps="always"
         >
+          {displayCount > 1 ? (
+            <KeyButton
+              label={`Display ${displayIndex + 1}/${displayCount}`}
+              onPress={() =>
+                void act({ type: "display", index: (displayIndex + 1) % displayCount })
+              }
+            />
+          ) : null}
           <KeyButton label="⇧" active={shift} onPress={() => setShift((on) => !on)} />
           {KEYS.map((item) => (
             <KeyButton key={item.key} label={item.label} onPress={() => pressKey(item.key)} />

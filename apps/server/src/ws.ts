@@ -3541,6 +3541,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.tuiScreenControl, tuiScreen.control(input), {
             "rpc.aggregate": "tui-screen",
           }),
+        [WS_METHODS.tuiScreenResolve]: (input) =>
+          observeRpcEffect(WS_METHODS.tuiScreenResolve, tuiScreen.resolve(input), {
+            "rpc.aggregate": "tui-screen",
+          }),
         [WS_METHODS.pushListDevices]: (_input) =>
           observeRpcEffect(WS_METHODS.pushListDevices, withPushServices(listPushDevices), {
             "rpc.aggregate": "push",

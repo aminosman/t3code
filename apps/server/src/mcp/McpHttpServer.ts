@@ -30,6 +30,8 @@ import { ProjectHandlersLive } from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import { AttachmentHandlersLive } from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import { ScreenToolkit } from "./toolkits/screen/tools.ts";
+import { ScreenToolkitHandlersLive } from "./toolkits/screen/handlers.ts";
 import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
 import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -676,6 +678,11 @@ export const ThreadToolkitRegistrationLive = McpServer.toolkit(ThreadToolkit).pi
   Layer.provide(ThreadToolkitHandlersLive),
 );
 
+/** An agent handing the Mac's screen to the user, through tui and the phone. */
+const ScreenToolkitRegistrationLive = McpServer.toolkit(ScreenToolkit).pipe(
+  Layer.provide(ScreenToolkitHandlersLive),
+);
+
 const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit).pipe(
   Layer.provide(WorktreeToolkitHandlersLive),
   Layer.provide(WorktreeMcpService.layer),
@@ -739,4 +746,5 @@ export const layer = Layer.mergeAll(
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
   ThreadsToolkitRegistrationLive,
+  ScreenToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

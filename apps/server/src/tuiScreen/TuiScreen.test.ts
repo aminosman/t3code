@@ -86,3 +86,52 @@ it.effect("refuses input while tui is away", () =>
     expect(error._tag).toBe("TuiScreenError");
   }).pipe(Effect.scoped),
 );
+
+it.live(
+  "an agent's ask reaches tui and the phone, and the phone's answer reaches the agent once",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const screen = yield* makeScreen;
+        const host: TuiScreenHostEvent[] = [];
+        yield* Stream.runForEach(yield* screen.connect({ clientId: "tui" }), (event) =>
+          Effect.sync(() => host.push(event)),
+        ).pipe(Effect.forkScoped);
+        const phone: TuiScreenEvent[] = [];
+        yield* Stream.runForEach(yield* screen.subscribe, (event) =>
+          Effect.sync(() => phone.push(event)),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.sleep("5 millis");
+
+        const answers: string[] = [];
+        const answer = (label: string) => (resolution: { outcome: string }) =>
+          Effect.sync(() => answers.push(`${label}:${resolution.outcome}`));
+        const first = yield* screen.ask({ reason: "Sign in", threadId: "t1" }, answer("first"));
+        expect(first.hostConnected).toBe(true);
+        // The same thread asking again replaces its first ask.
+        const second = yield* screen.ask(
+          { reason: "Enter the code", threadId: "t1", target: { app: "Google Chrome" } },
+          answer("second"),
+        );
+        yield* Effect.sleep("5 millis");
+        const lastHost = host.filter((event) => event.type === "requests").at(-1);
+        expect(lastHost).toMatchObject({
+          requests: [{ id: second.request.id, target: { app: "Google Chrome" } }],
+        });
+        expect(phone.filter((event) => event.type === "requests").at(-1)).toMatchObject({
+          requests: [{ reason: "Enter the code" }],
+        });
+
+        const stale = yield* Effect.flip(screen.resolve({ id: first.request.id, outcome: "done" }));
+        expect(stale._tag).toBe("TuiScreenError");
+        yield* screen.resolve({ id: second.request.id, outcome: "done" });
+        yield* Effect.sleep("5 millis");
+        expect(answers).toEqual(["second:done"]);
+        expect(phone.at(-1)).toEqual({ type: "requests", requests: [] });
+        const again = yield* Effect.flip(
+          screen.resolve({ id: second.request.id, outcome: "done" }),
+        );
+        expect(again._tag).toBe("TuiScreenError");
+      }),
+    ),
+);
