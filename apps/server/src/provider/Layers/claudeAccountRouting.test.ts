@@ -122,11 +122,28 @@ describe("accountStanding", () => {
     expect(o).toMatchObject({ pressurePercent: 67, blockedBy: undefined, resetsAt: SUNDAY });
   });
 
-  it("treats critical severity as blocked regardless of percent", () => {
+  it("treats blocked severity as out regardless of percent", () => {
     const c = candidate("x", {
-      windows: windows({ session: 5, fable: 40, fableSeverity: "critical" }),
+      windows: windows({ session: 5, fable: 40, fableSeverity: "blocked" }),
     });
-    expect(accountStanding(c, "fable", NOW)?.blockedBy).toBe("weeklyScoped");
+    expect(accountStanding(c, "fable", NOW)).toMatchObject({
+      blockedBy: "weeklyScoped",
+      spent: true,
+    });
+  });
+
+  // Oct 24 2026: Claude reported Sunday's weekly critical at 92% and Sunday
+  // served the turn; reading critical as blocked failed it on Thursday.
+  it("reads critical severity as a warning, not a stop", () => {
+    const c = candidate("x", {
+      switchAtPercent: 95,
+      windows: [{ kind: "weekly", usedPercent: 92, severity: "critical", resetsAt: SUNDAY }],
+    });
+    expect(accountStanding(c, "opus", NOW)).toMatchObject({
+      pressurePercent: 92,
+      blockedBy: undefined,
+      spent: false,
+    });
   });
 
   // Lets the rotation work without polling the idle account.
@@ -275,5 +292,45 @@ describe("selectClaudeAccount", () => {
     ]);
     expect(first).toMatchObject({ _tag: "Switch", to: "b" });
     expect(second).toMatchObject({ _tag: "Stay", reason: "preferred" });
+  });
+});
+
+describe("selectClaudeAccount past the threshold", () => {
+  const at = (id: string, session: number, weekly: number) =>
+    candidate(id, {
+      switchAtPercent: 95,
+      windows: [
+        { kind: "session", usedPercent: session, severity: "normal", resetsAt: IN_AN_HOUR },
+        { kind: "weekly", usedPercent: weekly, severity: "critical", resetsAt: SUNDAY },
+      ],
+    });
+
+  // The alia-web thread, Oct 24 2026: Thursday at its session limit, Sunday at
+  // 92% weekly reported critical. The turn belonged on Sunday.
+  it("moves a refused turn to a sibling Claude only warned about", () => {
+    expect(select("thursday", OPUS, [at("sunday", 2, 92), at("thursday", 100, 54)])).toMatchObject({
+      _tag: "Switch",
+      from: "thursday",
+      to: "sunday",
+      reason: "blocked",
+    });
+  });
+
+  it("sends the turn to the account with the most room when all are past it", () => {
+    expect(select("thursday", OPUS, [at("sunday", 2, 97), at("thursday", 100, 54)])).toMatchObject({
+      _tag: "Switch",
+      to: "sunday",
+      reason: "blocked",
+    });
+    expect(select("sunday", OPUS, [at("sunday", 2, 99), at("thursday", 96, 54)])).toMatchObject({
+      _tag: "Switch",
+      to: "thursday",
+    });
+  });
+
+  it("is exhausted only when every account is full", () => {
+    expect(select("thursday", OPUS, [at("sunday", 2, 100), at("thursday", 100, 54)])).toMatchObject(
+      { _tag: "Exhausted" },
+    );
   });
 });

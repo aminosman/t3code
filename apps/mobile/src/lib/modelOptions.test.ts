@@ -504,3 +504,55 @@ describe("mobile model options", () => {
     ).toBeNull();
   });
 });
+
+describe("account groups", () => {
+  const claude = (instanceId: string, displayName: string) => ({
+    instanceId,
+    driver: "claudeAgent",
+    displayName,
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    models: [
+      { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+    ],
+  });
+  const config = {
+    providers: [claude("claudeAgent", "Sunday"), claude("claudeAgent_claude_2", "Thursday")],
+    settings: {
+      providerInstances: {
+        claudeAgent: { driver: "claudeAgent", config: { accountGroup: "max" } },
+        claudeAgent_claude_2: { driver: "claudeAgent", config: { accountGroup: "max" } },
+      },
+    },
+  } as unknown as ServerConfig;
+
+  it("shows accounts that share a group as one Claude", () => {
+    expect(
+      groupByProvider(buildModelOptions(config, null)).map((group) => [
+        group.providerKey,
+        group.providerLabel,
+        group.models.length,
+      ]),
+    ).toEqual([["claudeAgent", "Claude", 1]]);
+  });
+
+  it("reads a thread on the hidden account as the group's entry, keeping its account", () => {
+    const selection: ModelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent_claude_2"),
+      model: "claude-opus-5-5",
+    };
+    const options = buildModelOptions(config, selection, selection.instanceId);
+    expect(options.map((option) => [option.providerKey, option.providerLabel])).toEqual([
+      ["claudeAgent", "Claude"],
+    ]);
+    expect(options[0]?.selection).toEqual(selection);
+  });
+
+  it("leaves accounts without a shared group apart", () => {
+    const ungrouped = { ...config, settings: { providerInstances: {} } } as unknown as ServerConfig;
+    expect(groupByProvider(buildModelOptions(ungrouped, null)).map((g) => g.providerLabel)).toEqual(
+      ["Sunday", "Thursday"],
+    );
+  });
+});

@@ -5,7 +5,13 @@
  * overall weekly windows always apply, and a model-scoped weekly (Claude
  * reports one for Fable today) applies when it names that model's family.
  * An account is out for a model when any of those windows is at the switch
- * threshold or reported critical/blocked.
+ * threshold or reported blocked. "critical" is only a warning: Claude reports
+ * it from about 90% (Oct 24 2026: Sunday's weekly read critical at 92% and
+ * served the turn its sibling had just refused).
+ *
+ * When every account is past the threshold, the one with the most room left
+ * serves rather than the one that refused: the threshold is a margin to finish
+ * a turn in, and past it a turn that may finish beats one that cannot.
  *
  * Among accounts that still have budget for the model, the one whose binding
  * window resets soonest is drained first: budget that is about to reset is
@@ -68,6 +74,8 @@ export interface ClaudeAccountStanding {
   readonly resetsAt: string | undefined;
   /** Which window put the account out, when it is out. */
   readonly blockedBy: ClaudeUsageWindow["kind"] | undefined;
+  /** A binding window is full or reported blocked: no turn can run here. */
+  readonly spent: boolean;
 }
 
 export type ClaudeRoutingDecision =
@@ -149,11 +157,13 @@ export function accountStanding(
 
   let pressurePercent = 0;
   let blockedBy: ClaudeUsageWindow["kind"] | undefined;
+  let spent = false;
   for (const window of binding) {
     if (elapsed(window, nowMs)) continue;
     const percent = effectivePercent(window, nowMs);
     pressurePercent = Math.max(pressurePercent, percent);
-    const hard = window.severity === "critical" || window.severity === "blocked";
+    const hard = window.severity === "blocked" || percent >= 100;
+    spent ||= hard;
     if ((hard || percent >= candidate.switchAtPercent) && blockedBy === undefined) {
       blockedBy = window.kind;
     }
@@ -166,7 +176,7 @@ export function accountStanding(
     binding.find((window) => window.kind === "weekly");
   const resetsAt = weekly && !elapsed(weekly, nowMs) ? weekly.resetsAt : undefined;
 
-  return { instanceId: candidate.instanceId, pressurePercent, resetsAt, blockedBy };
+  return { instanceId: candidate.instanceId, pressurePercent, resetsAt, blockedBy, spent };
 }
 
 /**
@@ -241,6 +251,7 @@ export function selectClaudeAccount(input: {
         pressurePercent: 0,
         resetsAt: undefined,
         blockedBy: undefined,
+        spent: false,
       } satisfies ClaudeAccountStanding);
     standings.set(member.instanceId, standing);
   }
@@ -249,8 +260,15 @@ export function selectClaudeAccount(input: {
   const eligible = [...standings.values()]
     .filter((standing) => standing.blockedBy === undefined)
     .toSorted(drainFirst);
+  const headroom = [...standings.values()]
+    .filter((standing) => !standing.spent)
+    .toSorted(
+      (left, right) =>
+        left.pressurePercent - right.pressurePercent ||
+        left.instanceId.localeCompare(right.instanceId),
+    );
 
-  const winner = eligible[0];
+  const winner = eligible[0] ?? headroom[0];
   if (!winner) {
     return {
       _tag: "Exhausted",

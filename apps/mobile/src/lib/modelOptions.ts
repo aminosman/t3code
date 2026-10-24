@@ -155,25 +155,76 @@ export function resolveNewTaskModelSelection(input: {
   );
 }
 
+type ConfigProvider = T3ServerConfig["providers"][number];
+type InstanceId = ModelSelection["instanceId"];
+
+function isPickableProvider(provider: ConfigProvider): boolean {
+  return (
+    provider.enabled &&
+    provider.installed &&
+    provider.auth.status !== "unauthenticated" &&
+    !(provider.driver === "antigravity" && provider.availability === "unavailable")
+  );
+}
+
+function accountGroupOf(config: T3ServerConfig, instanceId: InstanceId): string {
+  const instanceConfig = config.settings?.providerInstances[instanceId]?.config;
+  if (typeof instanceConfig !== "object" || instanceConfig === null) return "";
+  const group = (instanceConfig as { readonly accountGroup?: unknown }).accountGroup;
+  return typeof group === "string" ? group.trim() : "";
+}
+
+/**
+ * Accounts that share an `accountGroup` are one choice: the server picks which
+ * of them serves each turn (`ClaudeAccountRouter`), so the picker shows the
+ * group once, under the driver's own name, as the web picker does (Amin, Oct
+ * 24 2026: "I see two separate ... Claude setup. I should just see one").
+ * Maps each hidden member to the member that stands for its group.
+ */
+export function accountGroupLeads(
+  config: T3ServerConfig | null | undefined,
+): ReadonlyMap<InstanceId, InstanceId> {
+  const leads = new Map<InstanceId, InstanceId>();
+  if (!config) return leads;
+  const membersByGroup = new Map<string, InstanceId[]>();
+  for (const provider of config.providers) {
+    if (!isPickableProvider(provider)) continue;
+    const group = accountGroupOf(config, provider.instanceId);
+    if (group.length === 0) continue;
+    const key = `${provider.driver}\u0000${group}`;
+    const members = membersByGroup.get(key);
+    if (members) members.push(provider.instanceId);
+    else membersByGroup.set(key, [provider.instanceId]);
+  }
+  for (const [lead, ...rest] of membersByGroup.values()) {
+    for (const member of rest) leads.set(member, lead!);
+  }
+  return leads;
+}
+
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
   providerInstanceId?: ModelSelection["instanceId"],
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
+  const leads = accountGroupLeads(config);
+  const groupLeads = new Set(leads.values());
+  const asLead = (instanceId: InstanceId) => leads.get(instanceId) ?? instanceId;
+  const lockedTo = providerInstanceId === undefined ? undefined : asLead(providerInstanceId);
 
   for (const provider of config?.providers ?? []) {
     if (
-      (providerInstanceId !== undefined && provider.instanceId !== providerInstanceId) ||
-      !provider.enabled ||
-      !provider.installed ||
-      provider.auth.status === "unauthenticated" ||
-      (provider.driver === "antigravity" && provider.availability === "unavailable")
+      (lockedTo !== undefined && provider.instanceId !== lockedTo) ||
+      leads.has(provider.instanceId) ||
+      !isPickableProvider(provider)
     ) {
       continue;
     }
 
-    const providerLabel = providerDisplayLabel(provider);
+    const providerLabel = groupLeads.has(provider.instanceId)
+      ? providerDisplayLabel({ driver: provider.driver, instanceId: provider.instanceId })
+      : providerDisplayLabel(provider);
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
@@ -205,7 +256,10 @@ export function buildModelOptions(
     fallbackModelSelection &&
     (providerInstanceId === undefined || fallbackModelSelection.instanceId === providerInstanceId)
   ) {
-    const key = `${fallbackModelSelection.instanceId}:${fallbackModelSelection.model}`;
+    // A thread on a hidden group member reads as the group's entry, keeping
+    // its own account in the selection so picking it changes nothing.
+    const fallbackInstanceId = asLead(fallbackModelSelection.instanceId);
+    const key = `${fallbackInstanceId}:${fallbackModelSelection.model}`;
     const existing = options.get(key);
     if (existing) {
       options.set(key, {
@@ -225,16 +279,17 @@ export function buildModelOptions(
       );
       const providerDriver =
         provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
+      const grouped = fallbackInstanceId !== fallbackModelSelection.instanceId;
       const providerLabel = providerDisplayLabel({
         driver: providerDriver,
-        displayName: provider?.displayName ?? instanceConfig?.displayName,
+        displayName: grouped ? undefined : (provider?.displayName ?? instanceConfig?.displayName),
         instanceId: fallbackModelSelection.instanceId,
       });
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
         subtitle: model?.subProvider ?? "",
-        providerKey: fallbackModelSelection.instanceId,
+        providerKey: fallbackInstanceId,
         providerLabel,
         providerDriver,
         isDefault: false,
