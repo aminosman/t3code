@@ -65,6 +65,26 @@ function causeMessage(cause: unknown): string | undefined {
   return message;
 }
 
+/** Whether a tagged error appears anywhere in a failure's cause chain. */
+export function causeHasTag(cause: unknown, tag: string): boolean {
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
+    seen.add(cause);
+    try {
+      if (Cause.isCause(cause)) {
+        cause = Cause.squash(cause);
+        continue;
+      }
+      if (typeof cause !== "object") return false;
+      if ((cause as Record<string, unknown>)._tag === tag) return true;
+      cause = (cause as Record<string, unknown>).cause;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 function stringField(value: unknown, key: "message" | "code"): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {

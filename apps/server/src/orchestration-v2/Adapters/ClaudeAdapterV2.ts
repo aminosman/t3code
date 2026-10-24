@@ -2974,6 +2974,53 @@ export function makeClaudeAdapterV2(
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
+        // Session ids this runtime minted (a fresh or replacement native thread)
+        // or that the CLI reported missing, and whose transcript the CLI has not
+        // yet confirmed. They are opened with `sessionId`, never `resume`: a
+        // replacement thread keeps its row and earlier provider turns, so the
+        // persisted-turn rule below would otherwise resume a conversation that
+        // was never created, and every later turn fails with "No conversation
+        // found with session ID" (careday build thread, Oct 24 2026).
+        const unconfirmedNativeThreads = yield* Ref.make(new Set<string>());
+        const markNativeThreadUnconfirmed = (nativeThreadId: string) =>
+          Ref.update(unconfirmedNativeThreads, (current) =>
+            current.has(nativeThreadId) ? current : new Set(current).add(nativeThreadId),
+          );
+        const confirmNativeThread = (nativeThreadId: string) =>
+          Ref.update(unconfirmedNativeThreads, (current) => {
+            if (!current.has(nativeThreadId)) return current;
+            const updated = new Set(current);
+            updated.delete(nativeThreadId);
+            return updated;
+          });
+        // The CLI's init proves the transcript exists; a resume it rejects as
+        // missing is created afresh on the next turn instead of failing forever.
+        const trackNativeSessionExistence = (nativeThreadId: string, message: SDKMessage) => {
+          if (message.type === "system" && message.subtype === "init") {
+            return message.session_id === nativeThreadId
+              ? confirmNativeThread(nativeThreadId)
+              : Effect.void;
+          }
+          if (
+            message.type === "result" &&
+            message.is_error &&
+            "errors" in message &&
+            message.errors.some((error) =>
+              error.includes(`No conversation found with session ID: ${nativeThreadId}`),
+            )
+          ) {
+            return Effect.all([
+              markNativeThreadUnconfirmed(nativeThreadId),
+              Ref.update(openedNativeThreads, (current) => {
+                if (!current.has(nativeThreadId)) return current;
+                const updated = new Set(current);
+                updated.delete(nativeThreadId);
+                return updated;
+              }),
+            ]).pipe(Effect.asVoid);
+          }
+          return Effect.void;
+        };
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         const planIdsByNativeItem = yield* Ref.make(
           new Map<string, OrchestrationV2PlanArtifact["id"]>(),
@@ -6912,8 +6959,10 @@ export function makeClaudeAdapterV2(
           // it; reopening with a fixed session id makes the CLI fail fast with
           // "Session ID ... is already in use".
           const hasPersistedProviderTurn = turnInput.providerTurnOrdinal > 1;
+          const unconfirmed = (yield* Ref.get(unconfirmedNativeThreads)).has(nativeThreadId);
           const shouldResume =
-            resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+            !unconfirmed &&
+            (resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn);
           const querySession = yield* queryRunner
             .open({
               threadId: turnInput.threadId,
@@ -6994,7 +7043,11 @@ export function makeClaudeAdapterV2(
           };
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
-            Stream.runForEach((message) => handleSdkMessage({ query: querySession, message })),
+            Stream.runForEach((message) =>
+              trackNativeSessionExistence(nativeThreadId, message).pipe(
+                Effect.andThen(handleSdkMessage({ query: querySession, message })),
+              ),
+            ),
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
@@ -7434,6 +7487,7 @@ export function makeClaudeAdapterV2(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               const createdAt = yield* DateTime.now;
               const nativeThreadId = yield* queryRunner.allocateSessionId;
+              yield* markNativeThreadUnconfirmed(nativeThreadId);
               return makeProviderThread({
                 idAllocator,
                 providerInstanceId: adapterOptions.instanceId,
@@ -7554,6 +7608,7 @@ export function makeClaudeAdapterV2(
 
               if (rollbackInput.target.type === "thread_start") {
                 const resetNativeThreadId = yield* queryRunner.allocateSessionId;
+                yield* markNativeThreadUnconfirmed(resetNativeThreadId);
                 return {
                   providerThread: {
                     ...makeProviderThread({

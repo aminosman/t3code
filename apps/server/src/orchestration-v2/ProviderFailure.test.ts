@@ -11,7 +11,9 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
+import { ClaudeBackgroundWorkBlocksQueryReplacementError } from "./Adapters/ClaudeAdapterV2.ts";
 import {
+  causeHasTag,
   makeProviderFailure,
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_CODE_LENGTH,
@@ -207,3 +209,18 @@ it.effect("keys terminal failure items by provider turn across retries and fallb
     assert.equal(firstAttempt.ordinal, 101);
   }).pipe(Effect.provide(IdAllocator.layer)),
 );
+
+it("finds a refusal wrapped in a turn-start error and a cause", () => {
+  const refused = new ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("claudeAgent"),
+    threadId: ThreadId.make("thread-refused"),
+    providerThreadId: ProviderThreadId.make("provider-thread-refused"),
+    runId: RunId.make("run-refused"),
+    cause: new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+  });
+  const tag = "ClaudeBackgroundWorkBlocksQueryReplacementError";
+  assert.isTrue(causeHasTag(refused, tag));
+  assert.isTrue(causeHasTag(Cause.fail(refused), tag));
+  assert.isFalse(causeHasTag(new Error("boom"), tag));
+  assert.isFalse(causeHasTag(undefined, tag));
+});

@@ -1822,7 +1822,47 @@ describe("ClaudeAdapterV2 native fork", () => {
 });
 
 describe("ClaudeAdapterV2 native session identity", () => {
-  const openTurnWithOrdinal = (providerTurnOrdinal: number) =>
+  const sdkFrame = (frame: Record<string, unknown>) => frame as unknown as SDKMessage;
+  const resultFrame = (fields: Record<string, unknown>) =>
+    sdkFrame({
+      type: "result",
+      subtype: "success",
+      duration_ms: 0,
+      duration_api_ms: 0,
+      is_error: false,
+      num_turns: 1,
+      result: "ok",
+      stop_reason: "end_turn",
+      total_cost_usd: 0,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      modelUsage: {},
+      permission_denials: [],
+      session_id: "native-session-identity",
+      ...fields,
+    });
+  const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      for (let attempt = 0; attempt < 5000; attempt++) {
+        if (predicate()) return;
+        yield* Effect.yieldNow;
+      }
+      return yield* Effect.die(`Timed out waiting for ${label}.`);
+    });
+  // `loadedVia: "resume"` loads the provider thread into a second session
+  // instance, as after an idle release or a Roost restart; `"ensure"` is the
+  // thread the adapter just minted, including a replacement after a failed
+  // resume, which keeps its row and earlier provider turns.
+  const openTurns = (input: {
+    readonly providerTurnOrdinal: number;
+    readonly loadedVia: "ensure" | "resume";
+    readonly turns?: number;
+    readonly firstProcessMessages?: ReadonlyArray<SDKMessage>;
+  }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -1831,6 +1871,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
           prefix: "t3-claude-v2-session-identity-",
         });
         const openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [];
+        const events: Array<ProviderAdapterV2Event> = [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -1841,11 +1882,15 @@ describe("ClaudeAdapterV2 native session identity", () => {
           idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed("native-session-identity"),
-            open: (input) =>
+            open: (openInput) =>
               Effect.sync(() => {
-                openedQueries.push(input);
+                const first = openedQueries.length === 0;
+                openedQueries.push(openInput);
                 return {
-                  messages: Stream.empty,
+                  messages:
+                    first && input.firstProcessMessages !== undefined
+                      ? Stream.fromIterable(input.firstProcessMessages)
+                      : Stream.empty,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
                   interrupt: Effect.void,
@@ -1858,37 +1903,68 @@ describe("ClaudeAdapterV2 native session identity", () => {
           },
         });
         const threadId = ThreadId.make("thread-claude-session-identity");
-        const providerSessionId = ProviderSessionId.make("provider-session-claude-identity");
-        const runtime = yield* adapter.openSession({
+        const minting = yield* adapter.openSession({
           threadId,
-          providerSessionId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-identity"),
           modelSelection: CLAUDE_TEST_MODEL_SELECTION,
           runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
         });
-        const providerThread = yield* runtime.ensureThread({
+        const mintedThread = yield* minting.ensureThread({
           threadId,
           modelSelection: CLAUDE_TEST_MODEL_SELECTION,
           runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
         });
-        const now = yield* DateTime.now;
-        yield* runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId,
-            providerThread,
-            now,
-            attemptId: RunAttemptId.make("run-attempt-claude-session-identity"),
-            text: "Respond with identity ok",
-            attachments: [],
-            providerTurnOrdinal,
-          }),
+        const runtime =
+          input.loadedVia === "ensure"
+            ? minting
+            : yield* adapter.openSession({
+                threadId,
+                providerSessionId: ProviderSessionId.make("provider-session-claude-identity-2"),
+                modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+                runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+              });
+        const providerThread =
+          input.loadedVia === "ensure"
+            ? mintedThread
+            : yield* runtime.resumeThread({
+                providerThread: mintedThread,
+                threadId,
+                modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+                runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+              });
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              events.push(event);
+            }),
+          ),
+          Effect.forkScoped,
         );
+        const terminals = () => events.filter((event) => event.type === "turn.terminal");
+        const now = yield* DateTime.now;
+        for (let turn = 0; turn < (input.turns ?? 1); turn++) {
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now,
+              attemptId: RunAttemptId.make(`run-attempt-claude-session-identity-${turn}`),
+              text: "Respond with identity ok",
+              attachments: [],
+              providerTurnOrdinal: input.providerTurnOrdinal + turn,
+            }),
+          );
+          if (turn === 0 && (input.turns ?? 1) > 1) {
+            yield* awaitUntil(() => terminals().length === 1, "first turn terminal");
+          }
+        }
         return openedQueries;
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
 
   it.effect("creates the native session on the first provider turn", () =>
     Effect.gen(function* () {
-      const openedQueries = yield* openTurnWithOrdinal(1);
+      const openedQueries = yield* openTurns({ providerTurnOrdinal: 1, loadedVia: "ensure" });
       assert.equal(openedQueries.length, 1);
       assert.equal(openedQueries[0]?.options.sessionId, "native-session-identity");
       assert.equal(openedQueries[0]?.options.resume, undefined);
@@ -1899,11 +1975,78 @@ describe("ClaudeAdapterV2 native session identity", () => {
     "resumes the native session on a fresh session instance when prior provider turns exist",
     () =>
       Effect.gen(function* () {
-        const openedQueries = yield* openTurnWithOrdinal(2);
+        const openedQueries = yield* openTurns({ providerTurnOrdinal: 2, loadedVia: "resume" });
         assert.equal(openedQueries.length, 1);
         assert.equal(openedQueries[0]?.options.resume, "native-session-identity");
         assert.equal(openedQueries[0]?.options.sessionId, undefined);
       }),
+  );
+
+  it.effect("creates a replacement native session even when the row has earlier turns", () =>
+    Effect.gen(function* () {
+      const openedQueries = yield* openTurns({ providerTurnOrdinal: 17, loadedVia: "ensure" });
+      assert.equal(openedQueries.length, 1);
+      assert.equal(openedQueries[0]?.options.sessionId, "native-session-identity");
+      assert.equal(openedQueries[0]?.options.resume, undefined);
+    }),
+  );
+
+  it.effect("creates the native session afresh after the CLI reports the resume missing", () =>
+    Effect.gen(function* () {
+      const openedQueries = yield* openTurns({
+        providerTurnOrdinal: 17,
+        loadedVia: "resume",
+        turns: 2,
+        firstProcessMessages: [
+          resultFrame({
+            subtype: "error_during_execution",
+            is_error: true,
+            num_turns: 0,
+            stop_reason: null,
+            errors: ["No conversation found with session ID: native-session-identity"],
+            uuid: "00000000-0000-4000-8000-000000000d01",
+          }),
+        ],
+      });
+      assert.equal(openedQueries.length, 2);
+      assert.equal(openedQueries[0]?.options.resume, "native-session-identity");
+      assert.equal(openedQueries[1]?.options.sessionId, "native-session-identity");
+      assert.equal(openedQueries[1]?.options.resume, undefined);
+    }),
+  );
+
+  it.effect("resumes a minted native session once the CLI has initialised it", () =>
+    Effect.gen(function* () {
+      const openedQueries = yield* openTurns({
+        providerTurnOrdinal: 1,
+        loadedVia: "ensure",
+        turns: 2,
+        firstProcessMessages: [
+          sdkFrame({
+            type: "system",
+            subtype: "init",
+            cwd: "/tmp",
+            session_id: "native-session-identity",
+            tools: [],
+            mcp_servers: [],
+            model: "claude-opus-5-5",
+            permissionMode: "default",
+            slash_commands: [],
+            apiKeySource: "none",
+            claude_code_version: "test",
+            output_style: "default",
+            agents: [],
+            skills: [],
+            plugins: [],
+            uuid: "00000000-0000-4000-8000-000000000d02",
+          }),
+          resultFrame({ uuid: "00000000-0000-4000-8000-000000000d03" }),
+        ],
+      });
+      assert.equal(openedQueries.length, 2);
+      assert.equal(openedQueries[0]?.options.sessionId, "native-session-identity");
+      assert.equal(openedQueries[1]?.options.resume, "native-session-identity");
+    }),
   );
 });
 

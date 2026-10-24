@@ -2,6 +2,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -44,7 +45,7 @@ import {
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import { makeProviderFailure } from "./ProviderFailure.ts";
+import { causeHasTag, makeProviderFailure } from "./ProviderFailure.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import {
@@ -1115,8 +1116,28 @@ export const layer: Layer.Layer<
                     createdAt: yield* DateTime.now,
                   }),
                 ];
+          const handoffsBeforeDelivery = [...effectiveHandoffs, ...retryHandoff];
+          const persistHandoff = (handoff: OrchestrationV2ContextHandoff) =>
+            Effect.gen(function* () {
+              const updatedAt = yield* DateTime.now;
+              yield* eventSink.write({
+                events: [
+                  {
+                    id: yield* idAllocator.allocate.event({
+                      threadId: projection.thread.id,
+                    }),
+                    type: "context-handoff.updated",
+                    threadId: projection.thread.id,
+                    runId: run.id,
+                    providerInstanceId: run.providerInstanceId,
+                    occurredAt: updatedAt,
+                    payload: { ...handoff, updatedAt },
+                  },
+                ],
+              });
+            });
           const delivery = yield* deliverContextHandoffs({
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
+            handoffs: handoffsBeforeDelivery,
             deferInline: compact,
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
@@ -1143,25 +1164,7 @@ export const layer: Layer.Layer<
                       ...history,
                     }),
                 }),
-            persist: (handoff) =>
-              Effect.gen(function* () {
-                const updatedAt = yield* DateTime.now;
-                yield* eventSink.write({
-                  events: [
-                    {
-                      id: yield* idAllocator.allocate.event({
-                        threadId: projection.thread.id,
-                      }),
-                      type: "context-handoff.updated",
-                      threadId: projection.thread.id,
-                      runId: run.id,
-                      providerInstanceId: run.providerInstanceId,
-                      occurredAt: updatedAt,
-                      payload: { ...handoff, updatedAt },
-                    },
-                  ],
-                });
-              }),
+            persist: persistHandoff,
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
           const start = compact ? session.compactThread! : session.startTurn;
@@ -1176,7 +1179,19 @@ export const layer: Layer.Layer<
               ...turnInput.message,
               text: context === "" ? userText : `${context}\n\nUser message:\n${userText}`,
             },
-          });
+          }).pipe(
+            // A turn refused before its prompt left (Claude's background-work
+            // guard) delivered nothing. The pending marker it leaves would make
+            // the next turn treat delivery as uncertain and abandon the native
+            // session for a fresh one, so the handoffs go back as they were.
+            Effect.tapError((cause) =>
+              causeHasTag(cause, "ClaudeBackgroundWorkBlocksQueryReplacementError")
+                ? Effect.forEach(handoffsBeforeDelivery, persistHandoff, {
+                    discard: true,
+                  }).pipe(Effect.ignore)
+                : Effect.void,
+            ),
+          );
           // The provider already accepted the turn. A stale pending marker
           // can force a fresh thread later, but must not stop live ingestion.
           yield* delivery.delivered.pipe(
