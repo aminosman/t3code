@@ -9671,12 +9671,73 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (command.type === "delegated_task.wake-policy") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.parentThreadId));
     }
+    if (command.type === "thread.archive" || command.type === "thread.delete") {
+      // Archiving or deleting a thread cascades to the sub-threads it owns:
+      // a child left active pops out from under its parent and clutters the
+      // thread list. Forks are the user's own copies and are left alone. A
+      // replayed command finds every child already in the target state, so
+      // the cascade is a no-op on replay.
+      yield* cascadeThreadLifecycleToOwnedChildren(command);
+    }
 
     return {
       sequence: committed.receipt.resultSequence,
       storedEvents: committed.storedEvents,
     } satisfies OrchestratorV2DispatchResult;
   });
+
+  // Each child is dispatched as its own command through the usual path, so a
+  // child that changed since the snapshot (already archived or deleted) is
+  // skipped by the dispatch guards, grandchildren cascade in turn, and one
+  // child's failure is logged rather than failing the parent's operation.
+  const cascadeThreadLifecycleToOwnedChildren = (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "thread.archive" | "thread.delete" }
+    >,
+  ) =>
+    Effect.gen(function* () {
+      const snapshot = yield* projectionStore
+        .getShellSnapshot()
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const children = [...snapshot.threads, ...snapshot.archivedThreads].filter(
+        (thread) =>
+          thread.lineage.parentThreadId === command.threadId &&
+          thread.lineage.relationshipToParent === "subagent" &&
+          thread.deletedAt === null &&
+          (command.type === "thread.delete" || thread.archivedAt === null),
+      );
+      yield* Effect.forEach(
+        children,
+        (child) =>
+          dispatchWithReceipt({
+            type: command.type,
+            commandId: CommandId.make(`${command.commandId}:cascade:${child.id}`),
+            threadId: child.id,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to cascade thread lifecycle to an owned child", {
+                commandId: command.commandId,
+                childThreadId: child.id,
+                cause,
+              }),
+            ),
+          ),
+        { concurrency: 1, discard: true },
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to cascade thread lifecycle to owned children", {
+          commandId: command.commandId,
+          threadId: command.threadId,
+          cause,
+        }),
+      ),
+    );
 
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
     threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));

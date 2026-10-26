@@ -73,6 +73,7 @@ import {
   ProjectServiceLayerLive,
 } from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
+import { makeSubagentChildThread } from "./SubagentProjection.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -3657,6 +3658,109 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(cancelAgainError._tag, "OrchestratorDispatchError");
+    }),
+  );
+});
+
+// Own describe, own store: the child threads are seeded straight into the
+// projection without creation events, which the shared rebuild check would
+// flag as drift against the event log.
+it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle cascade", (it) => {
+  it.effect("archives and deletes owned sub-threads with their parent", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThreadId = ThreadId.make("runtime-layer-cascade-parent");
+      const childThreadId = ThreadId.make("runtime-layer-cascade-child");
+      const grandchildThreadId = ThreadId.make("runtime-layer-cascade-grandchild");
+      const forkThreadId = ThreadId.make("runtime-layer-cascade-fork");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-cascade-create-parent"),
+        threadId: parentThreadId,
+        projectId: ProjectId.make("runtime-layer-cascade-project"),
+        title: "Cascade parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-cascade",
+      });
+      const now = yield* DateTime.now;
+      const parentThread = (yield* orchestrator.getThreadProjection(parentThreadId)).thread;
+      const makeChild = (id: ThreadId, parent: typeof parentThread, title: string) =>
+        makeSubagentChildThread({
+          parentThread: parent,
+          childThreadId: id,
+          parentNodeId: NodeId.make(`runtime-layer-cascade-node:${id}`),
+          activeProviderThreadId: null,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          title,
+          now,
+          createdBy: "agent",
+          creationSource: "provider",
+        });
+      const childThread = makeChild(childThreadId, parentThread, "Cascade child");
+      const grandchildThread = makeChild(grandchildThreadId, childThread, "Cascade grandchild");
+      // A fork is the user's own copy, not an owned sub-thread: it stays put.
+      const forkThread: typeof childThread = {
+        ...childThread,
+        id: forkThreadId,
+        title: "Cascade fork",
+        lineage: {
+          parentThreadId,
+          relationshipToParent: "fork",
+          rootThreadId: parentThreadId,
+        },
+      };
+      for (const thread of [childThread, grandchildThread, forkThread]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`runtime-layer-cascade-created:${thread.id}`),
+          type: "thread.created",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: thread,
+        });
+      }
+
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-cascade-archive-parent"),
+        threadId: parentThreadId,
+      });
+
+      const afterArchive = yield* Effect.all({
+        parent: orchestrator.getThreadProjection(parentThreadId),
+        child: orchestrator.getThreadProjection(childThreadId),
+        grandchild: orchestrator.getThreadProjection(grandchildThreadId),
+        fork: orchestrator.getThreadProjection(forkThreadId),
+      });
+      assert.isNotNull(afterArchive.parent.thread.archivedAt);
+      assert.isNotNull(afterArchive.child.thread.archivedAt);
+      assert.isNotNull(afterArchive.grandchild.thread.archivedAt);
+      assert.isNull(afterArchive.fork.thread.archivedAt);
+
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("runtime-layer-cascade-delete-parent"),
+        threadId: parentThreadId,
+      });
+
+      const afterDelete = yield* Effect.all({
+        parent: orchestrator.getThreadProjection(parentThreadId),
+        child: orchestrator.getThreadProjection(childThreadId),
+        grandchild: orchestrator.getThreadProjection(grandchildThreadId),
+        fork: orchestrator.getThreadProjection(forkThreadId),
+      });
+      assert.isNotNull(afterDelete.parent.thread.deletedAt);
+      assert.isNotNull(afterDelete.child.thread.deletedAt);
+      assert.isNotNull(afterDelete.grandchild.thread.deletedAt);
+      assert.isNull(afterDelete.fork.thread.deletedAt);
+      assert.isNull(afterDelete.fork.thread.archivedAt);
     }),
   );
 });
