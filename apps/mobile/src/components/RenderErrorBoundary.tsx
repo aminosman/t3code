@@ -4,6 +4,10 @@ import { ScrollView, View } from "react-native";
 import { AppText as Text } from "./AppText";
 import { MaterialButton } from "./MaterialButton";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import {
+  recordLocalDiagnostic,
+  recordLocalDiagnosticError,
+} from "../features/diagnostics/localDiagnostics";
 
 interface RenderErrorBoundaryProps {
   readonly children: ReactNode;
@@ -61,7 +65,9 @@ export class RenderErrorBoundary extends Component<
     return { failed: true, error };
   }
 
-  override componentDidCatch(_error: unknown, info: { componentStack?: string }) {
+  override componentDidCatch(error: unknown, info: { componentStack?: string }) {
+    recordLocalDiagnosticError("app.render_error", error);
+    recordLocalDiagnostic("app.render_component_stack", { componentStack: info.componentStack });
     this.setState({ componentStack: info.componentStack });
   }
 

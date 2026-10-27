@@ -34,15 +34,19 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { makeQueuedMessageMetadata } from "../../lib/commandMetadata";
+import { uuidv4 } from "../../lib/uuid";
+import { recordLocalDiagnostic, recordLocalDiagnosticError } from "../diagnostics/localDiagnostics";
 import { threadEnvironment, useEnvironmentThread } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { describeVoiceStartError, mintVoiceRealtimeSession } from "./mintVoiceSession";
+import { currentVoiceAudioSession } from "./nativeVoiceDiagnostics";
 import {
   isVoiceSpeakerphoneOn,
   reactNativeVoicePlatform,
   setVoiceSpeakerphone,
   stopVoiceAudioSession,
+  subscribeVoiceSpeakerphone,
 } from "./voicePlatform";
 
 type VoiceOracleScreenProps = StaticScreenProps<{
@@ -78,7 +82,9 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
   const [phase, setPhase] = useState<OverlayPhase>({ kind: "connecting" });
   const [muted, setMuted] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(true);
+  const [externalAudio, setExternalAudio] = useState(false);
   const [hangingUp, setHangingUp] = useState(false);
+  const [voiceSessionId] = useState(() => uuidv4());
   const [captions, setCaptions] = useState<{ user: string | null; oracle: string | null }>({
     user: null,
     oracle: null,
@@ -136,13 +142,24 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     state: view.latestRun?.status ?? null,
   });
 
+  useEffect(
+    () =>
+      subscribeVoiceSpeakerphone((enabled, externalOutput) => {
+        setSpeakerOn(enabled);
+        setExternalAudio(externalOutput);
+      }),
+    [],
+  );
+
   useEffect(() => {
     let disposed = false;
     let voiceSession: RealtimeVoiceSession | null = null;
 
     const connect = async () => {
+      recordLocalDiagnostic("voice.connect_started", { voiceSessionId });
       try {
         const minted = await mintVoiceRealtimeSession(environmentId);
+        recordLocalDiagnostic("voice.session_minted", { voiceSessionId, model: minted.model });
         if (disposed) return;
         voiceSession = await RealtimeVoiceSession.connect(
           {
@@ -151,6 +168,9 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
             instructions: buildOracleInstructions(viewRef.current),
             tools: VOICE_ORACLE_TOOLS,
             openingContext: buildResumeContext(viewRef.current),
+            onDiagnosticEvent: (event, fields) => {
+              recordLocalDiagnostic(event, { voiceSessionId, ...fields });
+            },
             onToolCall: (name, args, session) =>
               executeVoiceOracleTool({
                 name,
@@ -163,10 +183,12 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
                 },
               }),
             onHangUp: () => {
+              recordLocalDiagnostic("voice.hang_up_callback", { voiceSessionId });
               if (disposed) return;
               navigation.goBack();
             },
             onStatusChange: (status) => {
+              recordLocalDiagnostic("voice.status_changed", { voiceSessionId, status });
               if (disposed || status === "ended") return;
               setPhase((current) =>
                 current.kind === "error" ? current : { kind: "active", status },
@@ -181,6 +203,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
               setCaptions((current) => ({ ...current, user: text }));
             },
             onError: (message) => {
+              recordLocalDiagnostic("voice.error", { voiceSessionId, message });
               if (disposed) return;
               setPhase({ kind: "error", message, notConfigured: false });
             },
@@ -192,15 +215,19 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
           return;
         }
         voiceSessionRef.current = voiceSession;
+        recordLocalDiagnostic("voice.connected", { voiceSessionId });
         // The session picks the initial route (headphones win over speaker);
         // reflect whatever it chose so the toggle starts truthful.
         setSpeakerOn(isVoiceSpeakerphoneOn());
+        setExternalAudio(currentVoiceAudioSession()?.hasExternalAudioDevice ?? false);
         lastTurnRef.current = {
           turnId: viewRef.current.latestRun?.runId ?? null,
           state: viewRef.current.latestRun?.status ?? null,
         };
       } catch (error) {
+        recordLocalDiagnosticError("voice.connect_failed", error);
         if (disposed) return;
+        stopVoiceAudioSession();
         const described = describeVoiceStartError(error);
         setPhase({
           kind: "error",
@@ -213,11 +240,12 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
 
     return () => {
       disposed = true;
+      recordLocalDiagnostic("voice.screen_closed", { voiceSessionId });
       voiceSessionRef.current = null;
       voiceSession?.close();
       stopVoiceAudioSession();
     };
-  }, [environmentId, navigation]);
+  }, [environmentId, navigation, voiceSessionId]);
 
   // Report coding-agent turn transitions into the live voice conversation.
   const latestTurnId = view.latestRun?.runId ?? null;
@@ -289,12 +317,10 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
   }, []);
 
   const toggleSpeaker = useCallback(() => {
-    setSpeakerOn((current) => {
-      const next = !current;
-      setVoiceSpeakerphone(next);
-      return next;
-    });
-  }, []);
+    const next = !speakerOn;
+    setVoiceSpeakerphone(next);
+    setSpeakerOn(next);
+  }, [speakerOn]);
 
   const endSession = useCallback(() => {
     navigation.goBack();
@@ -355,7 +381,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
           onPress={toggleMuted}
         />
         <ControlPill
-          icon={speakerOn ? "speaker.wave.2.fill" : "airpods"}
+          icon={speakerOn ? "speaker.wave.2.fill" : externalAudio ? "airpods" : "iphone"}
           accessibilityLabel={speakerOn ? "Use headphones" : "Use speaker"}
           variant="circle"
           disabled={phase.kind !== "active"}

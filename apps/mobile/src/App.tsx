@@ -13,6 +13,7 @@ import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
+import { installLocalDiagnostics } from "./features/diagnostics/localDiagnostics";
 import {
   AppearancePreferencesProvider,
   useAppearancePreferences,
@@ -68,6 +69,10 @@ export default function App() {
 function AppContent() {
   const { themeAppearance } = useAppearancePreferences();
   const navigationTheme = useMobileNavigationTheme();
+
+  useEffect(() => {
+    installLocalDiagnostics();
+  }, []);
 
   return (
     <>

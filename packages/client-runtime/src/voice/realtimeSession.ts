@@ -10,6 +10,8 @@
  * WebRTC surface this driver touches; both platforms satisfy them.
  */
 
+import { summarizeVoiceConnectionStats } from "./voiceDiagnostics.js";
+
 export type VoiceSessionStatus =
   | "connecting"
   | "listening"
@@ -40,6 +42,8 @@ export interface DataChannelLike {
   close(): void;
   addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
   addEventListener(type: "open", listener: () => void): void;
+  addEventListener(type: "close", listener: () => void): void;
+  addEventListener(type: "error", listener: (event: { readonly error?: unknown }) => void): void;
 }
 
 export interface SessionDescriptionLike {
@@ -49,6 +53,8 @@ export interface SessionDescriptionLike {
 
 export interface PeerConnectionLike {
   readonly connectionState: string;
+  readonly iceConnectionState: string;
+  getStats?(): Promise<unknown>;
   addTrack(track: MediaStreamTrackLike, stream: MediaStreamLike): unknown;
   createDataChannel(label: string): DataChannelLike;
   createOffer(): Promise<SessionDescriptionLike>;
@@ -58,6 +64,7 @@ export interface PeerConnectionLike {
   /** Assigned, not addEventListener: identical shape on both platforms. */
   ontrack: ((event: { streams?: readonly MediaStreamLike[] }) => void) | null;
   onconnectionstatechange: (() => void) | null;
+  oniceconnectionstatechange: (() => void) | null;
 }
 
 export interface VoicePlatform {
@@ -74,6 +81,13 @@ export interface VoicePlatform {
    * for not being interrupted by itself.
    */
   readonly suppressEchoByMuting?: boolean;
+  /** Server VAD tuning and whether detected speech may cut off a response. */
+  readonly turnDetection?: {
+    readonly threshold?: number;
+    readonly prefixPaddingMs?: number;
+    readonly silenceDurationMs?: number;
+    readonly interruptResponse?: boolean;
+  };
   /** Acquire the microphone stream, raising platform permission prompts. */
   acquireAudioStream(): Promise<MediaStreamLike>;
   createPeerConnection(): PeerConnectionLike;
@@ -114,11 +128,14 @@ export interface RealtimeVoiceSessionOptions {
   /** The oracle finished its sign-off and the session should be torn down. */
   readonly onHangUp: () => void;
   readonly onError: (message: string) => void;
+  /** Content-free protocol, connection, and audio-level telemetry. */
+  readonly onDiagnosticEvent?: (event: string, fields?: Readonly<Record<string, unknown>>) => void;
 }
 
 const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 /** Backstop so a dropped audio-done event cannot strand a hung-up session. */
 const HANG_UP_TIMEOUT_MS = 12_000;
+const STATS_SAMPLE_INTERVAL_MS = 2_000;
 
 interface RealtimeEvent {
   readonly type?: string;
@@ -137,8 +154,15 @@ export class RealtimeVoiceSession {
   private closed = false;
   private userMuted = false;
   private oracleSpeaking = false;
+  private responseInProgress = false;
+  private responseGenerationDone = false;
+  private outputAudioStarted = false;
+  private outputAudioStopped = false;
   private hangUpPending = false;
   private hangUpTimer: ReturnType<typeof setTimeout> | null = null;
+  private statsTimer: ReturnType<typeof setInterval> | null = null;
+  private statsSampleInFlight = false;
+  private lastMicEnabled: boolean | null = null;
 
   private constructor(
     options: RealtimeVoiceSessionOptions,
@@ -188,14 +212,39 @@ export class RealtimeVoiceSession {
       const [stream] = event.streams ?? [];
       if (!stream) return;
       this.remoteStreamValue = stream;
+      this.diagnostic("peer.remote_audio_attached");
       this.detachRemoteAudio = this.platform.attachRemoteAudio(stream);
     };
     this.peer.onconnectionstatechange = () => {
       if (this.closed) return;
       const state = this.peer.connectionState;
-      if (state === "failed" || state === "disconnected" || state === "closed") {
+      this.diagnostic("peer.connection_state", { state, iceState: this.peer.iceConnectionState });
+      if (state === "connected") {
+        this.options.onStatusChange(
+          this.responseInProgress
+            ? this.outputAudioStarted && !this.outputAudioStopped
+              ? "speaking"
+              : "thinking"
+            : this.dataChannel?.readyState === "open"
+              ? "listening"
+              : "connecting",
+        );
+        return;
+      }
+      if (state === "disconnected") {
+        // Cellular handoff and brief route changes often recover on their own.
+        this.options.onStatusChange("connecting");
+        return;
+      }
+      if (state === "failed" || state === "closed") {
+        this.abortResponse();
         this.options.onError("The voice connection was lost.");
         this.options.onStatusChange("error");
+      }
+    };
+    this.peer.oniceconnectionstatechange = () => {
+      if (!this.closed) {
+        this.diagnostic("peer.ice_state", { state: this.peer.iceConnectionState });
       }
     };
 
@@ -207,9 +256,35 @@ export class RealtimeVoiceSession {
         this.handleServerEvent(JSON.parse(event.data) as RealtimeEvent);
       } catch {
         // Ignore unparseable frames; the protocol is JSON-only.
+        this.diagnostic("channel.invalid_json");
       }
     });
+    channel.addEventListener("close", () => {
+      if (this.closed) return;
+      this.diagnostic("channel.closed");
+      this.abortResponse();
+      this.options.onError("The voice data channel was lost.");
+      this.options.onStatusChange("error");
+    });
+    channel.addEventListener("error", (event) => {
+      this.diagnostic("channel.error", {
+        message: event.error instanceof Error ? event.error.message : undefined,
+      });
+      if (this.closed) return;
+      this.abortResponse();
+      this.options.onError("The voice data channel reported an error.");
+      this.options.onStatusChange("error");
+    });
     channel.addEventListener("open", () => {
+      const turnDetection = this.platform.turnDetection;
+      this.diagnostic("channel.opened", {
+        vadThreshold: turnDetection?.threshold ?? 0.85,
+        vadSilenceMs: turnDetection?.silenceDurationMs ?? 900,
+        vadPrefixMs: turnDetection?.prefixPaddingMs ?? 300,
+        interruptResponse: turnDetection?.interruptResponse ?? true,
+        echoGating: this.platform.suppressEchoByMuting === true,
+      });
+      this.startStatsSampling();
       this.send({
         type: "session.update",
         session: {
@@ -241,9 +316,10 @@ export class RealtimeVoiceSession {
                 // Tuned for a phone in a room with other things happening.
                 // Below ~0.8 typing, traffic, and other people's voices read
                 // as the user speaking, which stops the oracle mid-word.
-                threshold: 0.85,
-                prefix_padding_ms: 300,
-                silence_duration_ms: 900,
+                threshold: turnDetection?.threshold ?? 0.85,
+                prefix_padding_ms: turnDetection?.prefixPaddingMs ?? 300,
+                silence_duration_ms: turnDetection?.silenceDurationMs ?? 900,
+                interrupt_response: turnDetection?.interruptResponse ?? true,
               },
             },
           },
@@ -275,9 +351,11 @@ export class RealtimeVoiceSession {
       },
     );
     if (!response.ok) {
+      this.diagnostic("session.sdp_rejected", { status: response.status });
       throw new Error(`OpenAI rejected the voice call (status ${response.status}).`);
     }
     await this.peer.setRemoteDescription({ type: "answer", sdp: await response.text() });
+    this.diagnostic("session.sdp_answer_applied");
   }
 
   private send(event: Record<string, unknown>): void {
@@ -310,6 +388,7 @@ export class RealtimeVoiceSession {
    */
   requestHangUp(): void {
     if (this.closed || this.hangUpPending) return;
+    this.diagnostic("session.hang_up_requested");
     this.hangUpPending = true;
     // @effect-diagnostics-next-line globalTimers:off
     this.hangUpTimer = setTimeout(() => this.finalizeHangUp(), HANG_UP_TIMEOUT_MS);
@@ -326,6 +405,7 @@ export class RealtimeVoiceSession {
   }
 
   setMuted(muted: boolean): void {
+    this.diagnostic("mic.user_mute_changed", { muted });
     this.userMuted = muted;
     this.applyMicState();
   }
@@ -337,6 +417,10 @@ export class RealtimeVoiceSession {
   private applyMicState(): void {
     const gatedForEcho = this.platform.suppressEchoByMuting === true && this.oracleSpeaking;
     const enabled = !this.userMuted && !gatedForEcho;
+    if (this.lastMicEnabled !== enabled) {
+      this.diagnostic("mic.track_state", { enabled, userMuted: this.userMuted, gatedForEcho });
+      this.lastMicEnabled = enabled;
+    }
     for (const track of this.micStream.getAudioTracks()) {
       track.enabled = enabled;
     }
@@ -344,7 +428,12 @@ export class RealtimeVoiceSession {
 
   close(): void {
     if (this.closed) return;
+    this.diagnostic("session.closed");
     this.closed = true;
+    if (this.statsTimer !== null) {
+      clearInterval(this.statsTimer);
+      this.statsTimer = null;
+    }
     if (this.hangUpTimer !== null) {
       clearTimeout(this.hangUpTimer);
       this.hangUpTimer = null;
@@ -382,17 +471,34 @@ export class RealtimeVoiceSession {
         return;
       }
       case "conversation.item.input_audio_transcription.completed": {
+        this.diagnostic("realtime.user_transcription_completed");
         if (typeof event.transcript === "string" && event.transcript.trim().length > 0) {
           this.options.onUserTranscript(event.transcript.trim());
         }
         return;
       }
       case "input_audio_buffer.speech_started": {
-        this.options.onStatusChange("listening");
+        this.diagnostic("realtime.speech_started");
+        if (!this.responseInProgress) this.options.onStatusChange("listening");
+        return;
+      }
+      case "input_audio_buffer.speech_stopped": {
+        this.diagnostic("realtime.speech_stopped");
         return;
       }
       case "response.created": {
+        if (this.responseInProgress) {
+          // Tool follow-ups can overlap the previous playback. Never let a
+          // later response reset the audio state that still owns the mic.
+          this.diagnostic("realtime.response_overlap_deferred");
+          return;
+        }
+        this.diagnostic("realtime.response_created");
         this.assistantTranscriptBuffer = "";
+        this.responseInProgress = true;
+        this.responseGenerationDone = false;
+        this.outputAudioStarted = false;
+        this.outputAudioStopped = false;
         // Gate from the moment a response starts forming, not just when its
         // audio begins: noise in the gap between the two cancels the
         // in-flight response, which is heard as stuttering.
@@ -402,27 +508,43 @@ export class RealtimeVoiceSession {
         return;
       }
       case "output_audio_buffer.started": {
+        this.diagnostic("realtime.output_audio_started");
+        this.outputAudioStarted = true;
+        this.outputAudioStopped = false;
+        if (!this.responseInProgress) {
+          // A late started event after done must reopen the drain wait rather
+          // than leaving the mic gated after the early completion.
+          this.responseInProgress = true;
+        }
         this.oracleSpeaking = true;
         this.applyMicState();
         this.options.onStatusChange("speaking");
         return;
       }
       case "output_audio_buffer.stopped":
-      case "response.done": {
-        this.oracleSpeaking = false;
-        this.applyMicState();
-        // A hang-up armed mid-response waits for the sign-off audio to drain.
-        if (this.hangUpPending) {
-          this.finalizeHangUp();
-          return;
+      case "output_audio_buffer.cleared": {
+        this.diagnostic(event.type);
+        this.outputAudioStopped = true;
+        if (!this.responseInProgress && this.outputAudioStarted) {
+          this.oracleSpeaking = false;
+          this.applyMicState();
+          this.options.onStatusChange("listening");
         }
-        this.options.onStatusChange("listening");
+        this.completeResponseIfDrained();
+        return;
+      }
+      case "response.done": {
+        const response = event.response as { status?: unknown } | undefined;
+        this.diagnostic("realtime.response_done", { status: response?.status });
+        this.responseGenerationDone = true;
+        this.completeResponseIfDrained();
         return;
       }
       case "response.function_call_arguments.done": {
         const callId = typeof event.call_id === "string" ? event.call_id : null;
         const name = typeof event.name === "string" ? event.name : null;
         if (callId === null || name === null) return;
+        this.diagnostic("realtime.tool_call", { name });
         let parsedArguments: unknown = {};
         if (typeof event.arguments === "string" && event.arguments.length > 0) {
           try {
@@ -436,10 +558,68 @@ export class RealtimeVoiceSession {
       }
       case "error": {
         const error = event.error as { message?: string } | undefined;
+        this.diagnostic("realtime.error", { message: error?.message });
         this.options.onError(error?.message ?? "The voice session reported an error.");
         return;
       }
       default:
+    }
+  }
+
+  private completeResponseIfDrained(): void {
+    if (!this.responseInProgress || !this.responseGenerationDone) return;
+    if (this.outputAudioStarted && !this.outputAudioStopped) return;
+    this.responseInProgress = false;
+    this.oracleSpeaking = false;
+    this.applyMicState();
+    // A hang-up armed mid-response waits for the sign-off audio to drain.
+    if (this.hangUpPending) {
+      this.finalizeHangUp();
+      return;
+    }
+    this.options.onStatusChange("listening");
+  }
+
+  private abortResponse(): void {
+    this.responseInProgress = false;
+    this.responseGenerationDone = false;
+    this.outputAudioStarted = false;
+    this.outputAudioStopped = false;
+    this.oracleSpeaking = false;
+    this.applyMicState();
+  }
+
+  private diagnostic(event: string, fields: Readonly<Record<string, unknown>> = {}): void {
+    try {
+      this.options.onDiagnosticEvent?.(event, fields);
+    } catch {
+      // Telemetry is deliberately unable to interrupt the realtime session.
+    }
+  }
+
+  private startStatsSampling(): void {
+    if (!this.options.onDiagnosticEvent || !this.peer.getStats || this.statsTimer !== null) return;
+    void this.sampleConnectionStats();
+    // @effect-diagnostics-next-line globalTimers:off
+    this.statsTimer = setInterval(() => {
+      void this.sampleConnectionStats();
+    }, STATS_SAMPLE_INTERVAL_MS);
+  }
+
+  private async sampleConnectionStats(): Promise<void> {
+    if (this.closed || this.statsSampleInFlight || !this.peer.getStats) return;
+    this.statsSampleInFlight = true;
+    try {
+      const stats = await this.peer.getStats();
+      if (!this.closed) {
+        this.diagnostic("connection.stats", { reports: summarizeVoiceConnectionStats(stats) });
+      }
+    } catch (error) {
+      this.diagnostic("connection.stats_error", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.statsSampleInFlight = false;
     }
   }
 

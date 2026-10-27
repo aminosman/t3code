@@ -98,11 +98,12 @@ Install T3 Code from the
 The phone connects to a server on another machine. Follow
 [remote access](./remote-access.md) to link it through T3 Connect or a pairing URL.
 
-If the app crashes during launch, open Settings → Diagnostics on the next launch
+If the app crashes during launch, open **Settings → About → Diagnostics** on the next launch
 that succeeds. It lists startup crashes from the last 7 days with the error and
-component stack that store crash reports leave out. Copy the report and paste it
-into a GitHub issue. Error messages can quote values from the app, so read it over
-before sharing.
+component stack that store crash reports leave out. **Share voice & app diagnostics** creates a
+JSON report that also includes voice-call and iOS crash/hang diagnostics. Nothing is uploaded
+automatically, and raw audio and transcripts are not recorded. Review reports before sharing;
+error messages can quote values from the app.
 
 ## Providers
 

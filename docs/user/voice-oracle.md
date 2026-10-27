@@ -4,8 +4,8 @@ The voice oracle is a live voice companion for a thread. Open it, talk about wha
 building, and it manages the coding agent for you: it can read the conversation, send the agent
 new instructions, and tells you out loud what the agent did when it finishes a turn.
 
-The oracle runs on the OpenAI Realtime API. Audio flows directly between your browser and
-OpenAI over an encrypted connection; the T3 server only issues short-lived session tokens, and
+The oracle runs on the OpenAI Realtime API. Audio flows directly between your browser or phone
+and OpenAI over an encrypted connection; the T3 server only issues short-lived session tokens, and
 your API key never leaves the server.
 
 ## Setup
@@ -17,7 +17,7 @@ your API key never leaves the server.
 ## Using it
 
 Open a thread and press the voice button (the waveform icon) in the thread header. Grant
-microphone access when your browser asks. A full-screen orb appears and the oracle opens by
+microphone access when your browser or phone asks. A full-screen orb appears and the oracle opens by
 telling you where things stand — what you last asked for, what the agent last said, and whether
 it is still working. Then just talk.
 
@@ -44,7 +44,7 @@ have to re-explain the thread. If you stay on the call while the agent works, it
 outcome as soon as the turn finishes.
 
 Use the microphone button to mute yourself, the X button or Escape to end the session early.
-Voice sessions are per-thread and nothing is recorded: closing the overlay ends the call.
+Voice sessions are per-thread and conversation audio is not recorded: closing the overlay ends the call.
 
 ## Microphone access
 
@@ -56,11 +56,24 @@ site permission prompt.
 If the microphone is blocked, the overlay says so and names which layer blocked it, rather than
 failing silently.
 
+## Headphones on iPhone and iPad
+
+Voice uses the audio route iOS reports. Connect AirPods or other headphones before or during a
+call and their audio is used instead of the phone speaker. The speaker/headphones button switches
+routes manually. If headphones disconnect, voice returns to the speaker.
+
+## Voice and crash diagnostics
+
+On mobile, open **Settings → About → Diagnostics → Share voice & app diagnostics** after a call
+or app problem. The JSON report contains audio routes, microphone and output levels, connection
+health, speech events, interruptions, and iOS crash/hang reports. It stays on the device until
+you share it. It does not contain microphone or agent audio, transcripts, or API secrets;
+Bluetooth route identifiers are hashed.
+
 ## Limits
 
 - Voice needs a conversation that has already started; send the first message from the
   composer.
-- Voice is available in the browser and desktop apps. On mobile, keep directing the agent by
-  text for now.
+- Voice is available in the browser, desktop apps, and mobile app.
 - Remote environments connected through T3 Connect relays cannot mint voice sessions yet;
   direct and tailnet connections work.

@@ -177,6 +177,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   globe: IconWorld,
   hammer: IconHammer,
   house: IconHome,
+  iphone: IconDeviceMobile,
   "info.circle": IconInfoCircle,
   internaldrive: IconDatabase,
   keyboard: IconKeyboard,

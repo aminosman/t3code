@@ -16,6 +16,11 @@ import {
   parseStartupCrashRecords,
   type StartupCrashRecord,
 } from "./crash-log-model";
+import {
+  getLocalDiagnosticsSummary,
+  shareLocalDiagnostics,
+  type LocalDiagnosticsSummary,
+} from "./localDiagnostics";
 
 // expo-updates keeps its persistent log this long. Reading any further back
 // returns nothing, so this is the whole available window.
@@ -36,6 +41,12 @@ function appIdentity() {
   };
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1_000) return `${bytes} B`;
+  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} KB`;
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
 /**
  * Startup crashes that TestFlight and the stores strip from their reports.
  * expo-updates' ErrorRecovery writes the JS error and component stack to its
@@ -47,6 +58,19 @@ export function SettingsDiagnosticsRouteScreen() {
     Updates.isEnabled ? { status: "loading" } : { status: "unavailable" },
   );
   const [copied, setCopied] = useState(false);
+  const [summary, setSummary] = useState<LocalDiagnosticsSummary | null>(null);
+  const [sharing, setSharing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getLocalDiagnosticsSummary().then((next) => {
+      if (!cancelled) setSummary(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!Updates.isEnabled) return;
@@ -73,6 +97,18 @@ export function SettingsDiagnosticsRouteScreen() {
     if (ok) setCopied(true);
   };
 
+  const shareReport = async () => {
+    setSharing(true);
+    setActionError(null);
+    try {
+      await shareLocalDiagnostics(records);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not share diagnostics.");
+    } finally {
+      setSharing(false);
+    }
+  };
+
   return (
     <SettingsScreen title="Diagnostics">
       <ScrollView
@@ -82,6 +118,42 @@ export function SettingsDiagnosticsRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
       >
+        <SettingsSection title="Voice & app diagnostics">
+          <View className="gap-1.5 px-4 py-3">
+            <Text className="text-sm text-foreground-muted">
+              {summary
+                ? `${summary.events + (summary.native?.nativeEvents ?? 0)} events · ${formatBytes(summary.eventBytes + (summary.native?.nativeBytes ?? 0))}`
+                : "Reading the on-device event log…"}
+            </Text>
+            {summary?.native ? (
+              <Text className="text-sm text-foreground-muted">
+                {`${summary.native.crashes} crashes · ${summary.native.hangs} hangs reported by iOS`}
+              </Text>
+            ) : Platform.OS === "ios" ? (
+              <Text className="text-sm text-foreground-muted">
+                Native audio-route and MetricKit details require the matching native build.
+              </Text>
+            ) : null}
+          </View>
+          <SettingsActionRow
+            icon="tray.and.arrow.up"
+            label={sharing ? "Preparing diagnostics…" : "Share voice & app diagnostics"}
+            loading={sharing}
+            disabled={sharing}
+            onPress={() => void shareReport()}
+          />
+        </SettingsSection>
+
+        <Text className="px-2 text-sm leading-normal text-foreground-muted">
+          Includes actual headphone/speaker routes, mic and output levels in dBFS, packet loss and
+          jitter, speech/VAD events, interruptions, disconnects, and app errors. iOS also includes
+          MetricKit crash and hang reports. Nothing is uploaded automatically. Microphone audio,
+          agent audio, transcripts, and API secrets are not recorded.
+        </Text>
+        {actionError ? (
+          <Text className="px-2 text-sm leading-normal text-danger-foreground">{actionError}</Text>
+        ) : null}
+
         <SettingsSection title="Startup crashes">
           {state.status === "loading" ? (
             <View className="items-center gap-3 px-6 py-8">
