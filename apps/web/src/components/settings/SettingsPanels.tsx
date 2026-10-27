@@ -14,7 +14,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { flattenOwnedThreads } from "@t3tools/client-runtime/state/ownedThreads";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -166,6 +166,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
+import { groupArchivedThreads } from "./ArchivedThreadsPanel.logic";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -3377,6 +3378,9 @@ export function GeneralSettingsPanel() {
 
 export function ArchivedThreadsPanel() {
   const { scope } = useSettingsScope();
+  const [expandedByEnvironment, setExpandedByEnvironment] = useState<
+    Readonly<Record<string, Readonly<Record<string, boolean>>>>
+  >({});
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const {
     snapshots: archivedSnapshots,
@@ -3390,48 +3394,22 @@ export function ArchivedThreadsPanel() {
       scope.kind === "project" || scope.kind === "checkout"
         ? new Set(scope.members.map((member) => `${member.environmentId}:${member.id}`))
         : null;
-    const projectsByEnvironmentAndId = new Map(
-      archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-        snapshot.projects
-          .filter(
-            (project) =>
-              selectedProjectKeys === null ||
-              selectedProjectKeys.has(`${environmentId}:${project.id}`),
-          )
-          .map(
-            (project) => [`${environmentId}:${project.id}`, { ...project, environmentId }] as const,
-          ),
-      ),
-    );
-    const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
-    );
-
-    const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
-    const groups: Array<{
-      readonly project: (typeof archivedProjects)[number];
-      readonly threads: Array<(typeof threads)[number]>;
-    }> = [];
-    for (const project of archivedProjects) {
-      const projectThreads: Array<(typeof threads)[number]> = [];
-      for (const thread of threads) {
-        if (thread.projectId === project.id && thread.environmentId === project.environmentId) {
-          projectThreads.push(thread);
-        }
-      }
-      if (projectThreads.length > 0) {
-        groups.push({
-          project,
-          threads: projectThreads.toSorted((left, right) => {
-            const leftKey = left.archivedAt ?? left.createdAt;
-            const rightKey = right.archivedAt ?? right.createdAt;
-            return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
-          }),
-        });
-      }
-    }
-    return groups;
+    return groupArchivedThreads(archivedSnapshots, selectedProjectKeys);
   }, [archivedSnapshots, scope]);
+
+  const archivedRows = useMemo(
+    () =>
+      archivedGroups.map(({ project, topLevel, childrenByOwner }) => ({
+        project,
+        rows: flattenOwnedThreads({
+          roots: topLevel,
+          childrenByOwner,
+          expandedByThreadId: expandedByEnvironment[project.environmentId] ?? {},
+          activeThreadId: null,
+        }),
+      })),
+    [archivedGroups, expandedByEnvironment],
+  );
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
@@ -3511,16 +3489,19 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ project, threads: projectThreads }, index) => (
+        archivedRows.map(({ project, rows }, index) => (
           <SettingsSection
             key={`${project.environmentId}:${project.id}`}
             id={index === 0 ? searchableSetting("archive").id : undefined}
             title={project.title}
             icon={<ProjectFavicon project={project} />}
           >
-            {projectThreads.map((thread) => (
+            {rows.map(({ thread, depth, childCount, expanded }) => (
               <SettingsRow
                 key={thread.id}
+                style={
+                  depth > 0 ? { paddingLeft: `calc(0.75rem + ${depth * 1.25}rem)` } : undefined
+                }
                 onContextMenu={(event) => {
                   event.preventDefault();
                   void (async () => {
@@ -3546,7 +3527,32 @@ export function ArchivedThreadsPanel() {
                     }
                   })();
                 }}
-                title={thread.title}
+                title={
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {childCount > 0 ? (
+                      <Button
+                        type="button"
+                        variant="ghost-muted"
+                        size="micro"
+                        aria-label={`${expanded ? "Hide" : "Show"} ${childCount} owned threads for ${thread.title}`}
+                        aria-expanded={expanded}
+                        onClick={() =>
+                          setExpandedByEnvironment((previous) => ({
+                            ...previous,
+                            [thread.environmentId]: {
+                              ...previous[thread.environmentId],
+                              [thread.id]: !expanded,
+                            },
+                          }))
+                        }
+                      >
+                        <ChevronRightIcon className={expanded ? "size-3 rotate-90" : "size-3"} />
+                        {!expanded ? <span>{childCount}</span> : null}
+                      </Button>
+                    ) : null}
+                    <span className="min-w-0 break-words">{thread.title}</span>
+                  </span>
+                }
                 description={
                   <>
                     Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
