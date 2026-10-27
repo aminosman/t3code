@@ -468,6 +468,12 @@ layer("HistorySearch", (it) => {
 
       // Being recorded: tui's live marker, and what Tui was told in it.
       NodeFS.writeFileSync(NodePath.join(meetingsDir, "2026.09.21-1330", "transcript.live"), "");
+      const freshMarkerTime = (yield* Clock.currentTimeMillis) / 1000;
+      NodeFS.utimesSync(
+        NodePath.join(meetingsDir, "2026.09.21-1330", "transcript.live"),
+        freshMarkerTime,
+        freshMarkerTime,
+      );
       NodeFS.writeFileSync(
         NodePath.join(meetingsDir, "2026.09.21-1330", "live-actions.json"),
         JSON.stringify({
@@ -493,7 +499,38 @@ layer("HistorySearch", (it) => {
       NodeFS.rmSync(NodePath.join(folder, "recording.json"));
       assert.deepStrictEqual(live?.tuiHeard?.requests, ["look into SOC 2 auditors"]);
       assert.isTrue((yield* search.listMeetings({})).find((m) => m.id === "2026.09.21-1330")?.live);
-      NodeFS.rmSync(NodePath.join(meetingsDir, "2026.09.21-1330", "transcript.live"));
+      // A leftover marker from a crashed/failed cleanup is not a live call.
+      const staleMarker = NodePath.join(meetingsDir, "2026.09.21-1330", "transcript.live");
+      yield* TestClock.adjust("10 days");
+      const tenDaysAgo = ((yield* Clock.currentTimeMillis) - 10 * 24 * 60 * 60 * 1000) / 1000;
+      const incidentMetaPath = NodePath.join(meetingsDir, "2026.09.21-1330", "meta.json");
+      const incidentMeta = NodeFS.readFileSync(incidentMetaPath, "utf8");
+      NodeFS.rmSync(incidentMetaPath);
+      NodeFS.utimesSync(staleMarker, tenDaysAgo, tenDaysAgo);
+      assert.isUndefined(
+        (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.live,
+      );
+      assert.isUndefined(
+        (yield* search.listMeetings({})).find((m) => m.id === "2026.09.21-1330")?.live,
+      );
+      // A final pass after a long pause refreshes the same marker and is live.
+      NodeFS.writeFileSync(incidentMetaPath, incidentMeta);
+      const finalPassTime = (yield* Clock.currentTimeMillis) / 1000;
+      NodeFS.utimesSync(staleMarker, finalPassTime, finalPassTime);
+      assert.strictEqual(
+        (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.recording,
+        "transcribing",
+      );
+      assert.isTrue((yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.live);
+      // recording.json is authoritative even without a live-transcript marker.
+      NodeFS.rmSync(staleMarker);
+      NodeFS.writeFileSync(NodePath.join(folder, "recording.json"), '{"state":"recording"}');
+      assert.strictEqual(
+        (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.recording,
+        "recording",
+      );
+      assert.isTrue((yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.live);
+      NodeFS.rmSync(NodePath.join(folder, "recording.json"));
       NodeFS.rmSync(NodePath.join(meetingsDir, "2026.09.21-1330", "live-actions.json"));
       assert.isUndefined(
         (yield* search.readMeeting({ meetingId: "2026.09.21-1330" }))?.meeting.live,

@@ -63,6 +63,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -1557,6 +1558,12 @@ const make = (options: HistorySearchOptions) =>
       );
     const withRecording = (summary: MeetingSummary) =>
       Effect.gen(function* () {
+        const state = yield* recordingOf(summary.id);
+        if (state !== null) {
+          // Recording/paused is authoritative even when live transcription is
+          // disabled and transcript.live was never created.
+          return { ...summary, live: true, recording: state } as MeetingSummary;
+        }
         if (!(yield* isLive(summary.id))) {
           // The final pass removes transcript.live before it writes the
           // final notes; until they land the live ones stand, and the
@@ -1565,8 +1572,27 @@ const make = (options: HistorySearchOptions) =>
             ? ({ ...summary, live: true, recording: "transcribing" } as MeetingSummary)
             : summary;
         }
-        const state = yield* recordingOf(summary.id);
-        return { ...summary, live: true, recording: state ?? "transcribing" } as MeetingSummary;
+        // With no recording.json the marker means a final transcription pass,
+        // not an active call. It is only fresh evidence: a crash or failed
+        // cleanup can otherwise leave mobile saying "Recording" for days.
+        const ended = yield* endedAgo(summary.id);
+        if (ended !== null && ended >= 0 && ended <= 15 * 60_000) {
+          return { ...summary, live: true, recording: "transcribing" } as MeetingSummary;
+        }
+        const marker = yield* fs
+          .stat(path.join(meetingsDir, summary.id, "transcript.live"))
+          .pipe(Effect.orElseSucceed(() => null));
+        if (marker !== null) {
+          const modifiedAt = Option.getOrUndefined(marker.mtime)?.getTime();
+          if (modifiedAt !== undefined) {
+            const now = yield* Clock.currentTimeMillis;
+            const age = now - modifiedAt;
+            if (age >= 0 && age <= 15 * 60_000) {
+              return { ...summary, live: true, recording: "transcribing" } as MeetingSummary;
+            }
+          }
+        }
+        return summary;
       });
     // LiveNotes' footer on summary.md, for a meeting that ended minutes ago:
     // a final pass whose notes failed must not read as transcribing forever.
