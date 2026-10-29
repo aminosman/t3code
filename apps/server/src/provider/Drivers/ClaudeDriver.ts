@@ -1,5 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { ClaudeSettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
@@ -13,6 +13,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
+import { claudeSupportsInteractiveAuth, makeClaudeAuth } from "../ClaudeAuth.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
@@ -183,6 +184,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       accentColor,
       continuationGroupKey,
     });
+    const canAuthenticate = claudeSupportsInteractiveAuth(processEnv, environment);
+    const stampSnapshot: typeof stampIdentity = (draft) =>
+      stampIdentity({
+        ...draft,
+        setup: { canAuthenticate, canInstall: false },
+        auth: { ...draft.auth, canLogout: canAuthenticate },
+      });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
     const orchestrationAdapter = yield* createClaudeAdapterV2(
@@ -287,6 +295,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 ),
+              canAuthenticate ? "subscription" : "capabilities",
             ),
           ),
           Effect.tap((provider) =>
@@ -294,7 +303,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               ? Cache.invalidateAll(capabilitiesProbeCache)
               : Effect.void,
           ),
-          Effect.map(stampIdentity),
+          Effect.map(stampSnapshot),
         ),
       ),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -311,7 +320,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       initialSnapshot: (settings) =>
         modelCatalog.pipe(
           Effect.flatMap((catalog) => makePendingClaudeProvider(settings.provider, catalog)),
-          Effect.map(stampIdentity),
+          Effect.map(stampSnapshot),
         ),
       checkProvider,
       invalidateUsageCache: Cache.invalidateAll(capabilitiesProbeCache),
@@ -337,6 +346,34 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           }),
       ),
     );
+
+    const auth = canAuthenticate
+      ? yield* makeClaudeAuth({
+          instanceId,
+          displayName: displayName ?? "Claude",
+          enabled,
+          config: effectiveConfig,
+          configDir,
+          cwd: stateDir,
+          environment: processEnv,
+          onChanged: (signedIn): Effect.Effect<void, ProviderSetupError> =>
+            Cache.invalidateAll(capabilitiesProbeCache).pipe(
+              Effect.andThen(snapshot.refresh),
+              Effect.flatMap((provider) =>
+                !signedIn || provider.auth.status === "authenticated"
+                  ? Effect.void
+                  : Effect.fail(
+                      new ProviderSetupError({
+                        instanceId,
+                        operation: "start",
+                        detail:
+                          provider.message ?? "Could not verify the Claude sign-in. Try again.",
+                      }),
+                    ),
+              ),
+            ),
+        })
+      : undefined;
 
     // Same rules as Codex: serialised on the config directory that holds the
     // login, one request id kept until Claude answers (a cooldown or rate
@@ -407,6 +444,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       displayName,
       accentColor,
       enabled,
+      ...(auth ? { auth } : {}),
       snapshot,
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
       snapshotForCwd: (cwd: string) =>

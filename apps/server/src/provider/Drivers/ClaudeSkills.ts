@@ -337,6 +337,10 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
       : yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
   const repositoryRoot =
     workspace === undefined ? undefined : yield* findPluginRepositoryRoot(workspace);
+  const canonicalRepositoryRoot =
+    repositoryRoot === undefined
+      ? undefined
+      : yield* fileSystem.realPath(repositoryRoot).pipe(Effect.orElseSucceed(() => repositoryRoot));
 
   for (const [key, entries] of Object.entries(installed.plugins).sort()) {
     if (enabledPlugins.get(key) !== true) continue;
@@ -346,11 +350,21 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
         Effect.gen(function* () {
           if (record.scope === "user" || record.scope === "managed") return true;
           if (record.projectPath === undefined || workspace === undefined) return false;
-          if (path.resolve(record.projectPath) === workspace) return true;
-          return (
-            repositoryRoot !== undefined &&
-            (yield* findPluginRepositoryRoot(record.projectPath)) === repositoryRoot
-          );
+          // process.cwd() is canonical, but a symlink stored in the registry is not an install root.
+          if (Option.isSome(yield* fileSystem.readLink(record.projectPath).pipe(Effect.option))) {
+            return false;
+          }
+          const recordWorkspace = yield* fileSystem
+            .realPath(record.projectPath)
+            .pipe(Effect.orElseSucceed(() => path.resolve(record.projectPath!)));
+          if (recordWorkspace === workspace) return true;
+          if (canonicalRepositoryRoot === undefined) return false;
+          const recordRepositoryRoot = yield* findPluginRepositoryRoot(record.projectPath);
+          if (recordRepositoryRoot === undefined) return false;
+          const canonicalRecordRepositoryRoot = yield* fileSystem
+            .realPath(recordRepositoryRoot)
+            .pipe(Effect.orElseSucceed(() => recordRepositoryRoot));
+          return canonicalRecordRepositoryRoot === canonicalRepositoryRoot;
         }),
     );
     // The native loader keeps registry order, preferring the first install that exists.

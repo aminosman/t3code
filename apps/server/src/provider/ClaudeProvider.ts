@@ -13,9 +13,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
@@ -32,12 +31,12 @@ import {
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
-  spawnAndCollect,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
+import { probeClaudeAuthStatus, runClaudeCommand, type ClaudeAuthStatus } from "./ClaudeAuth.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -405,24 +404,6 @@ const probeClaudeCapabilities = (
 
 type ClaudeCapabilitiesProbeError = Effect.Error<ReturnType<typeof probeClaudeCapabilities>>;
 
-const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
-  claudeSettings: ClaudeSettings,
-  args: ReadonlyArray<string>,
-  environment?: NodeJS.ProcessEnv,
-  cwd?: string,
-) {
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
-  const spawnCommand = yield* resolveSpawnCommand(claudeSettings.binaryPath, args, {
-    env: claudeEnvironment,
-  });
-  const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-    env: claudeEnvironment,
-    shell: spawnCommand.shell,
-    ...(cwd ? { cwd } : {}),
-  });
-  return yield* spawnAndCollect(claudeSettings.binaryPath, command);
-});
-
 export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnapshot")(function* (
   claudeSettings: ClaudeSettings,
   machineSnapshot: ServerProvider,
@@ -461,6 +442,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
   resolveResetCredits?: (version: string) => Effect.Effect<ServerProviderResetCredits | undefined>,
+  /** Subscription probes ignore inherited keys; custom providers retain SDK credential probing. */
+  authMode: "auto" | "subscription" | "capabilities" = "auto",
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -568,6 +551,41 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   );
   const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
+  const authStatus =
+    authMode === "capabilities"
+      ? undefined
+      : yield* probeClaudeAuthStatus(claudeSettings, resolvedEnvironment, {
+          subscription: authMode === "subscription",
+          cwd,
+        });
+
+  // SDK initialization can succeed while the CLI is signed out. A definitive
+  // CLI answer must win over that misleading capability fallback.
+  if (authStatus?.loggedIn === false) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      updateRequiredModels,
+      slashCommands: [COMPACT_SLASH_COMMAND],
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "warning",
+        auth: { status: "unauthenticated" },
+        message: "Claude is signed out. Sign in from Providers to continue.",
+      },
+    });
+  }
+
+  const statusAuthMetadata = (status: ClaudeAuthStatus | undefined) =>
+    status
+      ? (claudeAuthMetadata({
+          subscriptionType: status.subscriptionType,
+          authMethod: status.authMethod,
+        }) ?? apiProviderAuthMetadata(status.apiProvider))
+      : undefined;
 
   const probeResult = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.result)
@@ -581,6 +599,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
+    const authenticated = authStatus?.loggedIn === true;
+    const authMetadata = statusAuthMetadata(authStatus);
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -592,13 +612,24 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       probe: {
         installed: true,
         version: parsedVersion,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: probeFailure
-          ? Cause.isTimeoutError(probeFailure)
-            ? `Timed out after ${CAPABILITIES_PROBE_TIMEOUT_MS / 1_000}s while checking Claude account status.`
-            : "Claude Agent CLI failed while checking account status."
-          : "Could not verify Claude authentication status from initialization result.",
+        status: authenticated ? "ready" : "warning",
+        auth: authenticated
+          ? {
+              status: "authenticated",
+              ...(authStatus?.email ? { email: authStatus.email } : {}),
+              ...(authMetadata ? authMetadata : {}),
+            }
+          : { status: "unknown" },
+        message: authenticated
+          ? "Claude is signed in; extended account capabilities are unavailable."
+          : probeFailure
+            ? Cause.isTimeoutError(probeFailure)
+              ? `Timed out after ${CAPABILITIES_PROBE_TIMEOUT_MS / 1_000}s while checking Claude account status.`
+              : "Claude Agent CLI failed while checking account status."
+            : "Could not verify Claude authentication status from initialization result.",
+        ...(authenticated
+          ? { usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" }) }
+          : {}),
       },
     });
   }
@@ -623,17 +654,20 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "error",
         auth: { status: "unauthenticated" },
-        message: "Claude Code is not authenticated. Run `claude auth login` and try again.",
+        message:
+          authMode === "subscription"
+            ? "Claude is signed out. Sign in from Providers to continue."
+            : "Claude Code is not authenticated. Run `claude auth login` and try again.",
       },
     });
   }
 
   const authMetadata =
     claudeAuthMetadata({
-      subscriptionType: capabilities.subscriptionType,
-      authMethod: capabilities.tokenSource,
+      subscriptionType: capabilities.subscriptionType ?? authStatus?.subscriptionType,
+      authMethod: capabilities.tokenSource ?? authStatus?.authMethod,
     }) ??
-    apiProviderAuthMetadata(capabilities.apiProvider) ??
+    apiProviderAuthMetadata(capabilities.apiProvider ?? authStatus?.apiProvider) ??
     (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined);
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
   const usageLimits = !capabilities.usage
@@ -668,7 +702,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       status: "ready",
       auth: {
         status: "authenticated",
-        ...(capabilities.email ? { email: capabilities.email } : {}),
+        ...((capabilities.email ?? authStatus?.email)
+          ? { email: capabilities.email ?? authStatus?.email }
+          : {}),
         ...(capabilities.workspaceId ? { workspaceId: capabilities.workspaceId } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
