@@ -24,12 +24,12 @@ import {
   type McpConnectionStatuses,
   type McpConnectionStdioTransport,
   type McpConnectionTestResult,
-  type ProviderInstanceEnvironmentVariable,
 } from "@t3tools/contracts";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { mcpConnectionAuthSecretName as authSecretName } from "../../settingsSecrets.ts";
 import * as McpConnectionOAuth from "./McpConnectionOAuth.ts";
 import { listUpstreamTools, serverNameOf, toolSummaries } from "./McpJsonRpc.ts";
 import * as McpStdioHost from "./McpStdioHost.ts";
@@ -85,16 +85,13 @@ const encodeAuthRecord = Schema.encodeEffect(AuthRecordJson);
 
 const EMPTY_AUTH_RECORD: AuthRecord = { version: 1, projects: {} };
 
-const b64 = (value: string) => Buffer.from(value, "utf8").toString("base64url");
-const authSecretName = (id: string) => `mcp-connection-auth-${b64(id)}`;
-const envSecretName = (id: string, name: string) => `mcp-connection-env-${b64(id)}-${b64(name)}`;
-
 export const MCP_OAUTH_CALLBACK_PATH = "/oauth/mcp/callback";
 const PENDING_FLOW_TTL_MS = 10 * 60 * 1_000;
 
 interface PendingFlow {
   readonly connectionId: McpConnectionId;
   readonly projectId: ProjectId;
+  readonly url: string;
   readonly verifier: string;
   readonly redirectUri: string;
   readonly resource: string;
@@ -184,9 +181,6 @@ const storageFailure = (cause: unknown) =>
     detail: cause instanceof Error ? cause.message : String(cause),
   });
 
-const sensitiveEnv = (env: ReadonlyArray<ProviderInstanceEnvironmentVariable>) =>
-  env.filter((variable) => variable.sensitive);
-
 const bearerHeader = (token: string) => (token.startsWith("Bearer ") ? token : `Bearer ${token}`);
 
 /** The origin of an http(s) URL, or undefined for anything else. */
@@ -266,6 +260,20 @@ const make = Effect.gen(function* () {
     return config;
   });
 
+  // A sign-in that outlived a change of the connection's server must not be stored for the new one.
+  const requireSameServer = Effect.fn("McpConnectionService.requireSameServer")(function* (
+    id: McpConnectionId,
+    url: string,
+  ) {
+    const current = (yield* connectionsFromSettings)[id];
+    if (current?.transport.type !== "http" || current.transport.url !== url) {
+      return yield* new McpConnectionError({
+        reason: "needs_sign_in",
+        detail: "This MCP server changed during sign-in. Sign in again.",
+      });
+    }
+  });
+
   const projectState = (
     transport: McpConnectionHttpTransport,
     record: ProjectAuthRecord | undefined,
@@ -318,50 +326,8 @@ const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
-  const persistEnvSecrets = Effect.fn("McpConnectionService.persistEnvSecrets")(function* (
-    id: McpConnectionId,
-    previous: McpConnection | undefined,
-    next: McpConnectionStdioTransport,
-  ) {
-    const previousEnv =
-      previous?.transport.type === "stdio" ? sensitiveEnv(previous.transport.env) : [];
-    const nextEnv: Array<ProviderInstanceEnvironmentVariable> = [];
-    for (const variable of next.env) {
-      if (!variable.sensitive) {
-        nextEnv.push({ name: variable.name, value: variable.value, sensitive: false });
-        continue;
-      }
-      if (variable.value.length > 0) {
-        yield* secrets.set(
-          envSecretName(id, variable.name),
-          new TextEncoder().encode(variable.value),
-        );
-        nextEnv.push({ name: variable.name, value: "", sensitive: true, valueRedacted: true });
-      } else if (variable.valueRedacted === true) {
-        nextEnv.push({ name: variable.name, value: "", sensitive: true, valueRedacted: true });
-      } else {
-        yield* secrets.remove(envSecretName(id, variable.name));
-        nextEnv.push({ name: variable.name, value: "", sensitive: true });
-      }
-    }
-    for (const variable of previousEnv) {
-      if (!next.env.some((candidate) => candidate.name === variable.name && candidate.sensitive)) {
-        yield* secrets.remove(envSecretName(id, variable.name));
-      }
-    }
-    return { ...next, env: nextEnv } satisfies McpConnectionStdioTransport;
-  }, Effect.mapError(storageFailure));
-
-  const removeEnvSecrets = (id: McpConnectionId, config: McpConnection | undefined) =>
-    config?.transport.type === "stdio"
-      ? Effect.forEach(
-          sensitiveEnv(config.transport.env),
-          (variable) =>
-            secrets.remove(envSecretName(id, variable.name)).pipe(Effect.mapError(storageFailure)),
-          { discard: true },
-        )
-      : Effect.void;
-
+  // Settings own the env secrets and drop sign-ins a changed server invalidates,
+  // with the same rollback as any settings write.
   const upsert: McpConnectionServiceShape["upsert"] = Effect.fn("McpConnectionService.upsert")(
     function* (id, config) {
       if (MCP_CONNECTION_RESERVED_IDS.has(id)) {
@@ -371,41 +337,26 @@ const make = Effect.gen(function* () {
         });
       }
       const previous = (yield* connectionsFromSettings)[id];
-      const transport =
-        config.transport.type === "stdio"
-          ? yield* persistEnvSecrets(id, previous, config.transport)
-          : config.transport;
-      if (previous?.transport.type === "stdio" && transport.type !== "stdio") {
-        yield* removeEnvSecrets(id, previous);
-      }
-      // A changed auth mode or URL invalidates every project's sign-in.
-      if (
-        previous !== undefined &&
-        (previous.transport.type !== transport.type ||
-          (transport.type === "http" &&
-            previous.transport.type === "http" &&
-            (previous.transport.url !== transport.url ||
-              previous.transport.auth !== transport.auth)))
-      ) {
-        yield* updateAuth(id, () => EMPTY_AUTH_RECORD);
-      }
+      yield* withLock(
+        id,
+        settings
+          .updateSettings({ mcpConnections: { [id]: config } })
+          .pipe(Effect.mapError(storageFailure)),
+      );
       if (previous?.transport.type === "stdio") yield* stdioHost.stop(id);
-      yield* settings
-        .updateSettings({ mcpConnections: { [id]: { ...config, transport } } })
-        .pipe(Effect.mapError(storageFailure));
       yield* publishStatuses;
     },
   );
 
   const remove: McpConnectionServiceShape["remove"] = Effect.fn("McpConnectionService.remove")(
     function* (id) {
-      const previous = (yield* connectionsFromSettings)[id];
-      yield* removeEnvSecrets(id, previous);
-      yield* withLock(id, secrets.remove(authSecretName(id)).pipe(Effect.mapError(storageFailure)));
+      yield* withLock(
+        id,
+        settings
+          .updateSettings({ mcpConnections: { [id]: null } })
+          .pipe(Effect.mapError(storageFailure)),
+      );
       yield* stdioHost.stop(id);
-      yield* settings
-        .updateSettings({ mcpConnections: { [id]: null } })
-        .pipe(Effect.mapError(storageFailure));
       yield* publishStatuses;
     },
   );
@@ -498,6 +449,7 @@ const make = Effect.gen(function* () {
     pendingFlows.set(pkce.state, {
       connectionId: input.id,
       projectId: input.projectId,
+      url: config.transport.url,
       verifier: pkce.verifier,
       redirectUri,
       resource: discovery.resource,
@@ -561,6 +513,7 @@ const make = Effect.gen(function* () {
       codeVerifier: flow.verifier,
       resource: flow.resource,
     });
+    yield* requireSameServer(flow.connectionId, flow.url);
     yield* updateAuth(flow.connectionId, (record) => ({
       ...record,
       projects: {
@@ -595,7 +548,12 @@ const make = Effect.gen(function* () {
    * The access token for one project, refreshed when it is about to expire.
    * Serialized per connection so concurrent agent requests share one refresh.
    */
-  const freshOAuthToken = (id: McpConnectionId, projectId: ProjectId, force: boolean) =>
+  const freshOAuthToken = (
+    id: McpConnectionId,
+    projectId: ProjectId,
+    url: string,
+    force: boolean,
+  ) =>
     withLock(
       id,
       Effect.gen(function* () {
@@ -638,6 +596,7 @@ const make = Effect.gen(function* () {
             }),
           ),
         );
+        yield* requireSameServer(id, url);
         yield* writeAuth(id, {
           ...auth,
           projects: {
@@ -657,30 +616,22 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const materializeStdio = Effect.fn("McpConnectionService.materializeStdio")(function* (
-    id: McpConnectionId,
-    transport: McpConnectionStdioTransport,
-  ) {
+  // Settings hand back sensitive values already read from the secret store.
+  const materializeStdio = (transport: McpConnectionStdioTransport) => {
     const env: Record<string, string> = {};
     for (const [name, value] of Object.entries(process.env)) {
       if (value !== undefined) env[name] = value;
     }
     for (const variable of transport.env) {
-      if (!variable.sensitive) {
-        env[variable.name] = variable.value;
-        continue;
-      }
-      const stored = yield* secrets
-        .get(envSecretName(id, variable.name))
-        .pipe(Effect.mapError(storageFailure));
-      if (Option.isSome(stored)) env[variable.name] = Buffer.from(stored.value).toString("utf8");
+      if (variable.sensitive && variable.value.length === 0) continue;
+      env[variable.name] = variable.value;
     }
     return {
       command: transport.command,
       args: transport.args,
       env,
     } satisfies McpStdioHost.McpStdioServerSpec;
-  });
+  };
 
   const resolveUpstream = Effect.fn("McpConnectionService.resolveUpstream")(function* (
     id: McpConnectionId,
@@ -694,7 +645,7 @@ const make = Effect.gen(function* () {
       });
     }
     if (config.transport.type === "stdio") {
-      return { kind: "stdio", spec: yield* materializeStdio(id, config.transport) } as const;
+      return { kind: "stdio", spec: materializeStdio(config.transport) } as const;
     }
     const { url, auth } = config.transport;
     if (auth === "none") return { kind: "http", url } as const;
@@ -714,7 +665,7 @@ const make = Effect.gen(function* () {
       }
       return { kind: "http", url, authorization: bearerHeader(record.token) } as const;
     }
-    const token = yield* freshOAuthToken(id, projectId, false);
+    const token = yield* freshOAuthToken(id, projectId, url, false);
     return { kind: "http", url, authorization: bearerHeader(token) } as const;
   });
 
@@ -731,11 +682,12 @@ const make = Effect.gen(function* () {
       // A static key the server no longer accepts: nothing to refresh.
       return Option.none<string>();
     }
-    const current = yield* freshOAuthToken(id, projectId, false).pipe(Effect.option);
+    const url = config.value.transport.url;
+    const current = yield* freshOAuthToken(id, projectId, url, false).pipe(Effect.option);
     if (Option.isSome(current) && bearerHeader(current.value) !== usedAuthorization) {
       return Option.some(bearerHeader(current.value));
     }
-    const refreshed = yield* freshOAuthToken(id, projectId, true).pipe(Effect.option);
+    const refreshed = yield* freshOAuthToken(id, projectId, url, true).pipe(Effect.option);
     yield* publishStatuses;
     return Option.map(refreshed, bearerHeader);
   });

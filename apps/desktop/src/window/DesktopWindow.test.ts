@@ -575,19 +575,37 @@ describe("DesktopWindow", () => {
         assert.isFunction(requestHandler);
         assert.isFunction(checkHandler);
 
-        // The voice oracle depends on `media`; clipboard needs both handlers.
-        for (const permission of ["media", "clipboard-read", "clipboard-sanitized-write"]) {
-          const granted = vi.fn();
-          requestHandler(null, permission, granted);
-          assert.deepEqual(granted.mock.calls, [[true]], `expected ${permission} to be granted`);
-          assert.isTrue(checkHandler(null, permission), `expected ${permission} check to pass`);
+        const request = (permission: string, details: object = {}) => {
+          const callback = vi.fn();
+          requestHandler(null, permission, callback, details);
+          return callback.mock.calls[0]?.[0];
+        };
+        const check = (permission: string, details: object = {}) =>
+          checkHandler(null, permission, "http://127.0.0.1:3773", details);
+
+        // The voice oracle needs audio `media`; clipboard needs both handlers.
+        assert.isTrue(request("media", { mediaTypes: ["audio"] }));
+        assert.isTrue(check("media", { mediaType: "audio" }));
+        for (const permission of [
+          "clipboard-read",
+          "clipboard-sanitized-write",
+          "local-fonts",
+          "notifications",
+        ]) {
+          assert.isTrue(request(permission), `expected ${permission} to be granted`);
+          assert.isTrue(check(permission), `expected ${permission} check to pass`);
         }
 
+        for (const mediaTypes of [["video"], ["audio", "video"], []]) {
+          assert.isFalse(request("media", { mediaTypes }), `expected ${mediaTypes} to be denied`);
+        }
+        assert.isFalse(request("media"));
+        for (const mediaType of ["video", "unknown"]) {
+          assert.isFalse(check("media", { mediaType }), `expected ${mediaType} check to fail`);
+        }
         for (const permission of ["geolocation", "display-capture", "midi", "hid"]) {
-          const denied = vi.fn();
-          requestHandler(null, permission, denied);
-          assert.deepEqual(denied.mock.calls, [[false]], `expected ${permission} to be denied`);
-          assert.isFalse(checkHandler(null, permission), `expected ${permission} check to fail`);
+          assert.isFalse(request(permission), `expected ${permission} to be denied`);
+          assert.isFalse(check(permission), `expected ${permission} check to fail`);
         }
       }).pipe(Effect.provide(layer));
     }),

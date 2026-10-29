@@ -75,17 +75,22 @@ import {
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import {
-  isThreadListV2ListItem,
-  threadListV2ListItemsAreEqual,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
-  type ThreadListV2ListItem,
 } from "./threadListV2";
+import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
+import {
+  LegacyListDecoration,
+  LegacyPendingRow,
+  LegacyThreadRow,
+  useLegacyThreadList,
+} from "./legacy-thread-list";
+import { legacyListItemsAreEqual, type LegacyListItem } from "./legacyThreadList";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 
 type SidebarListItem =
-  | ThreadListV2ListItem
+  | LegacyListItem
   | {
       readonly type: "v2-show-more";
       readonly key: string;
@@ -290,9 +295,12 @@ function ThreadNavigationSidebarPane(
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder();
+  const legacyEnabled = !useThreadListV2Enabled();
+  const ThreadRow = legacyEnabled ? LegacyThreadRow : ThreadListV2Row;
+  const PendingRow = legacyEnabled ? LegacyPendingRow : ThreadListV2PendingRow;
   const {
     layout: threadListV2Layout,
-    items: threadListV2Items,
+    items: currentThreadListItems,
     contentOnlyThreadKeys,
     olderSettledShelf,
     toggleOwnedThreads,
@@ -311,15 +319,21 @@ function ThreadNavigationSidebarPane(
     settledLimit: settledVisibleCount,
     now,
     pendingOrder,
-    shelfPreferencesLoaded,
-    workingShelfEnabled,
-    workingShelfExpanded,
-    snoozedShelfExpanded,
-    settledShelfExpanded,
+    shelfPreferencesLoaded: legacyEnabled || shelfPreferencesLoaded,
+    workingShelfEnabled: legacyEnabled ? false : workingShelfEnabled,
+    workingShelfExpanded: legacyEnabled || workingShelfExpanded,
+    snoozedShelfExpanded: legacyEnabled || snoozedShelfExpanded,
+    settledShelfExpanded: legacyEnabled || settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
   });
+  const { items: threadListV2Items, onGroupAction } = useLegacyThreadList({
+    enabled: legacyEnabled,
+    items: currentThreadListItems,
+    scopes: projectScopes,
+    searchQuery: props.searchQuery,
+  });
   const listItems: readonly SidebarListItem[] =
-    settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
+    (legacyEnabled || settledShelfExpanded) && threadListV2Layout.hiddenSettledCount > 0
       ? [
           ...threadListV2Items,
           {
@@ -470,16 +484,19 @@ function ThreadNavigationSidebarPane(
     listEnvironments,
     threadSearchMatchByKey,
     workingShelfEnabled,
+    legacyEnabled,
   };
   useThreadJumpShortcuts(listItems, handleSelectThread);
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
-    if (isThreadListV2ListItem(previous) && isThreadListV2ListItem(item)) {
-      return threadListV2ListItemsAreEqual(previous, item);
+    if (previous.type === "v2-show-more" || item.type === "v2-show-more") {
+      return (
+        previous.type === "v2-show-more" &&
+        item.type === "v2-show-more" &&
+        previous.hiddenCount === item.hiddenCount &&
+        previous.state === item.state
+      );
     }
-    if (previous.type === "v2-show-more" && item.type === "v2-show-more") {
-      return previous.hiddenCount === item.hiddenCount && previous.state === item.state;
-    }
-    return false;
+    return legacyListItemsAreEqual(previous, item);
   };
   const focusSearch = () => {
     if (Platform.OS === "android") return false;
@@ -501,13 +518,23 @@ function ThreadNavigationSidebarPane(
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   const renderListItem = ({ item }: { readonly item: SidebarListItem }) => {
     switch (item.type) {
+      case "legacy-group":
+      case "legacy-show-more":
+        return (
+          <LegacyListDecoration
+            item={item}
+            pane="sidebar"
+            onGroupAction={onGroupAction}
+            onNewThread={props.onNewThreadInProject}
+          />
+        );
       case "v2-pending": {
         const pendingScopeKey = scopedProjectKey(
           item.pendingTask.environmentId,
           item.pendingTask.projectId,
         );
         return (
-          <ThreadListV2PendingRow
+          <PendingRow
             pendingTask={item.pendingTask}
             selected={
               activeNewTask?.pendingKey === item.pendingTask.key ||
@@ -540,10 +567,9 @@ function ThreadNavigationSidebarPane(
         const thread = item.item.thread;
         const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
         return (
-          <ThreadListV2Row
+          <ThreadRow
             onNewThreadOnBranch={props.onNewThreadOnBranch}
             thread={thread}
-            projectHeading={item.item.projectHeading}
             ownedDepth={item.item.ownedDepth}
             ownedChildCount={item.item.ownedChildCount}
             ownedExpanded={item.item.ownedExpanded}

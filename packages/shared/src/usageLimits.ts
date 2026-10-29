@@ -61,6 +61,58 @@ export function exhaustedUsageWindow(
   }
 }
 
+function claudeAccountGroup(
+  settings: Pick<ServerSettings, "providerInstances">,
+  provider: ServerProvider,
+): string {
+  if (provider.driver !== "claudeAgent") return "";
+  const config = Object.hasOwn(settings.providerInstances, provider.instanceId)
+    ? settings.providerInstances[provider.instanceId]?.config
+    : undefined;
+  const group =
+    typeof config === "object" && config !== null
+      ? (config as { readonly accountGroup?: unknown }).accountGroup
+      : undefined;
+  return typeof group === "string" ? group.trim() : "";
+}
+
+function isUsableProvider(
+  provider: ServerProvider,
+  settings: ServerSettings | undefined,
+  projectId: ProjectId | null,
+): boolean {
+  return (
+    provider.enabled &&
+    provider.installed &&
+    provider.auth.status !== "unauthenticated" &&
+    isProviderAvailable(provider) &&
+    (!settings || resolveProjectProviderInstanceEnabled(settings, projectId, provider.instanceId))
+  );
+}
+
+/** The server rotates a Claude account group's turns, so the group is out only when every member is. */
+function accountGroupHasHeadroom(
+  provider: ServerProvider,
+  input: {
+    readonly providers: readonly ServerProvider[];
+    readonly settings?: ServerSettings;
+    readonly projectId?: ProjectId | null;
+    readonly now: number;
+  },
+  model: string,
+): boolean {
+  if (!input.settings) return false;
+  const group = claudeAccountGroup(input.settings, provider);
+  if (group.length === 0) return false;
+  return input.providers.some(
+    (sibling) =>
+      sibling.instanceId !== provider.instanceId &&
+      claudeAccountGroup(input.settings!, sibling) === group &&
+      isUsableProvider(sibling, input.settings, input.projectId ?? null) &&
+      !exhaustedUsageWindow(sibling, input.now, model),
+  );
+}
+
 export function resolveNewThreadModelSelection(input: {
   readonly defaultSelection: ModelSelection | null;
   readonly explicitSelection?: ModelSelection | null;
@@ -81,17 +133,10 @@ export function resolveNewThreadModelSelection(input: {
   if (
     !provider ||
     !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
-        input.settings,
-        input.projectId ?? null,
-        fallback.instanceId,
-      ))
+    accountGroupHasHeadroom(provider, input, selection.model) ||
+    !fallback ||
+    !isUsableProvider(fallback, input.settings, input.projectId ?? null) ||
+    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model)
   )
     return unchanged;
   return {

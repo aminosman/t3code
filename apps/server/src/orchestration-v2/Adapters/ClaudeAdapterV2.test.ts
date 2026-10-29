@@ -608,6 +608,18 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.equal(logged.hasMcpServers, true);
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
+    assert.equal(options.strictMcpConfig, true);
+    // Claude refuses --strict-mcp-config beside managed-mcp.json, which already excludes other config.
+    const managed = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-thread-claude-mcp",
+      resume: false,
+      cwd: "/workspace",
+      mcpServers: overrides.mcpServers ?? {},
+      managedMcpConfig: true,
+    });
+    assert.isDefined(managed.mcpServers);
+    assert.isUndefined(managed.strictMcpConfig);
   });
 
   it("logs --settings key names without their values", () => {

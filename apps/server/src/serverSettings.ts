@@ -56,7 +56,13 @@ import {
   sourceControlHostSecretName,
 } from "./sourceControl/sourceControlHostSecrets.ts";
 
-import { mapSettingsSecrets, SECRET_REDACTED, type SettingsSecret } from "./settingsSecrets.ts";
+import {
+  mapSettingsSecrets,
+  staleMcpConnectionAuthSecretNames,
+  PUSH_APNS_AUTH_KEY_SECRET_NAME,
+  SECRET_REDACTED,
+  type SettingsSecret,
+} from "./settingsSecrets.ts";
 
 export {
   resolveReviewGuideModelSelection,
@@ -859,9 +865,15 @@ const make = Effect.gen(function* () {
     | { readonly kind: "remove"; readonly operation: "remove-secret" | "remove-stale-secret" }
   );
 
-  const persistSettingsSecrets = (current: ServerSettings, next: ServerSettings) => {
-    // Older Roost clients omitted the push block when writing unrelated settings.
-    // Treat a whole-block reset as legacy, not as an explicit APNs key deletion.
+  // Roost lost its APNs key between Sep 9 and Sep 27 2026: an older build wrote
+  // settings.json back without `push`, and the defaulted block read as a clear.
+  // So the key is removed only when one was in effect and the write cleared it;
+  // a whole-block reset keeps it, and `authKeyRedacted: false` still clears.
+  const persistSettingsSecrets = (
+    current: ServerSettings,
+    next: ServerSettings,
+    lastValid: ServerSettings = current,
+  ) => {
     const pushIsDefault =
       !next.push.enabled &&
       next.push.authKey.length === 0 &&
@@ -881,6 +893,8 @@ const make = Effect.gen(function* () {
         previous.set(secret.secretName, secret);
         return secret;
       });
+      // An empty push slot with no key in effect has nothing in the store to remove.
+      if (!pushKeyInEffect) previous.delete(PUSH_APNS_AUTH_KEY_SECRET_NAME);
       const changes: SecretChange[] = [];
       const nextSecretNames = new Set<string>();
       const settings = mapSettingsSecrets(requested, (secret) => {
@@ -906,13 +920,21 @@ const make = Effect.gen(function* () {
           return { value: "", redacted: true };
         }
         if (value.length === 0) {
-          changes.push({ ...metadata, kind: "remove", operation: "remove-secret" });
+          if (secret.secretName !== PUSH_APNS_AUTH_KEY_SECRET_NAME || pushKeyInEffect) {
+            changes.push({ ...metadata, kind: "remove", operation: "remove-secret" });
+          }
           return { value: "", redacted: false };
         }
         nextSecretNames.add(secret.secretName);
         changes.push({ ...metadata, kind: "write", value: textEncoder.encode(value) });
         return { value: "", redacted: true };
       });
+      for (const secretName of new Set([
+        ...staleMcpConnectionAuthSecretNames(lastValid, current),
+        ...staleMcpConnectionAuthSecretNames(current, requested),
+      ])) {
+        changes.push({ kind: "remove", secretName, operation: "remove-stale-secret" });
+      }
       for (const secret of previous.values()) {
         if (!secret.sensitive || nextSecretNames.has(secret.secretName)) continue;
         if (changes.some((change) => change.secretName === secret.secretName)) continue;
@@ -1008,6 +1030,7 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const lastValidSettingsRef = yield* Ref.make(Option.none<ServerSettings>());
   const updateAndPersistSettings = (
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
@@ -1022,7 +1045,12 @@ const make = Effect.gen(function* () {
           });
         }
         const updated = yield* update(current);
-        const persisted = yield* persistSettingsSecrets(current, updated);
+        const lastValid = yield* Ref.get(lastValidSettingsRef);
+        const persisted = yield* persistSettingsSecrets(
+          current,
+          updated,
+          Option.getOrElse(lastValid, () => current),
+        );
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
@@ -1041,6 +1069,7 @@ const make = Effect.gen(function* () {
           }),
         );
         yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
+        yield* Ref.set(lastValidSettingsRef, Option.some(next));
         yield* emitChange(next);
         return resolveTextGenerationProvider(materialized);
       }),
@@ -1057,7 +1086,32 @@ const make = Effect.gen(function* () {
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      const { settings } = yield* reloadSettings;
+      const lastValidSettings = yield* Ref.get(lastValidSettingsRef);
+      const previous = yield* getSettingsFromCache;
+      const { settings, parseFailure } = yield* reloadSettings;
+      if (Option.isNone(parseFailure)) {
+        // A hand-edited URL/auth/transport change invalidates the old server's sign-ins too.
+        // Never compare against defaults from an unparseable/partially written settings file.
+        yield* Effect.forEach(
+          staleMcpConnectionAuthSecretNames(
+            Option.getOrElse(lastValidSettings, () => previous),
+            settings,
+          ),
+          (secretName) =>
+            secretStore.remove(secretName).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "remove-stale-secret",
+                    cause,
+                  }),
+              ),
+            ),
+          { discard: true },
+        );
+        yield* Ref.set(lastValidSettingsRef, Option.some(settings));
+      }
       yield* emitChange(settings);
     }),
   );
@@ -1143,7 +1197,10 @@ const make = Effect.gen(function* () {
 
     const startup = Effect.gen(function* () {
       yield* startWatcher;
-      yield* reloadSettings;
+      const loaded = yield* reloadSettings;
+      if (Option.isNone(loaded.parseFailure)) {
+        yield* Ref.set(lastValidSettingsRef, Option.some(loaded.settings));
+      }
     });
 
     const startupExit = yield* Effect.exit(startup);

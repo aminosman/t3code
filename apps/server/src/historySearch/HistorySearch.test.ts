@@ -660,6 +660,9 @@ it.effect("builds the index at launch and folds in new messages as thread events
       yield* Effect.yieldNow;
       yield* TestClock.adjust("1 second");
       assert.strictEqual(yield* indexed("gondola"), 1);
+      // Its meetings scan reads real files outside any transaction; let it
+      // finish so the follower below is not left waiting on it.
+      yield* (yield* HistorySearch.HistorySearch).refresh;
 
       yield* addMessage("l2", "t-live", "assistant", "funicular", "2026-09-07T10:01:00.000Z");
       yield* TestClock.adjust("4 seconds");

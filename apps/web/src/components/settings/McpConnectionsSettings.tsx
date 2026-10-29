@@ -240,15 +240,20 @@ function ProjectAuthRow({
   async function run<A>(command: () => Promise<AtomCommandResult<A, unknown>>): Promise<A | null> {
     setPending(true);
     setError(null);
+    let value: A | null = null;
     try {
       const result = await command();
-      if (result._tag === "Success") return result.value;
-      const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "The request failed.");
-      return null;
-    } finally {
-      setPending(false);
+      if (result._tag === "Success") {
+        value = result.value;
+      } else {
+        const failure = squashAtomCommandFailure(result);
+        setError(failure instanceof Error ? failure.message : "The request failed.");
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "The request failed.");
     }
+    setPending(false);
+    return value;
   }
 
   const signIn = async () => {

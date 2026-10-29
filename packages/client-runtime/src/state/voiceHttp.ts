@@ -8,17 +8,29 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, type HttpClientError, HttpClientResponse } from "effect/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import {
+  executeAuthenticatedEnvironmentHttpRequest,
+  isRejectedCredentialResponse,
+} from "./environmentHttpAuth.ts";
 
 const MINT_TIMEOUT_MS = 10_000;
 
 const decodeErrorResponse = Schema.decodeUnknownOption(VoiceRealtimeSessionErrorResponse);
+
+type MintResult =
+  | { readonly ok: true; readonly value: VoiceRealtimeSessionResponse }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: VoiceRealtimeSessionErrorCode | "unavailable";
+      readonly message: string;
+    };
 
 /**
  * Raised when the environment cannot mint a realtime voice session. `code`
@@ -48,7 +60,13 @@ export const mintEnvironmentVoiceRealtimeSession = Effect.fn(
   // Re-derived per attempt: the shared helper can change the base URL when it
   // refreshes a rejected relay credential.
   let requestUrl = environmentEndpointUrl(input.prepared.httpBaseUrl, VOICE_REALTIME_SESSION_PATH);
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
+  // Typed by hand: the predicate below otherwise defeats the helper's inference.
+  return yield* executeAuthenticatedEnvironmentHttpRequest<
+    "metadata",
+    MintResult,
+    HttpClientError.HttpClientError | Schema.SchemaError,
+    HttpClient.HttpClient
+  >({
     prepared: input.prepared,
     signer: input.signer,
     // These are Roost's own routes, outside the contract's HttpApi groups, so
@@ -80,11 +98,13 @@ export const mintEnvironmentVoiceRealtimeSession = Effect.fn(
         return Option.isSome(decoded)
           ? {
               ok: false as const,
+              status: response.status,
               code: decoded.value.error,
               message: decoded.value.message,
             }
           : {
               ok: false as const,
+              status: response.status,
               code: "unavailable" as const,
               message: `Voice session request failed with status ${response.status}.`,
             };
@@ -94,6 +114,8 @@ export const mintEnvironmentVoiceRealtimeSession = Effect.fn(
       );
       return { ok: true as const, value: session };
     }),
+    // The 401 above is a value, so the helper is told it means "renew".
+    isUnauthorizedResponse: isRejectedCredentialResponse,
   }).pipe(
     Effect.mapError(
       (cause) =>

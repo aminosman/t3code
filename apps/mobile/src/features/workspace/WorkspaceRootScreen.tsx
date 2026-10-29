@@ -133,12 +133,7 @@ function WorkspaceRootContent() {
               : Math.max(insets.bottom, 12) + workspaceToolbarHeight(tab.searchMode) + 16;
   const context = { ...workspace, bottomClearance };
 
-  if (
-    deviceType === "phone" &&
-    !layout.usesSplitView &&
-    !settingsOpen &&
-    state.selectedTab === "threads"
-  ) {
+  if (!layout.usesSplitView && !settingsOpen && state.selectedTab === "threads") {
     return <HomePager page={homePage} />;
   }
   return (

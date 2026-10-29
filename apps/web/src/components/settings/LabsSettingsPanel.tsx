@@ -37,10 +37,13 @@ function BoringSidebarRow() {
       description="Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders."
       control={
         <Switch
-          checked={settings.boringSidebarEnabled || settings.legacySidebarEnabled}
-          // Turning it off also clears the opt-in of the removed legacy sidebar.
+          // The legacy sidebar replaces this one while it is on.
+          checked={settings.boringSidebarEnabled && !settings.legacySidebarEnabled}
           onCheckedChange={(checked) =>
-            updateSettings({ boringSidebarEnabled: Boolean(checked), legacySidebarEnabled: false })
+            updateSettings({
+              boringSidebarEnabled: Boolean(checked),
+              ...(checked ? { legacySidebarEnabled: false } : {}),
+            })
           }
           aria-label="Boring sidebar (group by project)"
         />

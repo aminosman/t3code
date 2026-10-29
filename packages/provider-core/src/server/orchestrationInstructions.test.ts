@@ -83,3 +83,21 @@ describe("T3 device instructions", () => {
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
   });
 });
+
+describe("T3 orchestration ownership", () => {
+  it("routes new threads by ownership and hands sign-ins to the user's phone", () => {
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "Ownership decides which tool starts another agent",
+    );
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "only for work this thread does not own");
+    // "Only when the user asks for a new thread" contradicted fresh_threads, where such a request is usually owned.
+    assert.notInclude(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "only when the user asks for a new thread",
+    );
+    assert.notInclude(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "explicitly wants top-level");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "call `t3_screen_hand_over`");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Never guess credentials.");
+  });
+});

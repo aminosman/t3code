@@ -5,6 +5,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  McpConnectionId,
   ProviderInstanceId,
   ThreadId,
   AuthOrchestrationOperateScope,
@@ -12,6 +13,7 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  type AuthEnvironmentScope,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -196,6 +198,60 @@ describe("settings mutation authorization", () => {
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
       expect(handled).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("MCP connection authorization", () => {
+  const guarded = new Set<string>([WS_METHODS.mcpConnectionsUpsert, WS_METHODS.mcpConnectionsTest]);
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<
+        keyof typeof RPC_REQUIRED_SCOPES,
+        typeof WS_METHODS.mcpConnectionsUpsert | typeof WS_METHODS.mcpConnectionsTest
+      > => !guarded.has(tag),
+    ),
+  );
+  const id = McpConnectionId.make("files");
+  const stdio = {
+    name: "Files",
+    enabled: true,
+    transport: { type: "stdio" as const, command: "mcp-files", args: [], env: [] },
+  };
+  const http = {
+    name: "Docs",
+    enabled: true,
+    transport: { type: "http" as const, url: "https://mcp.example.com/mcp", auth: "none" as const },
+  };
+  const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+    RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.mcpConnectionsUpsert, () => Effect.void),
+          group.toLayerHandler(WS_METHODS.mcpConnectionsTest, () => Effect.succeed({ tools: [] })),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+
+  it.effect("holds host commands to settings permission and leaves HTTP servers to operators", () =>
+    Effect.gen(function* () {
+      const operator = yield* clientWith([AuthOrchestrationOperateScope]);
+      yield* operator[WS_METHODS.mcpConnectionsUpsert]({ id, config: http });
+      expect(
+        yield* operator[WS_METHODS.mcpConnectionsUpsert]({ id, config: stdio }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(
+        yield* operator[WS_METHODS.mcpConnectionsTest]({ id, projectId: null }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+
+      const admin = yield* clientWith([AuthOrchestrationOperateScope, AuthSettingsWriteScope]);
+      yield* admin[WS_METHODS.mcpConnectionsUpsert]({ id, config: stdio });
+      expect(yield* admin[WS_METHODS.mcpConnectionsTest]({ id, projectId: null })).toEqual({
+        tools: [],
+      });
     }).pipe(Effect.scoped),
   );
 });

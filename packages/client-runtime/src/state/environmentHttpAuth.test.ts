@@ -42,6 +42,12 @@ import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHt
 import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { readEnvironmentHttpAuthServices } from "./environmentHttpAuth.ts";
+import {
+  registerEnvironmentPushDevice,
+  sendPushReply,
+  unregisterEnvironmentPushDevice,
+} from "./pushHttp.ts";
+import { mintEnvironmentVoiceRealtimeSession } from "./voiceHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
@@ -681,6 +687,168 @@ describe("authenticated environment HTTP requests", () => {
         message: "No relay authorization service is available for the environment request.",
       });
       expect(harness.calls).toEqual([]);
+    }),
+  );
+});
+
+describe("push and voice requests", () => {
+  const REPLY = {
+    threadId: ThreadId.make("thread-1"),
+    action: "reply",
+    text: "Ship it",
+    replyId: "notification-1:REPLY",
+  } as const;
+  const REGISTERED = { registered: true, deliveryConfigured: true };
+  const VOICE_SESSION = {
+    clientSecret: "ek_test",
+    expiresAt: null,
+    model: "gpt-realtime",
+    voice: "marin",
+  };
+  const PUSH_REQUESTS: ReadonlyArray<{
+    readonly name: string;
+    readonly path: string;
+    readonly ok: unknown;
+    readonly send: (
+      input: ReturnType<typeof makeHarness>["input"],
+    ) => Effect.Effect<unknown, { readonly message: string }, HttpClient.HttpClient>;
+  }> = [
+    {
+      name: "reply",
+      path: "/api/push/reply",
+      ok: { delivery: "sent" },
+      send: (input: ReturnType<typeof makeHarness>["input"]) =>
+        sendPushReply({ ...input, reply: REPLY }),
+    },
+    {
+      name: "register",
+      path: "/api/push/devices/register",
+      ok: REGISTERED,
+      send: (input: ReturnType<typeof makeHarness>["input"]) =>
+        registerEnvironmentPushDevice({
+          ...input,
+          registration: {
+            deviceToken: "abcd",
+            platform: "ios",
+            pushEnvironment: "production",
+            installationId: "install-1",
+          },
+        }),
+    },
+    {
+      name: "unregister",
+      path: "/api/push/devices/unregister",
+      ok: REGISTERED,
+      send: (input: ReturnType<typeof makeHarness>["input"]) =>
+        unregisterEnvironmentPushDevice({ ...input, installationId: "install-1" }),
+    },
+  ];
+
+  it.effect.each(PUSH_REQUESTS)("signs a push $name with the relay's current token", (request) =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json(request.ok));
+      const result = yield* request.send(harness.input).pipe(Effect.provide(harness.httpLayer));
+
+      expect(result).toEqual(request.ok);
+      expect(harness.authorizations).toEqual([{ expectedEnvironmentId: TARGET.environmentId }]);
+      expect(harness.calls.map((call) => call.url)).toEqual([`${CURRENT_ORIGIN}${request.path}`]);
+      expect(new Headers(harness.calls[0]!.init.headers).get("authorization")).toBe(
+        "DPoP current-token",
+      );
+      expect(harness.proofs).toEqual([
+        { method: "POST", url: `${CURRENT_ORIGIN}${request.path}`, accessToken: "current-token" },
+      ]);
+    }),
+  );
+
+  it.effect.each(PUSH_REQUESTS)("renews a rejected push $name token once and retries", (request) =>
+    Effect.gen(function* () {
+      const harness = makeHarness((requestNumber) =>
+        requestNumber === 1 ? credentialRejectedResponse() : Response.json(request.ok),
+      );
+      const result = yield* request.send(harness.input).pipe(Effect.provide(harness.httpLayer));
+
+      expect(result).toEqual(request.ok);
+      expect(harness.authorizations).toEqual([
+        { expectedEnvironmentId: TARGET.environmentId },
+        { expectedEnvironmentId: TARGET.environmentId, rejectedAccessToken: "current-token" },
+      ]);
+      expect(harness.calls.map((call) => call.url)).toEqual([
+        `${CURRENT_ORIGIN}${request.path}`,
+        `${RENEWED_ORIGIN}${request.path}`,
+      ]);
+      expect(harness.proofs[1]).toEqual({
+        method: "POST",
+        url: `${RENEWED_ORIGIN}${request.path}`,
+        accessToken: "renewed-token",
+      });
+      expect(harness.calls[1]!.init.body).toEqual(harness.calls[0]!.init.body);
+    }),
+  );
+
+  it.effect("keeps a refused push reply's status when the renewed token is refused too", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() =>
+        Response.json({ message: "Session expired." }, { status: 401 }),
+      );
+      const error = yield* sendPushReply({ ...harness.input, reply: REPLY }).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({ status: 401, message: "Session expired." });
+      expect(harness.calls).toHaveLength(2);
+    }),
+  );
+
+  it.effect("does not renew a token for a push reply refused for another reason", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() =>
+        Response.json({ message: "Already answered." }, { status: 409 }),
+      );
+      const error = yield* sendPushReply({ ...harness.input, reply: REPLY }).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({ status: 409, message: "Already answered." });
+      expect(harness.calls).toHaveLength(1);
+      expect(harness.authorizations).toHaveLength(1);
+    }),
+  );
+
+  it.effect("renews a rejected voice session token once and retries", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness((requestNumber) =>
+        requestNumber === 1 ? credentialRejectedResponse() : Response.json(VOICE_SESSION),
+      );
+      const result = yield* mintEnvironmentVoiceRealtimeSession(harness.input).pipe(
+        Effect.provide(harness.httpLayer),
+      );
+
+      expect(result).toEqual(VOICE_SESSION);
+      expect(harness.calls.map((call) => call.url)).toEqual([
+        `${CURRENT_ORIGIN}/api/voice/realtime-session`,
+        `${RENEWED_ORIGIN}/api/voice/realtime-session`,
+      ]);
+      expect(
+        harness.calls.map((call) => new Headers(call.init.headers).get("authorization")),
+      ).toEqual(["DPoP current-token", "DPoP renewed-token"]);
+    }),
+  );
+
+  it.effect("does not renew a token for a voice session the environment cannot mint", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() =>
+        Response.json({ error: "not-configured", message: "No key." }, { status: 503 }),
+      );
+      const error = yield* mintEnvironmentVoiceRealtimeSession(harness.input).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({ code: "not-configured", message: "No key." });
+      expect(harness.calls).toHaveLength(1);
     }),
   );
 });

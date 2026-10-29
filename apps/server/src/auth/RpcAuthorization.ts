@@ -26,6 +26,7 @@ import {
   AuthTerminalReadScope,
   type AuthEnvironmentScope,
   EnvironmentAuthorizationError,
+  McpConnectionUpsertInput,
   RpcScopeAuthorization,
   WS_METHODS,
   WsRpcGroup,
@@ -272,6 +273,7 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 };
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+const decodeMcpConnectionUpsert = Schema.decodeUnknownSync(McpConnectionUpsertInput);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
 const requiredScopesForRpcCall = (
@@ -294,6 +296,16 @@ const requiredScopesForRpcCall = (
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
   if (method === WS_METHODS.projectsMutate) {
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));
+  }
+  // A stdio connection is a host command, held to the same bar as project scripts.
+  if (method === WS_METHODS.mcpConnectionsUpsert) {
+    return decodeMcpConnectionUpsert(payload).config.transport.type === "stdio"
+      ? [AuthOrchestrationOperateScope, AuthSettingsWriteScope]
+      : [AuthOrchestrationOperateScope];
+  }
+  // Testing a stdio connection spawns its command.
+  if (method === WS_METHODS.mcpConnectionsTest) {
+    return [AuthOrchestrationOperateScope, AuthSettingsWriteScope];
   }
   const guarded = clientRpcRequiredScopes(method, payload);
   if (guarded.length > 0) return guarded;

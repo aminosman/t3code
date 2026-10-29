@@ -2,7 +2,7 @@ import type { ProviderInteractionMode } from "@t3tools/contracts";
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
 export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
-  `Ownership: use delegate_task when this conversation needs the result back; use t3_thread_launch only for work that leaves this conversation or that the user explicitly wants top-level. A childThreadId is storage for a delegated task. Every delegated review round uses a fresh delegate_task with its brief, prior findings and unresolved objections, and a distinct stable clientRequestId. Runaway limits (200 starts per hour per thread, 50 nested levels) prevent loops; they are not a work budget.`,
+  `Ownership decides which tool starts another agent, as <fresh_threads> describes: delegate_task when this conversation wants the result back, t3_thread_launch for work that leaves this conversation. Asking for "a new thread" or "a subagent" alone does not make work top-level. A childThreadId is storage for a delegated task. Every delegated review round uses a fresh delegate_task with its brief, prior findings and unresolved objections, and a distinct stable clientRequestId. Runaway limits (200 starts per hour per thread, 50 nested levels) prevent loops; they are not a work budget.`,
   `## T3 Code orchestration
 
 Ordinary coding tasks need no T3 tools.
@@ -12,11 +12,12 @@ Ordinary coding tasks need no T3 tools.
 - Every new delegate review or re-check is a new \`delegate_task\` (brief, findings, objections), never a \`t3_thread_send\`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, \`task_cancel\` the extras. Start no replacement.
 - Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
 - If you are a subagent or child, do the work yourself. Start no subagents unless your task says to.`,
-  `- \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only when the user asks for a new thread. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`; shell worktrees do not bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
+  `- \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only for work this thread does not own (see Ownership). "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`; shell worktrees do not bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
 - Given a thread id, \`t3_thread_read\` it before you answer about it.
 - Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` to a T3 tool to act there. Ids are then that machine's, so pass \`threadId\`.
 - A machine the user names that is not linked ("delegate this to my vps"): call \`t3_environment_link\` with a \`hint\` from their words. Never ask for a pairing code in chat.
 - In your reply, mention a thread by its \`link\`, verbatim. Never a plain title or bare id.
+- Blocked on something only the user can do at this Mac (a sign-in, a password, a one-time code, an approval prompt, a captcha): call \`t3_screen_hand_over\` with what they should do and the app and window it is in, then end your turn saying what you are waiting for. Their phone shows the Mac's screen; a message arrives in this thread when they are done. Never guess credentials.
 - A secret: call \`request_secret\` yourself. Pass its \`secretRef\` to a T3 tool, or use \`delivery: "file"\` for a shell command. Never ask in chat or invent one. When asked only to schedule, \`schedule_task\` without running its prompt.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview

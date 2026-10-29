@@ -171,18 +171,19 @@ function ProjectRow({
   async function run<A>(command: () => Promise<AtomCommandResult<A, unknown>>): Promise<A | null> {
     setPending(true);
     setError(null);
-    try {
-      const result = await command();
-      if (result._tag === "Success") return result.value;
-      const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "The request failed.");
+    const outcome = await command().then(
+      (result) => ({ ok: true as const, result }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    setPending(false);
+    if (!outcome.ok) {
+      setError(outcome.error instanceof Error ? outcome.error.message : "The request failed.");
       return null;
-    } catch {
-      setError("The request failed.");
-      return null;
-    } finally {
-      setPending(false);
     }
+    if (outcome.result._tag === "Success") return outcome.result.value;
+    const failure = squashAtomCommandFailure(outcome.result);
+    setError(failure instanceof Error ? failure.message : "The request failed.");
+    return null;
   }
 
   return (

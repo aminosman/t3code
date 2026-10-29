@@ -12,13 +12,18 @@ import * as PushDeviceRegistry from "./PushDeviceRegistry.ts";
  * Built per test: registrations persist, so a shared store would let one case
  * see another's devices.
  */
-const makeTestLayer = () =>
+const makeTestLayer = (options?: { readonly slowReads?: boolean }) =>
   PushDeviceRegistry.layer.pipe(
     Layer.provide(
       Layer.sync(ServerSecretStore.ServerSecretStore, () => {
         const values = new Map<string, Uint8Array>();
         return ServerSecretStore.ServerSecretStore.of({
-          get: (name) => Effect.succeed(Option.fromNullishOr(values.get(name))),
+          // A slow read answers late, so a second change can read the same
+          // registry before the first one writes.
+          get: (name) =>
+            Effect.sync(() => Option.fromNullishOr(values.get(name))).pipe(
+              Effect.tap(() => (options?.slowReads ? Effect.yieldNow : Effect.void)),
+            ),
           set: (name, value) => Effect.sync(() => void values.set(name, value)),
           create: (name, value) => Effect.sync(() => void values.set(name, value)),
           getOrCreateRandom: (name) =>
@@ -44,6 +49,28 @@ const registration = (overrides?: { installationId?: string; deviceToken?: strin
   }) as const;
 
 describe("PushDeviceRegistry", () => {
+  it.effect("keeps every change when several arrive at once", () =>
+    Effect.gen(function* () {
+      const registry = yield* PushDeviceRegistry.PushDeviceRegistry;
+      yield* registry.register(registration({ installationId: "gone", deviceToken: "gone" }));
+      yield* Effect.all(
+        [
+          registry.register(registration({ installationId: "a", deviceToken: "token-a" })),
+          registry.register(registration({ installationId: "b", deviceToken: "token-b" })),
+          registry.forget("gone"),
+          registry.register(registration({ installationId: "c", deviceToken: "token-c" })),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      assert.deepEqual((yield* registry.list).map((device) => device.installationId).toSorted(), [
+        "a",
+        "b",
+        "c",
+      ]);
+    }).pipe(Effect.provide(makeTestLayer({ slowReads: true }))),
+  );
+
   it.effect("keeps one entry per installation when a token rotates", () =>
     Effect.gen(function* () {
       const registry = yield* PushDeviceRegistry.PushDeviceRegistry;

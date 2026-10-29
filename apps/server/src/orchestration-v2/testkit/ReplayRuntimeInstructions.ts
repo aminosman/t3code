@@ -1,10 +1,18 @@
 import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/contracts";
 
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  museModelCapabilities,
+  resolveMuseReasoningEffort,
+} from "@t3tools/provider-muse/server/modelCatalog";
 
 export function materializeReplayTranscriptRuntimeInstructions(
   transcript: ProviderReplayTranscript,
-  runtime: { readonly driver: ProviderDriverKind; readonly model: string },
+  runtime: {
+    readonly driver: ProviderDriverKind;
+    readonly model: string;
+    readonly reasoningEffort?: string | undefined;
+  },
 ): ProviderReplayTranscript {
   const harness =
     runtime.driver === "cursor"
@@ -15,9 +23,18 @@ export function materializeReplayTranscriptRuntimeInstructions(
           ? "acpRegistry"
           : runtime.driver === "fx"
             ? "fx"
-            : undefined;
+            : runtime.driver === "muse"
+              ? "Muse Code"
+              : undefined;
   if (harness === undefined) return transcript;
-  const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
+  const instructions = buildRuntimeInstructions({
+    harness,
+    model: runtime.model,
+    reasoningEffort:
+      runtime.driver === "muse"
+        ? resolveMuseReasoningEffort(museModelCapabilities(), runtime.reasoningEffort)
+        : runtime.reasoningEffort,
+  });
 
   return {
     ...transcript,
@@ -35,6 +52,39 @@ export function materializeReplayTranscriptRuntimeInstructions(
         return frame.message.endsWith(instructions)
           ? entry
           : { ...entry, frame: { ...frame, message: `${frame.message}\n\n${instructions}` } };
+      }
+      if (
+        runtime.driver === "muse" &&
+        "method" in frame &&
+        frame.method === "turn/start" &&
+        "params" in frame &&
+        typeof frame.params === "object" &&
+        frame.params !== null &&
+        "input" in frame.params &&
+        Array.isArray(frame.params.input)
+      ) {
+        const input: ReadonlyArray<unknown> = frame.params.input;
+        const lastPart = input.at(-1);
+        if (
+          typeof lastPart === "object" &&
+          lastPart !== null &&
+          "type" in lastPart &&
+          lastPart.type === "text" &&
+          "text" in lastPart &&
+          lastPart.text === instructions
+        ) {
+          return entry;
+        }
+        return {
+          ...entry,
+          frame: {
+            ...frame,
+            params: {
+              ...frame.params,
+              input: [{ type: "text", text: instructions }, ...input.slice(1)],
+            },
+          },
+        };
       }
       if (
         "method" in frame &&

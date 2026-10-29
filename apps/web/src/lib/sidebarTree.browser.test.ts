@@ -78,6 +78,8 @@ describe("sidebar keyboard navigation", () => {
         tree.root.querySelector('[data-sidebar-parent="project"]')?.getAttribute("aria-level"),
       ).toBe("2"),
     );
+    const nested = tree.row("owned", "thread");
+    await vi.waitFor(() => expect(nested.getAttribute("aria-level")).toBe("3"));
     press(group, "ArrowRight");
     const child = document.activeElement as HTMLElement;
     expect(child.dataset.sidebarRow).toBe("thread");

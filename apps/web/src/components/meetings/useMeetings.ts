@@ -6,7 +6,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { toastManager } from "~/components/ui/toast";
-import { useProjects, useThreadShells } from "~/state/entities";
+import { useProjects, useQuietThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -23,7 +23,7 @@ export function useMeetings() {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
-  const threadShells = useThreadShells();
+  const threadShells = useQuietThreadShells();
   const askCommand = useAtomCommand(serverEnvironment.askMeetings, { reportFailure: false });
   const [asking, setAsking] = useState(false);
 

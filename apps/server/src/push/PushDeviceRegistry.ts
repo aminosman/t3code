@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 
@@ -68,6 +69,10 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const textDecoder = new TextDecoder();
   const textEncoder = new TextEncoder();
+  // Every change reads the whole registry and writes it back; two at once
+  // (a launch registering while APNs drops a token) would lose one.
+  const changes = yield* Semaphore.make(1);
+  const oneAtATime = <A, E, R>(effect: Effect.Effect<A, E, R>) => changes.withPermits(1)(effect);
 
   const readAll = Effect.gen(function* () {
     const stored = yield* secrets
@@ -127,7 +132,7 @@ const make = Effect.gen(function* () {
     ];
     yield* writeAll(next);
     return next;
-  });
+  }, oneAtATime);
 
   const unregister: PushDeviceRegistry["Service"]["unregister"] = Effect.fn(
     "PushDeviceRegistry.unregister",
@@ -146,7 +151,7 @@ const make = Effect.gen(function* () {
     if (next.length !== devices.length) {
       yield* writeAll(next);
     }
-  });
+  }, oneAtATime);
 
   const forget: PushDeviceRegistry["Service"]["forget"] = Effect.fn("PushDeviceRegistry.forget")(
     function* (deviceToken) {
@@ -157,6 +162,7 @@ const make = Effect.gen(function* () {
         yield* writeAll(next);
       }
     },
+    oneAtATime,
   );
 
   return PushDeviceRegistry.of({ list, register, unregister, forget });

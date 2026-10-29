@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadShellFixture } from "../../test-fixtures";
-import { buildThreadListV2Items } from "./threadListV2";
+import { buildThreadListV2Items, getThreadListV2MoveAvailability } from "./threadListV2";
 
 const environmentId = EnvironmentId.make("environment-1");
 const NOW = "2026-10-07T12:00:00.000Z";
@@ -91,5 +91,39 @@ describe("buildThreadListV2Items — Roost sorting and nesting", () => {
     expect(folded.items[0]?.ownedChildCount).toBe(1);
     const opened = buildThreadListV2Items({ ...base, ownedExpandedByThreadId: { owner: true } });
     expect(opened.items.map((item) => item.thread.id)).toEqual(["owner", "child"]);
+  });
+
+  it("offers Move up and down only in the user's own order, and only to top-level threads", () => {
+    const remote = EnvironmentId.make("environment-2");
+    const threads = [
+      thread("first", { activeOrderKey: "a" }),
+      thread("second", { activeOrderKey: "b" }),
+      thread("child", { ...ownedBy("first"), activeOrderKey: "c" }),
+      thread("delegated", {
+        activeOrderKey: "d",
+        delegatedFrom: { environmentId: remote, threadId: ThreadId.make("parent"), title: "p" },
+      }),
+      makeThreadShellFixture({
+        environmentId: remote,
+        id: ThreadId.make("parent"),
+        settledOverride: "settled",
+      }),
+    ];
+    const availability = (sortOrder: "manual" | "updated_at" | "created_at") =>
+      getThreadListV2MoveAvailability({
+        threads,
+        sortOrder,
+        workingShelfEnabled: false,
+        now: NOW,
+        pinReorderEnvironmentIds: new Set([environmentId]),
+        activeReorderEnvironmentIds: new Set([environmentId]),
+      });
+    const manual = availability("manual");
+    expect(manual?.get(`${environmentId}:first`)).toEqual({ canMoveUp: false, canMoveDown: true });
+    expect(manual?.get(`${environmentId}:second`)).toEqual({ canMoveUp: true, canMoveDown: false });
+    expect(manual?.has(`${environmentId}:child`)).toBe(false);
+    expect(manual?.has(`${environmentId}:delegated`)).toBe(false);
+    expect(availability("updated_at")).toBeUndefined();
+    expect(availability("created_at")).toBeUndefined();
   });
 });

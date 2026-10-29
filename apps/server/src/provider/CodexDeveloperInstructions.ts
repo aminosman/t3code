@@ -1,5 +1,5 @@
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildRuntimeInstructionSections } from "@t3tools/provider-core/server/runtimeInstructions";
 
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
@@ -51,10 +51,12 @@ export function buildCodexAdditionalContext(
         { kind: "application" as const, value: section },
       ]),
     ),
-    t3_code_runtime: {
-      kind: "application",
-      value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
-    },
+    ...Object.fromEntries(
+      buildRuntimeInstructionSections({ harness: "Codex", ...runtime }).map((section, index) => [
+        `t3_code_runtime_${String(index + 1).padStart(2, "0")}`,
+        { kind: "application" as const, value: section },
+      ]),
+    ),
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
   };
 }

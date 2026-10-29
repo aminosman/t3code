@@ -11,6 +11,7 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
+import { McpConnectionUpsertInput } from "./mcpConnections.ts";
 import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
@@ -71,11 +72,21 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const decodeMcpConnectionUpsert = Schema.decodeUnknownSync(McpConnectionUpsertInput);
 
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  // A stdio connection is a host command, held to the same bar as project scripts.
+  if (method === WS_METHODS.mcpConnectionsUpsert && input !== undefined) {
+    return decodeMcpConnectionUpsert(input).config.transport.type === "stdio"
+      ? [AuthOrchestrationOperateScope, AuthSettingsWriteScope]
+      : [AuthOrchestrationOperateScope];
+  }
+  if (method === WS_METHODS.mcpConnectionsTest) {
+    return [AuthOrchestrationOperateScope, AuthSettingsWriteScope];
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

@@ -7,6 +7,7 @@ import * as Stream from "effect/Stream";
 
 import {
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -121,7 +122,7 @@ describe("ClaudeAccountRouter", () => {
   it.effect("pairs grouped Claude instances with their usage windows", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      const candidates = yield* router.listCandidates(undefined);
+      const candidates = yield* router.listCandidates(null);
 
       expect(candidates).toHaveLength(2);
       expect(candidates.map((candidate) => candidate.instanceId)).toEqual(["a", "b"]);
@@ -146,7 +147,7 @@ describe("ClaudeAccountRouter", () => {
   it.effect("ignores ungrouped instances and other drivers", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      expect(yield* router.listCandidates(undefined)).toHaveLength(0);
+      expect(yield* router.listCandidates(null)).toHaveLength(0);
     }).pipe(
       Effect.provide(
         harness({
@@ -160,7 +161,7 @@ describe("ClaudeAccountRouter", () => {
   it.effect("routes the next turn to the freshest sibling", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-opus-5");
+      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-opus-5", null);
 
       expect(decision).toMatchObject({ _tag: "Switch", from: "a", to: "b" });
     }).pipe(
@@ -176,10 +177,41 @@ describe("ClaudeAccountRouter", () => {
     ),
   );
 
+  it.effect("never routes to a sibling the thread's project switched off", () =>
+    Effect.gen(function* () {
+      const router = yield* ClaudeAccountRouter;
+      const a = ProviderInstanceId.make("a");
+      expect(yield* router.resolve(a, "claude-opus-5", ProjectId.make("p"))).toMatchObject({
+        _tag: "Stay",
+      });
+      expect(yield* router.resolve(a, "claude-opus-5", null)).toMatchObject({
+        _tag: "Switch",
+        to: "b",
+      });
+    }).pipe(
+      Effect.provide(
+        harness({
+          settings: {
+            ...settingsWith({ a: { accountGroup: "max" }, b: { accountGroup: "max" } }),
+            projectSettingsOverrides: {
+              [ProjectId.make("p")]: {
+                providerInstances: { [ProviderInstanceId.make("b")]: { enabled: false } },
+              },
+            },
+          } as ServerSettings,
+          instances: [
+            fakeInstance({ id: "a", usageLimits: sessionLimits(91, 20) }),
+            fakeInstance({ id: "b", usageLimits: sessionLimits(4, 30) }),
+          ],
+        }),
+      ),
+    ),
+  );
+
   it.effect("stays put while the current account is under threshold", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-opus-5");
+      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-opus-5", null);
 
       expect(decision).toMatchObject({ _tag: "Stay", reason: "preferred" });
     }).pipe(
@@ -199,7 +231,7 @@ describe("ClaudeAccountRouter", () => {
   it.effect("stays put when settings cannot be read", () =>
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
-      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-opus-5");
+      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-opus-5", null);
 
       expect(decision).toMatchObject({ _tag: "Stay", instanceId: "a" });
     }).pipe(
@@ -245,7 +277,11 @@ describe("ClaudeAccountRouter", () => {
     Effect.gen(function* () {
       const router = yield* ClaudeAccountRouter;
       // Snapshot says both are fine; the direct read says a's Fable is gone.
-      const decision = yield* router.resolve(ProviderInstanceId.make("a"), "claude-fable-5-1[1m]");
+      const decision = yield* router.resolve(
+        ProviderInstanceId.make("a"),
+        "claude-fable-5-1[1m]",
+        null,
+      );
       expect(decision).toMatchObject({ _tag: "Switch", from: "a", to: "b", reason: "blocked" });
     }).pipe(
       Effect.provide(
@@ -296,14 +332,14 @@ describe("ClaudeAccountRouter.noteLimited", () => {
       const a = ProviderInstanceId.make("a");
       yield* router.noteLimited(a, "claude-opus-5-5", yield* inAnHour);
 
-      expect(yield* router.resolve(a, "claude-opus-5-5")).toMatchObject({
+      expect(yield* router.resolve(a, "claude-opus-5-5", null)).toMatchObject({
         _tag: "Switch",
         from: "a",
         to: "b",
         reason: "blocked",
       });
       // Another model on the same account is not refused by this note.
-      expect(yield* router.resolve(a, "claude-fable-5-1")).toMatchObject({
+      expect(yield* router.resolve(a, "claude-fable-5-1", null)).toMatchObject({
         _tag: "Stay",
         reason: "preferred",
       });
@@ -318,7 +354,9 @@ describe("ClaudeAccountRouter.noteLimited", () => {
       // No reset named: a short cooldown still applies.
       yield* router.noteLimited(ProviderInstanceId.make("b"), "claude-opus-5-5", null);
 
-      expect(yield* router.resolve(a, "claude-opus-5-5")).toMatchObject({ _tag: "Exhausted" });
+      expect(yield* router.resolve(a, "claude-opus-5-5", null)).toMatchObject({
+        _tag: "Exhausted",
+      });
     }).pipe(Effect.provide(twoFresh())),
   );
 
@@ -328,7 +366,7 @@ describe("ClaudeAccountRouter.noteLimited", () => {
       const a = ProviderInstanceId.make("a");
       yield* router.noteLimited(a, "claude-opus-5-5", yield* inAnHour);
 
-      expect(yield* router.resolve(a, "claude-opus-5-5")).toMatchObject({
+      expect(yield* router.resolve(a, "claude-opus-5-5", null)).toMatchObject({
         _tag: "Switch",
         to: "b",
       });

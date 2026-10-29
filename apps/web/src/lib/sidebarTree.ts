@@ -85,16 +85,31 @@ export function installSidebarTree(root: HTMLElement) {
     focusedId = selected?.dataset.sidebarRow;
     tabStop = selected;
     setTabIndex(root, selected ? -1 : 0);
+    const byId = new Map(rows.map((row) => [row.dataset.sidebarRow, row]));
+    const levels = new Map<HTMLElement, number>();
+    const levelOf = (row: HTMLElement, depth = 0): number => {
+      const known = levels.get(row);
+      if (known !== undefined) return known;
+      const parentId = row.dataset.sidebarParent;
+      const parent = parentId ? byId.get(parentId) : undefined;
+      // A parent outside the rendered rows still nests its child one level.
+      const level = !parentId
+        ? 1
+        : parent && depth < rows.length
+          ? levelOf(parent, depth + 1) + 1
+          : 2;
+      levels.set(row, level);
+      return level;
+    };
     const siblings = new Map<string, HTMLElement[]>();
     for (const row of rows) {
       const parent = row.dataset.sidebarParent ?? "";
       const group = siblings.get(parent) ?? [];
       group.push(row);
       siblings.set(parent, group);
-      setAttribute(row, "aria-level", parent ? "2" : "1");
+      setAttribute(row, "aria-level", String(levelOf(row)));
       setTabIndex(row, row === selected ? 0 : -1);
     }
-    const byId = new Map(rows.map((row) => [row.dataset.sidebarRow, row]));
     for (const control of ownTabIndex.keys()) if (!control.isConnected) ownTabIndex.delete(control);
     for (const control of root.querySelectorAll<HTMLElement>(CONTROL)) {
       if (control.matches(ROW) || control.matches(TEXT_ENTRY)) continue;

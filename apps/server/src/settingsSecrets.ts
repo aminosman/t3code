@@ -22,6 +22,7 @@ import {
 } from "./sourceControl/sourceControlHostSecrets.ts";
 
 export const SECRET_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
+export const PUSH_APNS_AUTH_KEY_SECRET_NAME = "push-apns-auth-key";
 
 const providerSecretFields = new Map([
   ["codex", secretSettingsFields(CodexSettings)],
@@ -48,6 +49,33 @@ export interface SettingsSecret {
 }
 
 type SecretValue = Pick<SettingsSecret, "value" | "redacted">;
+
+/** Every project's sign-in and the client registration for one MCP connection. */
+export const mcpConnectionAuthSecretName = (id: string) => `mcp-connection-auth-${encode(id)}`;
+
+/**
+ * Sign-ins belong to the server they were made against, so a changed URL, auth
+ * mode or transport, or a removed connection, drops them with the settings write.
+ */
+export function staleMcpConnectionAuthSecretNames(
+  current: ServerSettings,
+  next: ServerSettings,
+): ReadonlyArray<string> {
+  const stale: Array<string> = [];
+  const nextConnections = new Map(Object.entries(next.mcpConnections));
+  for (const [id, previous] of Object.entries(current.mcpConnections)) {
+    const updated = nextConnections.get(id);
+    const kept =
+      updated !== undefined &&
+      (previous.transport.type === "stdio"
+        ? updated.transport.type === "stdio"
+        : updated.transport.type === "http" &&
+          updated.transport.url === previous.transport.url &&
+          updated.transport.auth === previous.transport.auth);
+    if (!kept) stale.push(mcpConnectionAuthSecretName(id));
+  }
+  return stale;
+}
 
 export function mapSettingsSecrets(
   settings: ServerSettings,
@@ -189,7 +217,7 @@ export function mapSettingsSecrets(
   };
 
   const pushSecret = map({
-    secretName: "push-apns-auth-key",
+    secretName: PUSH_APNS_AUTH_KEY_SECRET_NAME,
     kind: "field",
     value: settings.push.authKey,
     redacted: settings.push.authKey.length === 0 && settings.push.authKeyRedacted === true,

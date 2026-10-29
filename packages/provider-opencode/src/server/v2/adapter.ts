@@ -363,6 +363,21 @@ export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId:
   return `t3-code-${Hex.encode(digest).slice(0, 16)}`;
 });
 
+// OpenCode applies the same limit to user connection names. Hash the whole pair so
+// two long connection ids or two long thread ids cannot collide.
+export const mcpConnectionServerName = Effect.fn("mcpConnectionServerName")(function* (
+  connectionId: string,
+  threadId: string,
+) {
+  const raw = `${connectionId}-${threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
+  if (raw.length <= 64) return raw;
+  const crypto = yield* Crypto.Crypto;
+  const digest = yield* crypto
+    .digest("SHA-256", new TextEncoder().encode(`${connectionId}:${threadId}`))
+    .pipe(Effect.orDie);
+  return `${raw.slice(0, 47)}-${Hex.encode(digest).slice(0, 16)}`;
+});
+
 // Last match wins: deny all threads' T3 servers, then allow only this thread's.
 const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
   mcpServerName === null
@@ -3063,17 +3078,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         if (mcpAvailable) state.mcp = wanted;
       }
-      // User MCP connections follow the same per-thread registration; a
-      // changed set (a new sign-in) is re-registered on the next turn.
+      // User MCP connections follow the same per-thread registration and are
+      // re-added every turn, since idle eviction drops them too; a changed set
+      // (a new sign-in) replaces the old one.
       const wantedConnections =
         wanted === undefined
           ? []
-          : (mcpSession?.connections ?? []).map((connection) => ({
-              name: `${connection.id}-${turnInput.threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`,
-              directory,
-              credential: wanted.credential,
-              endpoint: connection.endpoint,
-            }));
+          : yield* Effect.forEach(mcpSession?.connections ?? [], (connection) =>
+              Effect.map(mcpConnectionServerName(connection.id, turnInput.threadId), (name) => ({
+                name,
+                directory,
+                credential: wanted.credential,
+                endpoint: connection.endpoint,
+              })),
+            ).pipe(Effect.provideService(Crypto.Crypto, crypto));
       const sameConnection = (
         left: ThreadState["mcpConnections"][number],
         right: ThreadState["mcpConnections"][number],
@@ -3090,7 +3108,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.mcpConnections = state.mcpConnections.filter((current) => !stale.includes(current));
       }
       for (const next of wantedConnections) {
-        if (state.mcpConnections.some((current) => sameConnection(current, next))) continue;
         const added = yield* client.mcp
           .add({
             server: next.name,
@@ -3111,7 +3128,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               ),
             ),
           );
-        if (added) state.mcpConnections = [...state.mcpConnections, next];
+        if (added && !state.mcpConnections.some((current) => sameConnection(current, next))) {
+          state.mcpConnections = [...state.mcpConnections, next];
+        }
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),

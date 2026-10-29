@@ -731,6 +731,22 @@ export function LegacyFeaturesSection() {
   return (
     <SettingsSection id="legacy-features" title="Legacy">
       <SettingsRow
+        {...searchableSetting("legacy-sidebar")}
+        description="Use the classic project sidebar with sections, Meetings, and nested owned threads. Turns off the boring sidebar."
+        control={
+          <Switch
+            checked={settings.legacySidebarEnabled}
+            onCheckedChange={(checked) =>
+              updateSettings({
+                legacySidebarEnabled: Boolean(checked),
+                ...(checked ? { boringSidebarEnabled: false } : {}),
+              })
+            }
+            aria-label="Sidebar (legacy)"
+          />
+        }
+      />
+      <SettingsRow
         {...searchableSetting("legacy-plan-mode")}
         description="Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode."
         control={

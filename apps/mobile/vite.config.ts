@@ -7,6 +7,8 @@ const reactTests = [
   "src/features/tui/useTuiVoiceNote.test.tsx",
   "src/features/voice/VoiceOracleScreen.test.tsx",
   "src/features/home/HomePager.test.tsx",
+  "src/features/home/HomeRouteScreen.test.tsx",
+  "src/components/RenderErrorBoundary.test.tsx",
   "src/features/tui/useTuiScreenGesture.test.tsx",
   "src/features/files/useFileTreeEntries.test.tsx",
   "src/features/projects/AddProjectScreen.test.ts",

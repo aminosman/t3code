@@ -1228,20 +1228,24 @@ describe("extractMcpToolCallIdentity", () => {
       server: "oneleet",
       tool: "list_controls",
     });
-    // A server that was not injected never brands a call.
-    expect(flattened("mcp__posthog__query")).toBeUndefined();
-    // Without the option the same titles are not T3's inventory either.
-    expect(
+    // A fully qualified name is any server's MCP call; only the loose forms need the option.
+    expect(flattened("mcp__posthog__query")).toEqual({ server: "posthog", tool: "query" });
+    expect(flattened("posthog_query")).toBeUndefined();
+    const plain = (title: string) =>
       extractMcpToolCallIdentity(
         toolCallFromUpdate({
           sessionUpdate: "tool_call",
-          toolCallId: "call-plain",
+          toolCallId: `call-plain-${title}`,
           kind: "other",
-          title: "mcp__oneleet__list_controls",
+          title,
           status: "in_progress",
         }),
-      ),
-    ).toBeUndefined();
+      );
+    expect(plain("mcp__oneleet__list_controls")).toEqual({
+      server: "oneleet",
+      tool: "list_controls",
+    });
+    expect(plain("oneleet_list_controls")).toBeUndefined();
     // An explicit origin assertion wins over the title.
     expect(
       extractMcpToolCallIdentity(

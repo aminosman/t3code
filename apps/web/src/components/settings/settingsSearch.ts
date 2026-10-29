@@ -443,7 +443,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "boring-sidebar",
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",
-    searchTerms: ["beta folders project tree legacy old classic sidebar"],
+    searchTerms: ["beta folders project tree sidebar"],
   },
   {
     id: "boring-sidebar-multiline",
@@ -728,6 +728,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "open-source-licenses",
     title: "Open source licenses",
     to: "/settings/about",
+  },
+  {
+    id: "legacy-sidebar",
+    title: "Sidebar (legacy)",
+    to: "/settings/labs",
+    searchTerms: ["classic old project sections nested owned threads meetings"],
   },
   {
     id: "legacy-plan-mode",

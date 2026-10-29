@@ -577,7 +577,6 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 });
 
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
-  readonly projectHeading?: string;
   readonly ownedDepth?: number;
   readonly ownedChildCount?: number;
   readonly ownedExpanded?: boolean;
@@ -1064,11 +1063,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (
     <>
-      {props.projectHeading ? (
-        <Text className="py-2 text-sm font-t3-bold text-foreground-muted">
-          {props.projectHeading}
-        </Text>
-      ) : null}
       <View className="flex-row items-start gap-2">
         {props.project ? (
           <View className="justify-center" style={{ height: titleLineHeight }}>

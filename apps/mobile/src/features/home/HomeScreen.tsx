@@ -68,12 +68,18 @@ import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import {
-  threadListV2ListItemsAreEqual,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
-  type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
+import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
+import {
+  LegacyListDecoration,
+  LegacyPendingRow,
+  LegacyThreadRow,
+  useLegacyThreadList,
+} from "../threads/legacy-thread-list";
+import { legacyListItemsAreEqual, type LegacyListItem } from "../threads/legacyThreadList";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
@@ -325,7 +331,7 @@ export function HomeScreen(props: HomeScreenProps) {
     });
   }, [searchMode, insets.top, restoredOffset]);
   const swipeRowActivation = createSwipeRowActivation();
-  const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
+  const activateVisibleRows = (rows: ReadonlyArray<LegacyListItem>) => {
     const state = listRef.current?.getState();
     if (state === undefined || !(state.end >= 0)) return;
     swipeRowActivation.activate(
@@ -441,9 +447,12 @@ export function HomeScreen(props: HomeScreenProps) {
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder();
+  const legacyEnabled = !useThreadListV2Enabled();
+  const ThreadRow = legacyEnabled ? LegacyThreadRow : ThreadListV2Row;
+  const PendingRow = legacyEnabled ? LegacyPendingRow : ThreadListV2PendingRow;
   const {
     layout: threadListV2Layout,
-    items: threadListV2Items,
+    items: currentThreadListItems,
     contentOnlyThreadKeys,
     olderSettledShelf,
     toggleOwnedThreads,
@@ -462,12 +471,18 @@ export function HomeScreen(props: HomeScreenProps) {
     settledLimit: settledVisibleCount,
     now,
     pendingOrder,
-    shelfPreferencesLoaded,
-    workingShelfEnabled,
-    workingShelfExpanded,
-    snoozedShelfExpanded,
-    settledShelfExpanded,
+    shelfPreferencesLoaded: legacyEnabled || shelfPreferencesLoaded,
+    workingShelfEnabled: legacyEnabled ? false : workingShelfEnabled,
+    workingShelfExpanded: legacyEnabled || workingShelfExpanded,
+    snoozedShelfExpanded: legacyEnabled || snoozedShelfExpanded,
+    settledShelfExpanded: legacyEnabled || settledShelfExpanded,
     selectedThreadKey,
+  });
+  const { items: threadListV2Items, onGroupAction } = useLegacyThreadList({
+    enabled: legacyEnabled,
+    items: currentThreadListItems,
+    scopes: projectScopes,
+    searchQuery: props.searchQuery,
   });
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
@@ -490,14 +505,24 @@ export function HomeScreen(props: HomeScreenProps) {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
   }, [activateVisibleRows, swipeEnabled, threadListV2Items]);
 
-  const renderV2Item = ({ item }: { readonly item: ThreadListV2ListItem }) => {
+  const renderV2Item = ({ item }: { readonly item: LegacyListItem }) => {
+    if (item.type === "legacy-group" || item.type === "legacy-show-more") {
+      return (
+        <LegacyListDecoration
+          item={item}
+          pane={primaryColumn ? "sidebar" : "screen"}
+          onGroupAction={onGroupAction}
+          onNewThread={props.onNewThreadInProject}
+        />
+      );
+    }
     if (item.type === "v2-pending") {
       const pendingScopeKey = scopedProjectKey(
         item.pendingTask.environmentId,
         item.pendingTask.projectId,
       );
       return (
-        <ThreadListV2PendingRow
+        <PendingRow
           pane={primaryColumn ? "sidebar" : "screen"}
           pendingTask={item.pendingTask}
           selected={
@@ -559,13 +584,12 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     const thread = item.item.thread;
     return (
-      <ThreadListV2Row
+      <ThreadRow
         pane={primaryColumn ? "sidebar" : "screen"}
         selected={scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey}
         fullSwipeWidth={fullSwipeWidth}
         onNewThreadOnBranch={props.onNewThreadOnBranch}
         thread={thread}
-        projectHeading={item.item.projectHeading}
         ownedDepth={item.item.ownedDepth}
         ownedChildCount={item.item.ownedChildCount}
         ownedExpanded={item.item.ownedExpanded}
@@ -633,7 +657,7 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
   };
-  const v2KeyExtractor = (item: ThreadListV2ListItem) => item.key;
+  const v2KeyExtractor = (item: LegacyListItem) => item.key;
 
   // extraData changes invalidate every visible row; put the minute clock on items to limit updates.
   const v2ExtraData = {
@@ -646,6 +670,7 @@ export function HomeScreen(props: HomeScreenProps) {
     selectedThreadKey,
     threadSearchMatchByKey,
     workingShelfEnabled,
+    legacyEnabled,
   };
 
   const hasAnyThreads =
@@ -790,14 +815,15 @@ export function HomeScreen(props: HomeScreenProps) {
               renderItem={renderV2Item}
               keyExtractor={v2KeyExtractor}
               getItemType={(item) => item.type}
-              itemsAreEqual={threadListV2ListItemsAreEqual}
+              itemsAreEqual={legacyListItemsAreEqual}
               estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
               drawDistance={THREAD_LIST_V2_DRAW_DISTANCE}
               recycleItems
               extraData={v2ExtraData}
               ListHeaderComponent={v2ListHeader}
               ListFooterComponent={
-                settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                (legacyEnabled || settledShelfExpanded) &&
+                threadListV2Layout.hiddenSettledCount > 0 ? (
                   <ThreadListV2ShowMoreRow
                     hiddenCount={threadListV2Layout.hiddenSettledCount}
                     {...(olderSettledShelf.loading

@@ -5,6 +5,10 @@ import { ScrollView, View } from "react-native";
 import { AppText as Text } from "./ui/AppText";
 import { Button } from "./ui/Button";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import {
+  recordLocalDiagnostic,
+  recordLocalDiagnosticError,
+} from "../features/diagnostics/localDiagnostics";
 
 interface RenderErrorBoundaryProps {
   readonly children: ReactNode;
@@ -62,7 +66,9 @@ export class RenderErrorBoundary extends Component<
   }
 
   override componentDidCatch(error: unknown, info: { componentStack?: string }) {
-    // A caught render error never reaches Observe's global handler.
+    // A caught render error never reaches Observe's global handler or the on-device log's.
+    recordLocalDiagnosticError("app.render_error", error);
+    recordLocalDiagnostic("app.render_component_stack", { componentStack: info.componentStack });
     Observe.reportError(error);
     this.setState({ componentStack: info.componentStack });
   }

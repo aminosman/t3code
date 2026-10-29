@@ -617,6 +617,9 @@ const make = Effect.fn("HistorySearch.make")(function* (options: HistorySearchOp
     yield* sql`UPDATE roost_history_docs SET indexed = 1 WHERE indexed = 0`;
   });
 
+  // The folder is read before the transaction opens, so the write lock is
+  // held only for the rows that changed and not for a scan of every meeting.
+  // The catch-up lock keeps the known versions from moving in between.
   const catchUpMeetings = Effect.gen(function* () {
     const onDisk = yield* Meetings.scan(meetingsDir).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -634,47 +637,56 @@ const make = Effect.fn("HistorySearch.make")(function* (options: HistorySearchOp
         .filter((m) => knownVersion.has(m.id) && knownVersion.get(m.id) !== m.version)
         .map((m) => m.id),
     ];
-    for (const meetingId of stale) {
-      yield* sql`
-          UPDATE roost_history_docs SET indexed = -1
-          WHERE kind = 'meeting' AND doc_key LIKE ${`${meetingId}#%`}
-        `;
-      yield* sql`DELETE FROM roost_history_meetings WHERE meeting_id = ${meetingId}`;
-    }
-    if (stale.length > 0) yield* dropMarked;
-
+    const changed: Array<{ readonly meeting: Meetings.Meeting; readonly version: string }> = [];
     for (const found of onDisk) {
       if (knownVersion.get(found.id) === found.version) continue;
       const meeting = yield* Meetings.load(meetingsDir, found.id).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-      if (meeting === null) continue;
-      yield* sql`
-          INSERT INTO roost_history_meetings (
-            meeting_id, version, title, started_at, duration_seconds,
-            project_id, project_title, people
-          ) VALUES (
-            ${meeting.id}, ${found.version}, ${meeting.title}, ${meeting.startedAt},
-            ${meeting.durationSeconds}, ${meeting.projectId}, ${meeting.projectTitle},
-            ${meeting.people.join("\n")}
-          )
-        `;
-      for (const [index, doc] of Meetings.documents(meeting).entries()) {
-        const inserted = yield* sql<{ readonly id: number }>`
-            INSERT INTO roost_history_docs (kind, doc_key, version, indexed)
-            VALUES ('meeting', ${`${meeting.id}#${index}`}, ${found.version}, 1)
-            RETURNING id AS "id"
-          `;
-        yield* sql`
-            INSERT INTO roost_history_search (rowid, text, source, container_id, ref, role, at)
-            VALUES (
-              ${inserted[0]!.id}, ${doc.text}, 'meeting', ${meeting.id},
-              ${doc.at}, ${doc.role}, ${meeting.startedAt}
-            )
-          `;
-      }
+      if (meeting !== null) changed.push({ meeting, version: found.version });
     }
+    if (stale.length === 0 && changed.length === 0) return;
+
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        for (const meetingId of stale) {
+          yield* sql`
+              UPDATE roost_history_docs SET indexed = -1
+              WHERE kind = 'meeting' AND doc_key LIKE ${`${meetingId}#%`}
+            `;
+          yield* sql`DELETE FROM roost_history_meetings WHERE meeting_id = ${meetingId}`;
+        }
+        if (stale.length > 0) yield* dropMarked;
+
+        for (const { meeting, version } of changed) {
+          yield* sql`
+              INSERT INTO roost_history_meetings (
+                meeting_id, version, title, started_at, duration_seconds,
+                project_id, project_title, people
+              ) VALUES (
+                ${meeting.id}, ${version}, ${meeting.title}, ${meeting.startedAt},
+                ${meeting.durationSeconds}, ${meeting.projectId}, ${meeting.projectTitle},
+                ${meeting.people.join("\n")}
+              )
+            `;
+          for (const [index, doc] of Meetings.documents(meeting).entries()) {
+            const inserted = yield* sql<{ readonly id: number }>`
+                INSERT INTO roost_history_docs (kind, doc_key, version, indexed)
+                VALUES ('meeting', ${`${meeting.id}#${index}`}, ${version}, 1)
+                RETURNING id AS "id"
+              `;
+            yield* sql`
+                INSERT INTO roost_history_search (rowid, text, source, container_id, ref, role, at)
+                VALUES (
+                  ${inserted[0]!.id}, ${doc.text}, 'meeting', ${meeting.id},
+                  ${doc.at}, ${doc.role}, ${meeting.startedAt}
+                )
+              `;
+          }
+        }
+      }),
+    );
   });
 
   // One catch-up at a time: the launch build, the follower and a search can
@@ -684,7 +696,7 @@ const make = Effect.fn("HistorySearch.make")(function* (options: HistorySearchOp
     Effect.gen(function* () {
       if ((yield* Ref.get(lastSync)) === null) yield* ensureSchema;
       yield* sql.withTransaction(catchUpThreads);
-      yield* sql.withTransaction(catchUpMeetings);
+      yield* catchUpMeetings;
       yield* Ref.set(lastSync, yield* Clock.currentTimeMillis);
     }),
   );
@@ -1525,7 +1537,9 @@ const make = Effect.fn("HistorySearch.make")(function* (options: HistorySearchOp
   });
   // LiveNotes' footer on summary.md, for a meeting that ended minutes ago:
   // a final pass whose notes failed must not read as transcribing forever.
-  const LIVE_NOTES_FOOTER = "live. updating as the meeting goes";
+  // It must match tui's MeetingNotes.swift byte for byte; it is never shown.
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- Matches tui's written footer.
+  const LIVE_NOTES_FOOTER = "live \u2014 updating as the meeting goes";
   const finalNotesPending = Effect.fn("HistorySearch.finalNotesPending")(
     function* (id: string) {
       const ended = yield* endedAgo(id);

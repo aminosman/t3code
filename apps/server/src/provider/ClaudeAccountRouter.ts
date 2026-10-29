@@ -4,7 +4,9 @@
 import {
   ClaudeSettings,
   ProviderDriverKind,
+  type ProjectId,
   type ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
   type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -83,18 +85,23 @@ export function snapshotUsageToWindows(
 export class ClaudeAccountRouter extends Context.Service<
   ClaudeAccountRouter,
   {
-    /** Every grouped Claude instance paired with its settings and usage. */
+    /**
+     * Every grouped Claude instance paired with its settings and usage, enabled
+     * only where `projectId` (or, for `null`, the environment) enables it.
+     */
     readonly listCandidates: (
-      requestedModel: string | undefined,
+      projectId: ProjectId | null,
     ) => Effect.Effect<ReadonlyArray<ClaudeAccountCandidate>>;
     /**
      * Which instance should serve the next turn on `requestedModel`. Falls
      * back to staying put whenever settings or usage cannot be read: a routing
-     * layer must never be the reason a turn does not run.
+     * layer must never be the reason a turn does not run. Reads cached usage
+     * only, so it is safe under a dispatch lock.
      */
     readonly resolve: (
       requestedInstanceId: ProviderInstanceId,
       requestedModel: string | undefined,
+      projectId: ProjectId | null,
     ) => Effect.Effect<ClaudeRoutingDecision>;
     /**
      * The provider refused a turn on `instanceId` for `model` on its limit.
@@ -137,7 +144,7 @@ const makeClaudeAccountRouter = Effect.gen(function* () {
   });
 
   const listCandidates = Effect.fn("ClaudeAccountRouter.listCandidates")(
-    function* (_requestedModel: string | undefined) {
+    function* (projectId: ProjectId | null) {
       const settings = yield* settingsService.getSettings;
       const configMap = deriveProviderInstanceConfigMap(settings);
       const instances = yield* registry.listInstances;
@@ -171,7 +178,9 @@ const makeClaudeAccountRouter = Effect.gen(function* () {
           instanceId: instance.instanceId,
           accountGroup: config.accountGroup,
           switchAtPercent: parseSwitchAtPercent(config.switchAtPercent),
-          enabled: instance.enabled,
+          enabled:
+            instance.enabled &&
+            resolveProjectProviderInstanceEnabled(settings, projectId, instance.instanceId),
           windows: marks.length === 0 ? read : [...(read ?? []), ...marks.map(limitedMarkWindow)],
         });
       }
@@ -181,8 +190,12 @@ const makeClaudeAccountRouter = Effect.gen(function* () {
   );
 
   const resolve = Effect.fn("ClaudeAccountRouter.resolve")(
-    function* (requestedInstanceId: ProviderInstanceId, requestedModel: string | undefined) {
-      const candidates = yield* listCandidates(requestedModel);
+    function* (
+      requestedInstanceId: ProviderInstanceId,
+      requestedModel: string | undefined,
+      projectId: ProjectId | null,
+    ) {
+      const candidates = yield* listCandidates(projectId);
       const nowMs = yield* Clock.currentTimeMillis;
       return selectClaudeAccount({ requestedInstanceId, requestedModel, candidates, nowMs });
     },
@@ -198,6 +211,9 @@ const makeClaudeAccountRouter = Effect.gen(function* () {
         ),
       ),
   );
+
+  // Starts the first usage reads so the first routed message has them.
+  yield* Effect.forkScoped(listCandidates(null));
 
   return { listCandidates, resolve, noteLimited } as const;
 });

@@ -11,6 +11,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as McpConnectionService from "./McpConnectionService.ts";
 import * as McpStdioHost from "./McpStdioHost.ts";
@@ -57,11 +58,11 @@ const fakeHttp = (
 const testLayer = (http: Layer.Layer<HttpClient.HttpClient>) =>
   McpConnectionService.layer.pipe(
     Layer.provideMerge(Layer.mock(McpStdioHost.McpStdioHost)({ stop: () => Effect.void })),
-    Layer.provideMerge(ServerSettings.layerTest({})),
+    Layer.provideMerge(ServerSettings.layer),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
-      ServerSecretStore.layer.pipe(
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-connections-" })),
-      ),
+      Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-connections-" })),
     ),
     Layer.provideMerge(http),
     Layer.provideMerge(NodeServices.layer),
@@ -116,11 +117,11 @@ describe("McpConnectionService", () => {
             ],
           },
         });
+        const envSecret = `mcp-connection-env-${Buffer.from("files").toString("base64url")}-${Buffer.from("API_KEY").toString("base64url")}`;
         const stored = (yield* settings.getSettings).mcpConnections[id]!;
-        expect(stored.transport.type === "stdio" && stored.transport.env).toEqual([
-          { name: "API_KEY", value: "", sensitive: true, valueRedacted: true },
-          { name: "LOG_LEVEL", value: "debug", sensitive: false },
-        ]);
+        expect(
+          Option.map(yield* secrets.get(envSecret), (value) => new TextDecoder().decode(value)),
+        ).toEqual(Option.some("super-secret"));
         const upstream = yield* service.resolveUpstream(id, null);
         expect(upstream.kind === "stdio" && upstream.spec.env.API_KEY).toBe("super-secret");
         expect(upstream.kind === "stdio" && upstream.spec.env.LOG_LEVEL).toBe("debug");
@@ -142,22 +143,22 @@ describe("McpConnectionService", () => {
         ]);
         yield* service.remove(id);
         expect((yield* settings.getSettings).mcpConnections[id]).toBeUndefined();
-        const secretNames = yield* secrets.get(
-          `mcp-connection-env-${Buffer.from("files").toString("base64url")}-${Buffer.from("API_KEY").toString("base64url")}`,
-        );
-        expect(Option.isNone(secretNames)).toBe(true);
+        expect(Option.isNone(yield* secrets.get(envSecret))).toBe(true);
       }).pipe(Effect.provide(testLayer(fakeHttp({}, [])))),
   );
 
   it.effect("keeps API keys per project and only hands connected projects the server", () =>
     Effect.gen(function* () {
       const service = yield* McpConnectionService.McpConnectionService;
+      const settings = yield* ServerSettings.ServerSettingsService;
       const id = McpConnectionId.make("posthog");
-      yield* service.upsert(id, {
-        name: "PostHog",
-        enabled: true,
-        transport: { type: "http", url: "https://mcp.example.com/mcp", auth: "bearer" },
-      });
+      const transport = {
+        type: "http",
+        url: "https://mcp.example.com/mcp",
+        auth: "bearer",
+      } satisfies McpConnection["transport"];
+      const posthog: McpConnection = { name: "PostHog", enabled: true, transport };
+      yield* service.upsert(id, posthog);
       expect(yield* service.serversForProject(project)).toEqual([]);
       yield* service.setBearerToken(id, project, "phx_key");
       expect(yield* service.serversForProject(project)).toEqual([
@@ -176,6 +177,22 @@ describe("McpConnectionService", () => {
         { connectionId: id, projectId: project, state: "connected" },
       ]);
       yield* service.disconnect(id, project);
+      expect(yield* service.statuses).toEqual([]);
+
+      // A raw settings write that keeps the server keeps the key; one that moves it drops it.
+      yield* service.setBearerToken(id, project, "phx_key");
+      yield* settings.updateSettings({ mcpConnections: { [id]: { ...posthog, name: "PH" } } });
+      expect(yield* service.resolveUpstream(id, project)).toMatchObject({
+        authorization: "Bearer phx_key",
+      });
+      yield* settings.updateSettings({
+        mcpConnections: {
+          [id]: { ...posthog, transport: { ...transport, url: "https://evil.example/mcp" } },
+        },
+      });
+      expect((yield* service.resolveUpstream(id, project).pipe(Effect.flip)).reason).toBe(
+        "needs_sign_in",
+      );
       expect(yield* service.statuses).toEqual([]);
     }).pipe(Effect.provide(testLayer(fakeHttp({}, [])))),
   );

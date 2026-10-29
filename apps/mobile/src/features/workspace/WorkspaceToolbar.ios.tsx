@@ -1,6 +1,6 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { Toolbar } from "../../components/ui/Toolbar";
-import { useFocusEffect, useIsFocused } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { isDuoDevice } from "../../lib/device-type";
@@ -30,6 +30,7 @@ export function WorkspaceToolbar(props: {
   readonly sidebar?: boolean;
 }) {
   const workspace = useWorkspaceTabs()!;
+  const navigation = useNavigation();
   const activeNewTask = useActiveNewTask();
   const deviceType = useDeviceType();
   const sidebarTabs = useSidebarWorkspaceTabs();
@@ -187,6 +188,15 @@ export function WorkspaceToolbar(props: {
           {searchButton}
           {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
           {composeButton}
+          {/* The phone pager's dock reaches tui; a split view's thread list has only this. */}
+          {selectedTab === "threads" ? (
+            <Toolbar.Button
+              identifier="workspace-tui"
+              accessibilityLabel="Talk to tui"
+              icon="waveform"
+              onPress={() => navigation.navigate("TuiInbox", undefined)}
+            />
+          ) : null}
           {selectedTab !== "threads" ||
           isDuoDevice(deviceType) ||
           deviceType === "pad" ||

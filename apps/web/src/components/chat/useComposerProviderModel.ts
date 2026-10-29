@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type ProjectId,
   ProviderDriverKind,
+  type ProviderInstanceId,
   type ScopedThreadRef,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -20,6 +21,18 @@ import { getComposerPromptInjectionState, getComposerProviderState } from "./com
 import { resolveComposerProviderSelection } from "../ChatView.logic";
 
 const NO_PROVIDER_MODELS: ServerProvider["models"] = [];
+
+/**
+ * A selection saved on a hidden group member (the server rotated the thread onto it) belongs to the
+ * group's picker entry, so its model and options carry over instead of falling back to defaults.
+ */
+export function selectionOnGroupLead(
+  selection: ModelSelection | null | undefined,
+  leadByInstanceId: ReadonlyMap<ProviderInstanceId, ProviderInstanceId>,
+): ModelSelection | null | undefined {
+  const lead = selection ? leadByInstanceId.get(selection.instanceId) : undefined;
+  return lead === undefined || !selection ? selection : { ...selection, instanceId: lead };
+}
 
 /**
  * The provider instances the composer offers, which one is selected, and the model and options
@@ -72,8 +85,8 @@ export function useComposerProviderModel(
     providers: providerStatuses,
     selectedProvider,
     selectedInstanceId,
-    threadModelSelection,
-    projectModelSelection,
+    threadModelSelection: selectionOnGroupLead(threadModelSelection, grouped.leadByInstanceId),
+    projectModelSelection: selectionOnGroupLead(projectModelSelection, grouped.leadByInstanceId),
     settings,
   });
   const selectedProviderModels = selection.selectedProviderEntry?.models ?? NO_PROVIDER_MODELS;

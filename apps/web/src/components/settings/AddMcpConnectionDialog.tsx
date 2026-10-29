@@ -167,13 +167,14 @@ export function AddMcpConnectionDialog({
       });
       if (result._tag === "Success") {
         close();
-        return;
+      } else {
+        const failure = squashAtomCommandFailure(result);
+        setError(failure instanceof Error ? failure.message : "Could not save the connection.");
       }
-      const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not save the connection.");
-    } finally {
-      setPending(false);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not save the connection.");
     }
+    setPending(false);
   };
 
   const updateEnv = (index: number, patch: Partial<EnvRow>) =>

@@ -11,7 +11,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 function DeviceRow({
@@ -101,7 +101,7 @@ function DeviceRow({
   );
 }
 
-export function DevicesSettingsPanel() {
+export function NotifiedDevicesSettingsSection() {
   const environmentId = usePrimaryEnvironmentId();
   const list = useEnvironmentQuery(
     environmentId === null ? null : serverEnvironment.pushDevices({ environmentId, input: {} }),
@@ -109,52 +109,50 @@ export function DevicesSettingsPanel() {
   const devices = list.data?.devices ?? [];
 
   return (
-    <SettingsPageContainer>
-      <SettingsSection title="Notified devices">
-        <SettingsRow
-          {...searchableSetting("push-devices")}
-          description="Phones this environment sends notifications to. A phone registers itself when Server Notifications is turned on in the mobile app; remove one here to stop notifying it."
-        >
-          <div className="pt-2 pb-1">
-            {environmentId === null ? (
-              <p className="text-sm text-muted-foreground">Connect to an environment first.</p>
-            ) : list.error ? (
-              <p className="text-sm text-destructive">{list.error}</p>
-            ) : list.data === null ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : (
-              <>
-                {list.data.deliveryConfigured ? null : (
-                  <p className="pb-2 text-sm text-muted-foreground">
-                    Push is not set up, so nothing is sent yet. Add the APNs key under{" "}
-                    <Link to="/settings/voice" className="underline">
-                      Voice → Phone notifications
-                    </Link>
-                    .
-                  </p>
-                )}
-                {devices.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No devices. In the mobile app, open Settings → Notifications and turn on Server
-                    Notifications.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-border">
-                    {devices.map((device) => (
-                      <DeviceRow
-                        key={device.installationId}
-                        device={device}
-                        environmentId={environmentId}
-                        onRemoved={list.refresh}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-          </div>
-        </SettingsRow>
-      </SettingsSection>
-    </SettingsPageContainer>
+    <SettingsSection title="Notified devices">
+      <SettingsRow
+        {...searchableSetting("push-devices")}
+        description="Phones this environment sends notifications to. A phone registers itself when Server Notifications is turned on in the mobile app; remove one here to stop notifying it."
+      >
+        <div className="pt-2 pb-1">
+          {environmentId === null ? (
+            <p className="text-sm text-muted-foreground">Connect to an environment first.</p>
+          ) : list.error ? (
+            <p className="text-sm text-destructive">{list.error}</p>
+          ) : list.data === null ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : (
+            <>
+              {list.data.deliveryConfigured ? null : (
+                <p className="pb-2 text-sm text-muted-foreground">
+                  Push is not set up, so nothing is sent yet. Add the APNs key under{" "}
+                  <Link to="/settings/voice" className="underline">
+                    Voice → Phone notifications
+                  </Link>
+                  .
+                </p>
+              )}
+              {devices.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No devices. In the mobile app, open Settings → Notifications and turn on Server
+                  Notifications.
+                </p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {devices.map((device) => (
+                    <DeviceRow
+                      key={device.installationId}
+                      device={device}
+                      environmentId={environmentId}
+                      onRemoved={list.refresh}
+                    />
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      </SettingsRow>
+    </SettingsSection>
   );
 }

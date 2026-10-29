@@ -8,8 +8,10 @@ import {
   ChatImageAttachment,
   CheckpointId,
   EnvironmentId,
+  McpConnectionId,
   MessageId,
   NodeId,
+  ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
@@ -157,7 +159,7 @@ const withInstructions = (
         "skill.list",
       ].includes(String(entry.frame.type)),
   );
-  const after = entries.findIndex(
+  const after = entries.findLastIndex(
     (entry, index) =>
       index < first &&
       entry.type === "emit_inbound" &&
@@ -2409,6 +2411,71 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         reply("session.instructions.entry.put", null),
         ...turn,
         out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
+      ]);
+      for (let index = 0; index < 2; index++) {
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("re-adds user MCP connections each turn beside T3 MCP", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-adapter",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer thread-credential",
+        browserToolsAvailable: false,
+        connections: [
+          {
+            id: McpConnectionId.make("oneleet"),
+            name: "Oneleet",
+            projectId: ProjectId.make("project-opencode2"),
+            endpoint: "http://127.0.0.1:3773/mcp/connections/oneleet",
+          },
+        ],
+      });
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const connection = "oneleet-thread_opencode2-adapter";
+      const add = (name: string, url: string) =>
+        out("mcp.add", {
+          server: name,
+          "location[directory]": WORK,
+          config: {
+            type: "remote",
+            url,
+            headers: { Authorization: "Bearer thread-credential" },
+            oauth: false,
+          },
+        });
+      const adds = [
+        add(server, "http://127.0.0.1:3773/mcp"),
+        reply("mcp.add", null),
+        add(connection, "http://127.0.0.1:3773/mcp/connections/oneleet"),
+        reply("mcp.add", null),
+      ];
+      const turn = [
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ];
+      // Idle Location eviction drops the connection as well as T3's server.
+      const { runtime, thread } = yield* resumed([
+        ...adds,
+        ...turn,
+        ...adds,
+        ...turn,
+        // The finalizer removes every server concurrently.
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        out("mcp.remove", { server: connection, "location[directory]": WORK }),
+        reply("mcp.remove", null),
         reply("mcp.remove", null),
       ]);
       for (let index = 0; index < 2; index++) {

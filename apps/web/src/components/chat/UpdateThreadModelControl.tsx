@@ -136,9 +136,14 @@ export const UpdateThreadModelControl = memo(function UpdateThreadModelControl(p
         title: summary.title,
         description: summary.description,
       });
-    } finally {
-      setPending(false);
+    } catch (error) {
+      toastManager.add({
+        type: "warning",
+        title: "Could not update thread models",
+        description: error instanceof Error ? error.message : "Please try again.",
+      });
     }
+    setPending(false);
   };
 
   const firstEntry = pickerEntries[0];

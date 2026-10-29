@@ -117,8 +117,8 @@ HARNESS_PREAMBLE = (
 
 def load_prompt_and_tools(server: pathlib.Path) -> tuple[str, list[dict]]:
     script = """
-const { buildRuntimeInstructions } = await import(process.cwd() + "/src/provider/RuntimeInstructions.ts");
-const { T3_CODE_ORCHESTRATION_INSTRUCTIONS } = await import(process.cwd() + "/src/provider/T3OrchestrationInstructions.ts");
+const { buildRuntimeInstructions } = await import(process.cwd() + "/../../packages/provider-core/src/server/runtimeInstructions.ts");
+const { T3_CODE_ORCHESTRATION_INSTRUCTIONS } = await import(process.cwd() + "/../../packages/provider-core/src/server/orchestrationInstructions.ts");
 const kits = [
   (await import(process.cwd() + "/src/mcp/toolkits/orchestrator/tools.ts")).OrchestratorToolkit,
   (await import(process.cwd() + "/src/mcp/toolkits/project/tools.ts")).ProjectToolkit,

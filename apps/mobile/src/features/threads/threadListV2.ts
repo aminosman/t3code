@@ -34,15 +34,16 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
-import type { ThreadMoveAvailability } from "./threadOrder";
 
 import { relativeTime } from "../../lib/time";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 import {
   applyPendingThreadOrder,
+  computeThreadMoveAvailability,
   reconcilePendingThreadOrder,
   type PendingThreadOrder,
+  type ThreadMoveAvailability,
 } from "./threadOrder";
 
 export const threadListInboxReturns = createInboxReturnTracker();
@@ -295,8 +296,40 @@ export function getThreadListV2OrderedSection(input: {
   return applyPendingThreadOrder(ordered, input.section, pending);
 }
 
+/**
+ * Up/down for every card, computed once per section (per-thread planner calls made a rebuild
+ * quadratic). Only the user's own order can be moved, and only top-level threads, which are what
+ * a move plans against.
+ */
+export function getThreadListV2MoveAvailability(input: {
+  readonly threads: readonly EnvironmentThreadShell[];
+  readonly sortOrder: "manual" | "updated_at" | "created_at";
+  readonly workingShelfEnabled: boolean;
+  readonly pendingOrder?: PendingThreadOrder | null;
+  readonly now: string;
+  readonly settlementEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  readonly queuedThreadKeys?: ReadonlySet<string>;
+  readonly pinReorderEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly activeReorderEnvironmentIds: ReadonlySet<EnvironmentId>;
+}): ReadonlyMap<string, ThreadMoveAvailability> | undefined {
+  if (input.sortOrder !== "manual") return undefined;
+  const topLevel = groupOwnedThreads(
+    input.threads.filter((thread) => thread.archivedAt === null),
+  ).topLevel;
+  const section = (section: "pinned" | "active") =>
+    computeThreadMoveAvailability({
+      allThreads: input.threads,
+      section,
+      pendingOrder: input.pendingOrder,
+      reorderableEnvironmentIds:
+        section === "pinned" ? input.pinReorderEnvironmentIds : input.activeReorderEnvironmentIds,
+      ordered: getThreadListV2OrderedSection({ ...input, threads: topLevel, section }),
+    });
+  return new Map([...section("pinned"), ...(input.workingShelfEnabled ? [] : section("active"))]);
+}
+
 export interface ThreadListV2Item {
-  readonly projectHeading?: string;
   readonly ownedDepth?: number;
   readonly ownedChildCount?: number;
   readonly ownedExpanded?: boolean;
@@ -379,18 +412,6 @@ export type ThreadListV2ListItem =
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
 
-export function isThreadListV2ListItem(value: {
-  readonly type: string;
-}): value is ThreadListV2ListItem {
-  return (
-    value.type === "v2-thread" ||
-    value.type === "v2-pending" ||
-    value.type === "v2-working-shelf" ||
-    value.type === "v2-snoozed-shelf" ||
-    value.type === "v2-settled-shelf"
-  );
-}
-
 /** Compare rebuilt items by content so minute ticks and partition runs do not re-render every mounted row. */
 export function threadListV2ListItemsAreEqual(
   previous: ThreadListV2ListItem,
@@ -406,7 +427,6 @@ export function threadListV2ListItemsAreEqual(
         previous.item.snoozed === item.item.snoozed &&
         previous.item.pinned === item.item.pinned &&
         previous.item.wokeAt === item.item.wokeAt &&
-        previous.item.projectHeading === item.item.projectHeading &&
         previous.item.ownedDepth === item.item.ownedDepth &&
         previous.item.ownedChildCount === item.item.ownedChildCount &&
         previous.item.ownedExpanded === item.item.ownedExpanded &&

@@ -32,6 +32,23 @@ describe("buildCodexAdditionalContext", () => {
 });
 
 describe("Codex runtime context", () => {
+  it("carries every runtime block, in order, across numbered entries", () => {
+    const instructions = runtimeInstructions({ model: "gpt-6.1-sol" });
+    const order = [
+      "<runtime_info>",
+      "<pull_request_linking>",
+      "<history>",
+      "- Owned: delegate_task.",
+      "Picking the model:",
+      "t3_any_thread_wait collects its reply",
+    ].map((marker) => instructions.indexOf(marker));
+    NodeAssert.ok(order.every((index) => index >= 0));
+    NodeAssert.deepEqual(
+      order,
+      [...order].sort((left, right) => left - right),
+    );
+  });
+
   it("describes Markdown media support in the runtime context in both modes", () => {
     {
       const instructions = runtimeInstructions({
@@ -90,5 +107,8 @@ describe("Codex device context", () => {
 });
 
 function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
-  return buildCodexAdditionalContext(runtime).t3_code_runtime!.value;
+  return Object.entries(buildCodexAdditionalContext(runtime))
+    .filter(([key]) => key.startsWith("t3_code_runtime_"))
+    .map(([, entry]) => entry.value)
+    .join("\n\n");
 }

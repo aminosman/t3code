@@ -11,13 +11,16 @@ import type * as Schema from "effect/Schema";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { HttpBody, HttpClient, HttpClientResponse } from "effect/http";
+import { HttpBody, HttpClient, type HttpClientError, HttpClientResponse } from "effect/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import {
+  executeAuthenticatedEnvironmentHttpRequest,
+  isRejectedCredentialResponse,
+} from "./environmentHttpAuth.ts";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -32,6 +35,22 @@ class PushDeviceRegistrationError extends Data.TaggedError("PushDeviceRegistrati
   readonly status?: number;
 }> {}
 
+interface Refusal {
+  readonly ok: false;
+  readonly status: number;
+  readonly message: string;
+}
+
+const isRefusal = (value: unknown): value is Refusal =>
+  typeof value === "object" &&
+  value !== null &&
+  "ok" in value &&
+  value.ok === false &&
+  "status" in value &&
+  typeof value.status === "number" &&
+  "message" in value &&
+  typeof value.message === "string";
+
 const postToEnvironment = Effect.fn("clientRuntime.state.postPushDeviceRequest")(function* <
   A,
 >(input: {
@@ -45,7 +64,13 @@ const postToEnvironment = Effect.fn("clientRuntime.state.postPushDeviceRequest")
   // The shared helper re-resolves the base URL on a DPoP retry, so the URL is
   // captured from the same callback it binds the request proof to.
   let requestUrl = environmentEndpointUrl(input.prepared.httpBaseUrl, input.path);
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
+  // Typed by hand: the predicate below otherwise defeats the helper's inference.
+  return yield* executeAuthenticatedEnvironmentHttpRequest<
+    "metadata",
+    { readonly ok: true; readonly value: A } | Refusal,
+    HttpClientError.HttpClientError | Schema.SchemaError,
+    HttpClient.HttpClient
+  >({
     prepared: input.prepared,
     signer: input.signer,
     // These are Roost's own routes, outside the contract's HttpApi groups, so
@@ -86,18 +111,24 @@ const postToEnvironment = Effect.fn("clientRuntime.state.postPushDeviceRequest")
           ok: false as const,
           status: response.status,
           message: said ?? `The environment answered with status ${response.status}.`,
-        };
+        } satisfies Refusal;
       }
       const decoded = yield* HttpClientResponse.schemaBodyJson(input.result)(response);
       return { ok: true as const, value: decoded };
     }),
+    // The 401 above is a value, so the helper is told it means "renew".
+    isUnauthorizedResponse: isRejectedCredentialResponse,
   }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new PushDeviceRegistrationError({
-          message: `Could not reach the environment: ${String(cause)}`,
-        }),
-    ),
+    Effect.mapError((cause) => {
+      // The renewed token was refused too: that is the environment saying no,
+      // not the network, so its status and words survive.
+      const refused = cause._tag === "RemoteEnvironmentAuthFetchError" ? cause.cause : undefined;
+      return isRefusal(refused)
+        ? new PushDeviceRegistrationError({ message: refused.message, status: refused.status })
+        : new PushDeviceRegistrationError({
+            message: `Could not reach the environment: ${String(cause)}`,
+          });
+    }),
     Effect.flatMap((result) =>
       result.ok
         ? Effect.succeed(result.value)
@@ -152,11 +183,15 @@ export const unregisterEnvironmentPushDevice = (input: {
 export const sendPushReply = (input: {
   readonly prepared: PreparedConnection;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly reply: PushReply;
 }) =>
   postToEnvironment({
     prepared: input.prepared,
     signer: input.signer,
+    ...(input.remoteAuthorization === undefined
+      ? {}
+      : { remoteAuthorization: input.remoteAuthorization }),
     path: PUSH_REPLY_PATH,
     body: input.reply,
     result: PushReplyResult,

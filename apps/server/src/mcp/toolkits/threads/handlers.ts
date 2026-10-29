@@ -437,7 +437,7 @@ const makeHandlers = Effect.gen(function* () {
       // agent answering it both know nobody typed this.
       const text =
         `[Sent by the agent in thread "${caller.title}" (${caller.id}), not typed by the user. ` +
-        `Answer in your reply. that thread will read it.]\n\n${input.message.trim()}`;
+        `Answer in your reply; that thread will read it.]\n\n${input.message.trim()}`;
       yield* threads
         .sendToThread({
           projectId: target.projectId,

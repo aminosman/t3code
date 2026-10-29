@@ -9,9 +9,13 @@ const thread = (
     fork?: string;
     status?: string;
     awaitingInput?: boolean;
+    environmentId?: string;
+    delegatedFrom?: { environmentId: string; threadId: string };
   } = {},
 ) => ({
   id,
+  environmentId: options.environmentId ?? "local",
+  delegatedFrom: options.delegatedFrom,
   lineage: {
     parentThreadId: options.owner ?? options.fork ?? null,
     relationshipToParent: options.owner
@@ -87,6 +91,22 @@ describe("owned threads in the legacy sidebar", () => {
       thread("review-of-review", { owner: "review", status: "running" }),
     ];
     expect(rows(threads)).toEqual(["plan (1)", "  review (1)", "    review-of-review"]);
+  });
+
+  it("nests a task a linked environment delegated under its parent there, but not its fork", () => {
+    const delegatedFrom = { environmentId: "laptop", threadId: "plan" };
+    const threads = [
+      thread("plan", { environmentId: "laptop" }),
+      thread("task", { delegatedFrom }),
+      thread("fork-of-task", { fork: "task", delegatedFrom }),
+      thread("elsewhere", { delegatedFrom: { environmentId: "desk", threadId: "plan" } }),
+    ];
+    expect(rows(threads, { plan: true })).toEqual([
+      "plan (1)",
+      "  task",
+      "fork-of-task",
+      "elsewhere",
+    ]);
   });
 
   it("puts a child whose owner is not in the list at the top", () => {

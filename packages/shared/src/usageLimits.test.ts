@@ -73,6 +73,25 @@ describe("new thread model fallback", () => {
     providers: [limited, available],
     now,
   };
+  const grouped = { instanceId: ProviderInstanceId.make("claude_max"), model: "claude-opus-5-5" };
+  const claudeAccount = (id: string, usedPercent: number) =>
+    provider({
+      instanceId: ProviderInstanceId.make(id),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      usageLimits: { checkedAt: limited.checkedAt, windows: [{ ...window, usedPercent }] },
+    });
+  const groupSettings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerInstances: {
+      ...Object.fromEntries(
+        ["claude_max", "claude_max_2"].map((id) => [
+          id,
+          { driver: ProviderDriverKind.make("claudeAgent"), config: { accountGroup: "max" } },
+        ]),
+      ),
+      [fallback.instanceId]: { driver: available.driver, config: {} },
+    },
+  };
   it.each([
     ["exhausted default", {}, fallback],
     ["explicit selection", { explicitSelection: selection }, selection],
@@ -90,6 +109,28 @@ describe("new thread model fallback", () => {
         },
       },
       selection,
+    ],
+    [
+      "spent account with a fresh group sibling",
+      {
+        defaultSelection: grouped,
+        providers: [claudeAccount("claude_max", 100), claudeAccount("claude_max_2", 10), available],
+        settings: groupSettings,
+      },
+      grouped,
+    ],
+    [
+      "spent account group",
+      {
+        defaultSelection: grouped,
+        providers: [
+          claudeAccount("claude_max", 100),
+          claudeAccount("claude_max_2", 100),
+          available,
+        ],
+        settings: groupSettings,
+      },
+      fallback,
     ],
   ] as const)("resolves %s", (_name, overrides, expected) => {
     expect(resolveNewThreadModelSelection({ ...defaults, ...overrides }).selection).toEqual(

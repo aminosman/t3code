@@ -1,11 +1,16 @@
-// Only subagent lineage implies ownership. Forks remain top-level threads.
-// Shared by desktop and phone thread lists.
+// A subagent, or a task a linked environment delegated here, is owned by the thread that started
+// it. Forks remain top-level threads. Shared by desktop and phone thread lists.
 interface OwnableThread {
   readonly id: string;
+  readonly environmentId?: string | undefined;
   readonly lineage: {
     readonly parentThreadId: string | null;
     readonly relationshipToParent: "fork" | "subagent" | null;
   };
+  readonly delegatedFrom?:
+    | { readonly environmentId: string; readonly threadId: string }
+    | null
+    | undefined;
   readonly hasPendingApprovals?: boolean | undefined;
   readonly hasPendingUserInput?: boolean | undefined;
   readonly runtime?: { readonly status: string } | null | undefined;
@@ -19,8 +24,30 @@ export interface OwnedThreadRow<T> {
   readonly expanded: boolean;
 }
 
-function ownerThreadId(thread: OwnableThread): string | null {
-  return thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null;
+/** True for a subagent or a delegated task; forks are not owned. */
+function isOwnedThread(thread: OwnableThread): boolean {
+  if (thread.lineage.relationshipToParent === "subagent") {
+    return thread.lineage.parentThreadId !== null;
+  }
+  return thread.lineage.relationshipToParent === null && thread.delegatedFrom != null;
+}
+
+function ownerIn<T extends OwnableThread>(
+  thread: T,
+  byId: ReadonlyMap<string, T>,
+): { readonly id: string; readonly thread: T | undefined } | null {
+  const { lineage, delegatedFrom } = thread;
+  if (!isOwnedThread(thread)) return null;
+  if (lineage.relationshipToParent === "subagent" && lineage.parentThreadId !== null) {
+    return { id: lineage.parentThreadId, thread: byId.get(lineage.parentThreadId) };
+  }
+  // A fork copies its source's `delegatedFrom`, so only an unrelated thread is a delegated task.
+  if (lineage.relationshipToParent !== null || delegatedFrom == null) return null;
+  const owner = byId.get(delegatedFrom.threadId);
+  return {
+    id: delegatedFrom.threadId,
+    thread: owner?.environmentId === delegatedFrom.environmentId ? owner : undefined,
+  };
 }
 
 const LIVE_RUNTIME = new Set(["running", "waiting", "preparing", "starting", "queued"]);
@@ -46,26 +73,25 @@ export function groupOwnedThreads<T extends OwnableThread>(
   // An owner chain that never reaches the top would hide every thread on it.
   const reachesTop = (thread: T): boolean => {
     const seen = new Set([thread.id]);
-    for (let owner = ownerThreadId(thread); owner !== null;) {
-      const next = byId.get(owner);
-      if (next === undefined) return true;
-      if (seen.has(owner)) return false;
-      seen.add(owner);
-      owner = ownerThreadId(next);
+    for (let owner = ownerIn(thread, byId); owner !== null;) {
+      if (owner.thread === undefined) return true;
+      if (seen.has(owner.id)) return false;
+      seen.add(owner.id);
+      owner = ownerIn(owner.thread, byId);
     }
     return true;
   };
   const topLevel: T[] = [];
   const childrenByOwner = new Map<string, T[]>();
   for (const thread of threads) {
-    const owner = ownerThreadId(thread);
-    if (owner === null || !byId.has(owner) || !reachesTop(thread)) {
+    const owner = ownerIn(thread, byId);
+    if (owner === null || owner.thread === undefined || !reachesTop(thread)) {
       topLevel.push(thread);
       continue;
     }
-    const siblings = childrenByOwner.get(owner);
+    const siblings = childrenByOwner.get(owner.id);
     if (siblings) siblings.push(thread);
-    else childrenByOwner.set(owner, [thread]);
+    else childrenByOwner.set(owner.id, [thread]);
   }
   return { topLevel, childrenByOwner };
 }

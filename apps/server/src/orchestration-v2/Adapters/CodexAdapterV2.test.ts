@@ -9,6 +9,7 @@ import {
   CodexSettings,
   CommandId,
   EnvironmentId,
+  McpConnectionId,
   MessageId,
   NodeId,
   type OrchestrationV2AppThread,
@@ -243,7 +244,7 @@ describe("CodexAdapterV2 runtime policy", () => {
         kind: "untrusted",
         value: "Filtered to overdue",
       });
-      assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
+      assert.isDefined(withT3.additionalContext?.["t3_code_runtime_01"]);
     }),
   );
 });
@@ -1321,6 +1322,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer secret-codex-token",
         browserToolsAvailable: true,
+        connections: [
+          {
+            id: McpConnectionId.make("oneleet"),
+            name: "Oneleet",
+            projectId: ProjectId.make("project-codex"),
+            endpoint: "http://127.0.0.1:43123/mcp/connections/oneleet",
+          },
+        ],
       });
       const requests: Array<unknown> = [];
       yield* makeCodexReplayHarness(
@@ -1348,6 +1357,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
+              http_headers: { Authorization: "Bearer secret-codex-token" },
+            },
+            // A user connection is its own server, not a field of t3-code.
+            "mcp_servers.oneleet": {
+              url: "http://127.0.0.1:43123/mcp/connections/oneleet",
               http_headers: { Authorization: "Bearer secret-codex-token" },
             },
           },

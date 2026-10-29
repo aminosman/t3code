@@ -1,6 +1,6 @@
 // Keychain slots derive from CLAUDE_CONFIG_DIR (SHA-256 prefix for custom dirs).
-// Cache usage briefly to avoid endpoint rate limits and retain the last good
-// reading when a transient failure prevents a refresh.
+// Reads serve the last good reading and refresh in the background: routing runs
+// under the thread's dispatch lock, which must never wait on Keychain or HTTPS.
 import * as Crypto from "effect/Crypto";
 import * as Hex from "effect/encoding/Hex";
 
@@ -116,8 +116,9 @@ export class ClaudeUsageReader extends Context.Service<
   ClaudeUsageReader,
   {
     /**
-     * Windows for the account logged into `configDir` (`undefined` = default
-     * install). `undefined` when nothing could be read and nothing is cached.
+     * The last good windows for the account logged into `configDir`
+     * (`undefined` = default install), or `undefined` when none has been read.
+     * Never waits: a stale entry starts one background refresh.
      */
     readonly read: (
       configDir: string | undefined,
@@ -126,8 +127,9 @@ export class ClaudeUsageReader extends Context.Service<
 >()("t3/provider/claudeUsageReader") {}
 
 interface CacheEntry {
-  readonly windows: ReadonlyArray<ClaudeUsageWindow>;
-  readonly readAtMs: number;
+  readonly windows: ReadonlyArray<ClaudeUsageWindow> | undefined;
+  /** Failed attempts count too, so an unreachable endpoint is not retried per message. */
+  readonly attemptedAtMs: number;
 }
 
 const makeClaudeUsageReader = Effect.gen(function* () {
@@ -136,6 +138,8 @@ const makeClaudeUsageReader = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const cache = yield* Ref.make(new Map<string, CacheEntry>());
+  const refreshing = new Set<string>();
+  const scope = yield* Effect.scope;
 
   const readAccessToken = Effect.fn("ClaudeUsageReader.readAccessToken")(
     function* (service: string) {
@@ -183,17 +187,8 @@ const makeClaudeUsageReader = Effect.gen(function* () {
     Effect.catchCause(() => Effect.as(Effect.void, undefined)),
   );
 
-  const read = Effect.fn("ClaudeUsageReader.read")(function* (configDir: string | undefined) {
+  const refresh = Effect.fn("ClaudeUsageReader.refresh")(function* (configDir: string | undefined) {
     const key = configDir ?? "";
-    const nowMs = yield* Clock.currentTimeMillis;
-    const cached = (yield* Ref.get(cache)).get(key);
-    if (cached && nowMs - cached.readAtMs < Duration.toMillis(FRESH_FOR)) {
-      return cached.windows;
-    }
-    // The Keychain lives on macOS only; elsewhere fall back to whatever the
-    // router has from the status probe.
-    if (platform !== "darwin") return cached?.windows;
-
     const service = yield* claudeKeychainService(configDir).pipe(
       Effect.provideService(Crypto.Crypto, crypto),
       Effect.catchCause(() => Effect.as(Effect.void, undefined)),
@@ -204,12 +199,39 @@ const makeClaudeUsageReader = Effect.gen(function* () {
       yield* Effect.logDebug("claude usage read failed; serving last good reading", {
         configDir: key,
         hadToken: token !== undefined,
-        cached: cached !== undefined,
       });
-      return cached?.windows;
+      return;
     }
-    yield* Ref.update(cache, (map) => new Map(map).set(key, { windows, readAtMs: nowMs }));
-    return windows;
+    yield* Ref.update(cache, (map) => {
+      const entry = map.get(key);
+      return new Map(map).set(key, { windows, attemptedAtMs: entry?.attemptedAtMs ?? 0 });
+    });
+  });
+
+  const read = Effect.fn("ClaudeUsageReader.read")(function* (configDir: string | undefined) {
+    const key = configDir ?? "";
+    const nowMs = yield* Clock.currentTimeMillis;
+    const entry = (yield* Ref.get(cache)).get(key);
+    // The Keychain lives on macOS only; elsewhere the router has the status probe.
+    if (platform !== "darwin") return entry?.windows;
+    if (entry !== undefined && nowMs - entry.attemptedAtMs < Duration.toMillis(FRESH_FOR)) {
+      return entry.windows;
+    }
+    const start = yield* Effect.sync(() => {
+      if (refreshing.has(key)) return false;
+      refreshing.add(key);
+      return true;
+    });
+    if (start) {
+      yield* Ref.update(cache, (map) =>
+        new Map(map).set(key, { windows: entry?.windows, attemptedAtMs: nowMs }),
+      );
+      yield* refresh(configDir).pipe(
+        Effect.ensuring(Effect.sync(() => refreshing.delete(key))),
+        Effect.forkIn(scope),
+      );
+    }
+    return entry?.windows;
   });
 
   return { read } as const;

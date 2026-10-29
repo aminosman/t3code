@@ -122,6 +122,15 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
 );
 
 /**
+ * For raw-client callers that carry a non-2xx answer out as a value: a 401 is
+ * a relay token the environment no longer honours, worth one renewal.
+ */
+export const isRejectedCredentialResponse = (response: {
+  readonly ok: boolean;
+  readonly status?: number;
+}): boolean => !response.ok && response.status === 401;
+
+/**
  * A DPoP request is T3 Connect work, so its span starts an exported trace that
  * the environment continues; its local caller's span would leave that trace
  * without a root.

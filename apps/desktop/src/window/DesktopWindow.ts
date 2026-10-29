@@ -40,10 +40,22 @@ import { copyContextMenuImage } from "./ContextMenuImage.ts";
 // Clipboard writes require both request and check handlers.
 // The preview browser uses a separate partition and permission list.
 const ALLOWED_MAIN_WINDOW_PERMISSIONS: ReadonlySet<string> = new Set([
-  "media",
   "clipboard-read",
   "clipboard-sanitized-write",
+  "local-fonts",
+  "notifications",
 ]);
+
+// The renderer captures only the microphone; camera stays with terminal children.
+const isAllowedMainWindowPermission = (
+  permission: string,
+  mediaTypes: ReadonlyArray<string> | undefined,
+): boolean =>
+  permission === "media"
+    ? mediaTypes !== undefined &&
+      mediaTypes.length > 0 &&
+      mediaTypes.every((type) => type === "audio")
+    : ALLOWED_MAIN_WINDOW_PERMISSIONS.has(permission);
 
 const TITLEBAR_HEIGHT = 40;
 // Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
@@ -413,11 +425,22 @@ export const make = Effect.gen(function* () {
       window.setAutoHideCursor(false);
     }
 
-    window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
-      callback(ALLOWED_MAIN_WINDOW_PERMISSIONS.has(permission));
-    });
-    window.webContents.session.setPermissionCheckHandler((_webContents, permission) =>
-      ALLOWED_MAIN_WINDOW_PERMISSIONS.has(permission),
+    window.webContents.session.setPermissionRequestHandler(
+      (_webContents, permission, callback, details) => {
+        callback(
+          isAllowedMainWindowPermission(
+            permission,
+            "mediaTypes" in details ? details.mediaTypes : undefined,
+          ),
+        );
+      },
+    );
+    window.webContents.session.setPermissionCheckHandler(
+      (_webContents, permission, _origin, details) =>
+        isAllowedMainWindowPermission(
+          permission,
+          details.mediaType === undefined ? undefined : [details.mediaType],
+        ),
     );
 
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;

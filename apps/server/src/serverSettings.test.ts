@@ -31,6 +31,7 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
+import { mcpConnectionAuthSecretName } from "./settingsSecrets.ts";
 
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
@@ -1644,6 +1645,79 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("never removes an APNs key that is not in effect", () => {
+    const secrets = new Map<string, Uint8Array>();
+    const removed: string[] = [];
+    const layerSecretStore = Layer.succeed(
+      ServerSecretStore.ServerSecretStore,
+      ServerSecretStore.ServerSecretStore.of({
+        get: (name) =>
+          Effect.sync(() => {
+            const value = secrets.get(name);
+            return value === undefined ? Option.none() : Option.some(Uint8Array.from(value));
+          }),
+        set: (name, value) =>
+          Effect.sync(() => {
+            secrets.set(name, Uint8Array.from(value));
+          }),
+        create: (name, value) =>
+          Effect.sync(() => {
+            secrets.set(name, Uint8Array.from(value));
+          }),
+        getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
+        remove: (name) =>
+          Effect.sync(() => {
+            if (name === "push-apns-auth-key") removed.push(name);
+            secrets.delete(name);
+          }),
+      }),
+    );
+    const layerSettings = ServerSettingsModule.layer.pipe(
+      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+      Layer.provide(layerSecretStore),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-server-settings-apns-guard-test-",
+          }),
+        ),
+      ),
+    );
+    const APNS = "push-apns-auth-key";
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      // No key yet: unrelated writes and an empty push block delete nothing.
+      yield* serverSettings.updateSettings({ voice: { voice: "cedar" } });
+      yield* serverSettings.updateSettings({
+        push: { enabled: false, authKey: "", keyId: "", teamId: "", bundleId: "" },
+      });
+      yield* serverSettings.updateSettings({ push: { bundleId: "co.example.app" } });
+      assert.deepEqual(removed, []);
+
+      // A key in effect survives a write that resets the block to defaults.
+      yield* serverSettings.updateSettings({
+        push: { authKey: "-----BEGIN PRIVATE KEY-----apns-secret", keyId: "KEY1234567" },
+      });
+      yield* serverSettings.updateSettings({
+        push: { enabled: false, authKey: "", keyId: "", teamId: "", bundleId: "" },
+      });
+      assert.deepEqual(removed, []);
+      assert.isTrue(secrets.has(APNS));
+
+      // An explicit clear removes it, once; later writes find nothing to remove.
+      yield* serverSettings.updateSettings({ push: { authKey: "", authKeyRedacted: false } });
+      assert.deepEqual(removed, [APNS]);
+      assert.isFalse(secrets.has(APNS));
+      yield* serverSettings.updateSettings({
+        push: { enabled: false, authKey: "", keyId: "", teamId: "", bundleId: "" },
+      });
+      yield* serverSettings.updateSettings({ push: { authKey: "", authKeyRedacted: false } });
+      yield* serverSettings.updateSettings({ voice: { voice: "marin" } });
+      assert.deepEqual(removed, [APNS]);
+    }).pipe(Effect.provide(layerSettings));
+  });
+
   it.effect("stores MCP stdio environment secrets outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -1700,6 +1774,39 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         "stdio-secret",
       );
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("cleans hand-edited MCP credentials during an API save without repeating cleanup", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const connectionId = McpConnectionId.make("files");
+      yield* serverSettings.updateSettings({
+        mcpConnections: {
+          [connectionId]: {
+            name: "Files",
+            enabled: true,
+            transport: { type: "http", url: "https://a.example.test", auth: "bearer" },
+          },
+        },
+      });
+      const secretName = mcpConnectionAuthSecretName(connectionId);
+      const oldCredential = new TextEncoder().encode("old-server-sign-in");
+      yield* secretStore.set(secretName, oldCredential);
+
+      const handEdited = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      handEdited.mcpConnections[connectionId].transport.url = "https://b.example.test";
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, JSON.stringify(handEdited));
+      yield* serverSettings.updateSettings({ defaultAutoPull: true });
+      assert.isTrue(Option.isNone(yield* secretStore.get(secretName)));
+
+      const newCredential = new TextEncoder().encode("new-server-sign-in");
+      yield* secretStore.set(secretName, newCredential);
+      yield* serverSettings.updateSettings({ voice: { voice: "marin" } });
+      assert.deepEqual(yield* secretStore.get(secretName), Option.some(newCredential));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
   it.effect("redacts the voice OpenAI API key for clients", () =>

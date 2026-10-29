@@ -5246,52 +5246,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
     let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-    // Grouped accounts share a continuation key, so switching to a fresher
-    // sibling resumes the same provider thread without a transcript handoff.
-    if (Option.isSome(accountRouter)) {
-      const route = yield* accountRouter.value.resolve(
-        modelSelection.instanceId,
-        modelSelection.model,
-      );
-      // Every outcome is logged: a rotation that silently stays put is
-      // indistinguishable from one that is broken.
-      if (route._tag === "Switch") {
-        yield* Effect.logInfo("orchestrator rotating provider account", {
-          threadId: command.threadId,
-          model: modelSelection.model,
-          reason: route.reason,
-          from: route.from,
-          to: route.to,
-          fromPressure: route.fromStanding.pressurePercent,
-          fromBlockedBy: route.fromStanding.blockedBy,
-          fromResetsAt: route.fromStanding.resetsAt,
-          toPressure: route.toStanding.pressurePercent,
-          toResetsAt: route.toStanding.resetsAt,
-        });
-        modelSelection = { ...modelSelection, instanceId: route.to };
-      } else if (route._tag === "Exhausted") {
-        // Every account in the group is spent for this model. Let the turn
-        // run and fail on the provider's own limit error, which carries the
-        // real reset time.
-        yield* Effect.logInfo("orchestrator found no fresh account", {
-          threadId: command.threadId,
-          model: modelSelection.model,
-          instanceId: route.instanceId,
-          pressure: route.standing.pressurePercent,
-          blockedBy: route.standing.blockedBy,
-          retryAt: route.retryAt,
-        });
-      } else if (route.reason !== "ungrouped") {
-        yield* Effect.logInfo("orchestrator keeping provider account", {
-          threadId: command.threadId,
-          model: modelSelection.model,
-          instanceId: route.instanceId,
-          reason: route.reason,
-          pressure: route.standing?.pressurePercent,
-          resetsAt: route.standing?.resetsAt,
-        });
-      }
-    }
 
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
@@ -5539,6 +5493,55 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         forceRestart: dispatchMode.type === "restart_active",
       });
       return;
+    }
+
+    // Grouped accounts share a continuation key, so switching to a fresher
+    // sibling resumes the same provider thread without a transcript handoff.
+    // Only a new turn rotates: a steer joins the running turn on its account.
+    if (Option.isSome(accountRouter)) {
+      const route = yield* accountRouter.value.resolve(
+        modelSelection.instanceId,
+        modelSelection.model,
+        projection.thread.projectId,
+      );
+      // Every outcome is logged: a rotation that silently stays put is
+      // indistinguishable from one that is broken.
+      if (route._tag === "Switch") {
+        yield* Effect.logInfo("orchestrator rotating provider account", {
+          threadId: command.threadId,
+          model: modelSelection.model,
+          reason: route.reason,
+          from: route.from,
+          to: route.to,
+          fromPressure: route.fromStanding.pressurePercent,
+          fromBlockedBy: route.fromStanding.blockedBy,
+          fromResetsAt: route.fromStanding.resetsAt,
+          toPressure: route.toStanding.pressurePercent,
+          toResetsAt: route.toStanding.resetsAt,
+        });
+        modelSelection = { ...modelSelection, instanceId: route.to };
+      } else if (route._tag === "Exhausted") {
+        // Every account in the group is spent for this model. Let the turn
+        // run and fail on the provider's own limit error, which carries the
+        // real reset time.
+        yield* Effect.logInfo("orchestrator found no fresh account", {
+          threadId: command.threadId,
+          model: modelSelection.model,
+          instanceId: route.instanceId,
+          pressure: route.standing.pressurePercent,
+          blockedBy: route.standing.blockedBy,
+          retryAt: route.retryAt,
+        });
+      } else if (route.reason !== "ungrouped") {
+        yield* Effect.logInfo("orchestrator keeping provider account", {
+          threadId: command.threadId,
+          model: modelSelection.model,
+          instanceId: route.instanceId,
+          reason: route.reason,
+          pressure: route.standing?.pressurePercent,
+          resetsAt: route.standing?.resetsAt,
+        });
+      }
     }
 
     const activeProviderThread = projection.providerThreads.find(
@@ -13170,7 +13173,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return false;
       }
-      const route = yield* accountRouter.value.resolve(run.providerInstanceId, model);
+      const route = yield* accountRouter.value.resolve(
+        run.providerInstanceId,
+        model,
+        projection.thread.projectId,
+      );
       if (route._tag !== "Switch") {
         yield* Effect.logInfo("orchestrator found no account to fail over to", {
           threadId,

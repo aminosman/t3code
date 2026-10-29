@@ -115,9 +115,14 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
 >(input: ReplayFixtureRun<Transcript, Error, WorkspaceError>) {
   const recordedTranscript = yield* readReplayFixtureTranscript(input.driver.transcriptFile);
   const rawTranscript = input.transformTranscript?.(recordedTranscript) ?? recordedTranscript;
+  const reasoningEffortOption = input.driver.modelSelection.options?.find(
+    (option) => option.id === "reasoningEffort",
+  );
+  const reasoningEffort =
+    typeof reasoningEffortOption?.value === "string" ? reasoningEffortOption.value : undefined;
   const replayTranscript = materializeReplayTranscriptRuntimeInstructions(
     transcriptEntriesThroughLabel(rawTranscript, input.driver.transcriptEntriesThroughLabel),
-    { driver: input.driver.driver, model: input.driver.modelSelection.model },
+    { driver: input.driver.driver, model: input.driver.modelSelection.model, reasoningEffort },
   );
   const fixtureInput = input.buildInput();
   const workspace = yield* checkpointWorkspace(input.fixtureName, fixtureInput.workspaceFiles);

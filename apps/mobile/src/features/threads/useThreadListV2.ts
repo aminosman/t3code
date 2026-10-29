@@ -1,8 +1,3 @@
-import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/reactivity";
-import { mobilePreferencesAtom } from "../../state/preferences";
-import { useProjects } from "../../state/entities";
-import { buildHomeProjectScopes } from "../home/homeThreadList";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo, useState, useSyncExternalStore } from "react";
@@ -13,10 +8,11 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
-  getThreadListV2OrderedSection,
+  getThreadListV2MoveAvailability,
   threadListInboxReturns,
 } from "./threadListV2";
-import { computeThreadMoveAvailability } from "./threadOrder";
+import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
+import { groupedThreadSortOrder, useThreadSortOrder } from "./use-thread-sort-order";
 
 /**
  * Screens' select handlers read the content-only key set; a fresh one per list rebuild gave
@@ -64,21 +60,11 @@ export function useThreadListV2(input: {
   const [ownedExpandedByThreadId, setOwnedExpandedByThreadId] = useState<
     Readonly<Record<string, boolean>>
   >({});
-  const preferences = useAtomValue(mobilePreferencesAtom);
-  const options = AsyncResult.isSuccess(preferences) ? preferences.value : null;
-  const projects = useProjects();
-  const scopes = buildHomeProjectScopes({
-    projects,
-    environmentId: input.environmentId,
-    projectGroupingMode: options?.projectGroupingMode ?? "repository",
-  });
-  const scopeByProject = new Map(
-    scopes.flatMap((scope) =>
-      scope.projectRefs.map(
-        (ref) => [scopedProjectKey(ref.environmentId, ref.projectId), scope] as const,
-      ),
-    ),
-  );
+  // The order the Chats menu shows as chosen; the grouped list has no hand order.
+  const [chosenSortOrder] = useThreadSortOrder();
+  const sortOrder = useThreadListV2Enabled()
+    ? chosenSortOrder
+    : groupedThreadSortOrder(chosenSortOrder);
 
   // A thread can stop working when the threads change, or when its exit grace expires.
   const inboxVersion = useSyncExternalStore(
@@ -90,30 +76,18 @@ export function useThreadListV2(input: {
     // oxlint-disable-next-line react/memo-dependencies -- the version signals an expired grace
     [threads, workingShelfEnabled, inboxVersion],
   );
-  // Up/down menu availability for every card, computed once per section per
-  // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
-  // list construction quadratic, and this list rebuilds on every minute tick.
-  const sectionAvailability = (section: "pinned" | "active") =>
-    computeThreadMoveAvailability({
-      allThreads: threads,
-      section,
-      pendingOrder: input.pendingOrder,
-      reorderableEnvironmentIds:
-        section === "pinned" ? input.pinReorderEnvironmentIds : input.activeReorderEnvironmentIds,
-      ordered: getThreadListV2OrderedSection({
-        threads,
-        section,
-        pendingOrder: input.pendingOrder,
-        now: input.now,
-        settlementEnvironmentIds: input.settlementEnvironmentIds,
-        snoozeEnvironmentIds: input.snoozeEnvironmentIds,
-        queuedThreadKeys: input.queuedThreadKeys,
-      }),
-    });
-  const moveAvailability = new Map([
-    ...sectionAvailability("pinned"),
-    ...(workingShelfEnabled ? [] : sectionAvailability("active")),
-  ]);
+  const moveAvailability = getThreadListV2MoveAvailability({
+    threads,
+    sortOrder,
+    workingShelfEnabled,
+    pendingOrder: input.pendingOrder,
+    now: input.now,
+    settlementEnvironmentIds: input.settlementEnvironmentIds,
+    snoozeEnvironmentIds: input.snoozeEnvironmentIds,
+    queuedThreadKeys: input.queuedThreadKeys,
+    pinReorderEnvironmentIds: input.pinReorderEnvironmentIds,
+    activeReorderEnvironmentIds: input.activeReorderEnvironmentIds,
+  });
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const settledScopes = olderSettledScopes(input);
   const olderSettledShelf = useOlderSettledShelf({
@@ -125,7 +99,7 @@ export function useThreadListV2(input: {
   const layout = buildThreadListV2Items({
     nestOwnedThreads: true,
     ownedExpandedByThreadId,
-    sortOrder: options?.threadSortOrder,
+    sortOrder,
     pendingOrder: input.pendingOrder,
     threads: threads.filter((thread) => thread.archivedAt === null),
     environmentId: input.environmentId,
@@ -159,42 +133,6 @@ export function useThreadListV2(input: {
   });
   useOlderSettledShelfGrowth(olderSettledShelf, layout.listedSettledThreads);
   const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys].sort().join("\n"));
-  if (options?.legacyThreadListEnabled === true && input.searchQuery.trim() === "") {
-    const boundaries = [
-      0,
-      layout.workingShelfHeaderIndex,
-      layout.snoozedShelfHeaderIndex,
-      layout.settledShelfHeaderIndex,
-      layout.items.length,
-    ].filter((value): value is number => value !== null);
-    const sorted = [...new Set(boundaries)].sort((a, b) => a - b);
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const start = sorted[i]!;
-      const end = sorted[i + 1]!;
-      const blocks: { scope: (typeof scopes)[number] | undefined; rows: typeof layout.items }[] =
-        [];
-      for (const row of layout.items.slice(start, end)) {
-        if ((row.ownedDepth ?? 0) > 0 && blocks.length) blocks[blocks.length - 1]!.rows.push(row);
-        else
-          blocks.push({
-            scope: scopeByProject.get(
-              scopedProjectKey(row.thread.environmentId, row.thread.projectId),
-            ),
-            rows: [row],
-          });
-      }
-      blocks.sort((a, b) => (a.scope?.title ?? "").localeCompare(b.scope?.title ?? ""));
-      let previousScope: string | undefined;
-      const rows = blocks.flatMap((block) => {
-        const heading = block.scope?.key !== previousScope ? block.scope?.title : undefined;
-        previousScope = block.scope?.key;
-        return block.rows.map((row, index) =>
-          index === 0 && heading ? { ...row, projectHeading: heading } : row,
-        );
-      });
-      layout.items.splice(start, end - start, ...rows);
-    }
-  }
   const scopedProjectKeys =
     input.projectRefs == null
       ? null

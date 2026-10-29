@@ -148,6 +148,7 @@ import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   claudeSignedOutMessage,
+  hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
   resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
@@ -1457,6 +1458,8 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  /** managed-mcp.json exists; it already excludes other MCP config and forbids strict mode. */
+  readonly managedMcpConfig?: boolean;
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -1570,10 +1573,14 @@ export function makeClaudeQueryOptions(input: {
     ...(input.environment === undefined ? {} : { env: input.environment }),
     // Roost owns MCP servers for this session: its own and the user's
     // connections. Strict config keeps the home's `.claude.json` entries
-    // (the same servers, unauthenticated) from loading beside them.
+    // (the same servers, unauthenticated) from loading beside them, unless
+    // managed-mcp.json already excludes them and Claude refuses the flag.
     ...(input.mcpServers === undefined
       ? {}
-      : { mcpServers: input.mcpServers, strictMcpConfig: true }),
+      : {
+          mcpServers: input.mcpServers,
+          ...(input.managedMcpConfig === true ? {} : { strictMcpConfig: true }),
+        }),
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
@@ -4647,18 +4654,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         });
         const openedNativeThreads = yield* Ref.make(new Set<string>());
-        // Session ids minted here or reported missing must use sessionId until
-        // the CLI confirms their transcript. Resuming an uncreated replacement
-        // fails even when its thread row has older persisted turns.
-        const unconfirmedNativeThreads = yield* Ref.make(new Set<string>());
-        const markNativeThreadUnconfirmed = (nativeThreadId: string) =>
+        // Ids the CLI has not confirmed. "minted" only overrides the provider-row
+        // turn count a replacement inherits; nativeThreadHasTurns and resumeSessionAt
+        // describe the native session itself. "missing" (the CLI said so) never resumes.
+        const unconfirmedNativeThreads = yield* Ref.make(new Map<string, "minted" | "missing">());
+        const markNativeThreadUnconfirmed = (
+          nativeThreadId: string,
+          reason: "minted" | "missing",
+        ) =>
           Ref.update(unconfirmedNativeThreads, (current) =>
-            current.has(nativeThreadId) ? current : new Set(current).add(nativeThreadId),
+            current.get(nativeThreadId) === reason
+              ? current
+              : new Map(current).set(nativeThreadId, reason),
           );
         const confirmNativeThread = (nativeThreadId: string) =>
           Ref.update(unconfirmedNativeThreads, (current) => {
             if (!current.has(nativeThreadId)) return current;
-            const updated = new Set(current);
+            const updated = new Map(current);
             updated.delete(nativeThreadId);
             return updated;
           });
@@ -4679,7 +4691,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             )
           ) {
             return Effect.all([
-              markNativeThreadUnconfirmed(nativeThreadId),
+              markNativeThreadUnconfirmed(nativeThreadId, "missing"),
               Ref.update(openedNativeThreads, (current) => {
                 if (!current.has(nativeThreadId)) return current;
                 const updated = new Set(current);
@@ -9962,11 +9974,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
+          const unconfirmed = (yield* Ref.get(unconfirmedNativeThreads)).get(nativeThreadId);
           // Idle release loses openedNativeThreads; persisted turns still require resume to avoid "already in use".
           const hasPersistedProviderTurn =
-            turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
+            turnInput.nativeThreadHasTurns ??
+            (unconfirmed === undefined && turnInput.providerTurnOrdinal > 1);
           const shouldResume =
-            !(yield* Ref.get(unconfirmedNativeThreads)).has(nativeThreadId) &&
+            unconfirmed !== "missing" &&
             (resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn);
           const toolSearchOverride = yield* resolveToolSearchOverride(
             turnInput.runtimePolicy.cwd,
@@ -9994,7 +10008,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: mcpOverrides.allowedTools }),
             ...(mcpOverrides.mcpServers === undefined
               ? {}
-              : { mcpServers: mcpOverrides.mcpServers }),
+              : {
+                  mcpServers: mcpOverrides.mcpServers,
+                  managedMcpConfig: yield* hasClaudeManagedMcpConfig().pipe(
+                    Effect.provideService(FileSystem.FileSystem, adapterOptions.fileSystem),
+                  ),
+                }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
@@ -10833,7 +10852,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               const createdAt = yield* DateTime.now;
               const nativeThreadId = yield* queryRunner.allocateSessionId;
-              yield* markNativeThreadUnconfirmed(nativeThreadId);
+              yield* markNativeThreadUnconfirmed(nativeThreadId, "minted");
               return makeProviderThread({
                 idAllocator,
                 providerInstanceId: adapterOptions.instanceId,
@@ -11102,7 +11121,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
               if (rollbackInput.target.type === "thread_start" && resumeSessionAt === null) {
                 const resetNativeThreadId = yield* queryRunner.allocateSessionId;
-                yield* markNativeThreadUnconfirmed(resetNativeThreadId);
+                yield* markNativeThreadUnconfirmed(resetNativeThreadId, "minted");
                 return {
                   providerThread: {
                     ...makeProviderThread({

@@ -108,7 +108,3 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
     setProjectSortOrder,
   } as const;
 }
-
-export function hasCustomHomeListOptions(options: HomeListOptions): boolean {
-  return options.selectedEnvironmentId !== null || options.selectedProjectKey !== null;
-}
