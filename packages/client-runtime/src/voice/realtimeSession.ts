@@ -10,7 +10,7 @@
  * WebRTC surface this driver touches; both platforms satisfy them.
  */
 
-import { summarizeVoiceConnectionStats } from "./voiceDiagnostics.js";
+import { summarizeVoiceConnectionStats } from "./voiceDiagnostics.ts";
 
 export type VoiceSessionStatus =
   | "connecting"
