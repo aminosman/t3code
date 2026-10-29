@@ -1,73 +1,63 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useIsFocused, useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { summarizeSubagentStatuses } from "@t3tools/client-runtime/state/subagent-display";
-import {
-  isActiveSubagentStatus,
-  isTerminalSubagentStatus,
-} from "@t3tools/client-runtime/state/subagentRuntime";
+import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
 import type {
   EnvironmentId,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
+  ServerProvider,
 } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
-import { AppState, Pressable, View, type ColorValue } from "react-native";
+import { Pressable, View, type ColorValue } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { serverEnvironment } from "../../state/server";
 import { environmentThreadDetails } from "../../state/threads";
-import { SubagentStatusDot } from "./SubagentStatusDot";
-import { subagentCardDetail, subagentCardElapsed } from "./subagent-card-presentation";
-import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
+import { subagentCardElapsed } from "./subagent-card-presentation";
+import { useEnvironments } from "../../state/environments";
+import { useServerConfigs } from "../../state/entities";
+import { SubagentRow } from "./SubagentRow";
+import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { subagentThreadTarget } from "./threadAgentsPresentation";
 import { WorkLogBlock } from "./work-log-layout";
+
+import { useOpenThreadInspector } from "./thread-inspector-navigation";
 
 type SubagentItem = Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
 type AgentTiming = Pick<OrchestrationV2Subagent, "status" | "startedAt" | "completedAt">;
 
 function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTiming> }) {
-  const focused = useIsFocused();
   const live = agents.some((agent) => isActiveSubagentStatus(agent.status));
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const [appActive, setAppActive] = useState(() => AppState.currentState === "active");
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) =>
-      setAppActive(state === "active"),
-    );
-    return () => subscription.remove();
-  }, []);
-  useEffect(() => {
-    if (!live || !focused || !appActive) return;
-    const intervalId = setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => clearInterval(intervalId);
-  }, [appActive, focused, live]);
+  const nowMs = useVisibleSecondClock(live);
   const elapsed = subagentCardElapsed(agents, nowMs);
   return elapsed ? (
-    <Text className="shrink-0 text-2xs tabular-nums text-foreground-muted">{elapsed}</Text>
+    <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{elapsed}</Text>
   ) : null;
 }
 
 function SubagentAvatar(props: {
   readonly item: SubagentItem;
-  readonly iconUrl?: string | null | undefined;
-  readonly status?: OrchestrationV2Subagent["status"];
+  readonly provider: ServerProvider | undefined;
 }) {
+  // A remote task's own driver is only a "remote" label.
+  const driver =
+    props.provider?.driver ??
+    (props.item.remoteChild === undefined ? props.item.driver : undefined);
   return (
     <View
       accessible={false}
-      className="relative h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
+      className="h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
     >
-      <ProviderIcon provider={props.item.driver} iconUrl={props.iconUrl} size={15} />
-      {props.status ? (
-        <SubagentStatusDot
-          placement="provider"
-          tone={resolveSubagentRowPresentation({ ...props.item, status: props.status }).tone}
-        />
-      ) : null}
+      {driver === undefined ? (
+        <SymbolView name="sparkles" size={13} tintColorClassName="accent-icon-muted" />
+      ) : (
+        <ProviderIcon provider={driver} iconUrl={props.provider?.iconUrl} size={15} />
+      )}
     </View>
   );
 }
@@ -82,6 +72,7 @@ export function ThreadSubagentGroup(props: {
 }) {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const navigation = useNavigation();
+  const openInspector = useOpenThreadInspector();
   const members = props.activities.flatMap(({ projectedItem }) =>
     projectedItem.item.type === "subagent" ? [projectedItem.item] : [],
   );
@@ -89,6 +80,7 @@ export function ThreadSubagentGroup(props: {
     environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, members[0]!.threadId)),
     (thread) => thread?.projection.subagents,
   );
+  const { presentationById } = useEnvironments();
   const agents = members.map((item) => {
     const live = liveAgents?.find((agent) => agent.id === item.subagentId);
     return {
@@ -99,14 +91,20 @@ export function ThreadSubagentGroup(props: {
       completedAt: live?.completedAt ?? item.completedAt,
       result: live?.result ?? item.result,
       progress: live?.progress ?? item.progress,
+      model: live?.model ?? null,
     };
   });
   const grouped = agents.length > 1;
   const label = `${agents.length} subagents`;
   const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
   const expanded = props.expandedRows[props.anchorKey] ?? false;
-  const iconUrl = (item: SubagentItem) =>
-    config?.providers.find((provider) => provider.instanceId === item.providerInstanceId)?.iconUrl;
+  const serverConfigs = useServerConfigs();
+  // A task in a linked environment runs a provider instance of that environment.
+  const providerOf = (item: SubagentItem) =>
+    (item.remoteChild === undefined
+      ? config
+      : serverConfigs.get(item.remoteChild.environmentId)
+    )?.providers.find((provider) => provider.instanceId === item.providerInstanceId);
   return (
     <WorkLogBlock>
       {grouped ? (
@@ -120,7 +118,7 @@ export function ThreadSubagentGroup(props: {
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
               <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} iconUrl={iconUrl(agent.item)} />
+                <SubagentAvatar item={agent.item} provider={providerOf(agent.item)} />
               </View>
             ))}
             {agents.length > 3 ? (
@@ -157,74 +155,51 @@ export function ThreadSubagentGroup(props: {
       {!grouped || expanded ? (
         <View className="mb-1 gap-px rounded-xl border border-border bg-card/30 p-1">
           {agents.map((agent) => {
-            const presentation = resolveSubagentRowPresentation(agent);
-            const detail = subagentCardDetail(
-              isTerminalSubagentStatus(agent.status)
-                ? agent.result?.trim() || agent.progress || null
-                : agent.progress?.trim() || agent.result,
+            // A task in a linked environment opens there, if this app is connected to it.
+            const target = subagentThreadTarget(agent, props.environmentId, (id) =>
+              presentationById.has(id),
             );
-            const threadId = agent.childThreadId;
             return (
               <Pressable
                 key={agent.item.id}
                 accessible
-                accessibilityRole={threadId === null ? undefined : "link"}
-                accessibilityLabel={`${presentation.title}, ${presentation.statusLabel}${detail ? `, ${detail}` : ""}`}
+                accessibilityRole={target === null ? undefined : "link"}
                 accessibilityHint={
-                  threadId === null ? "Provider-managed agent" : "Opens this agent's thread"
+                  target !== null
+                    ? "Opens this agent's thread"
+                    : agent.remoteChild !== undefined
+                      ? `Runs on ${agent.remoteChild.label}`
+                      : "Provider-managed agent"
                 }
-                disabled={threadId === null}
+                disabled={target === null}
                 onPress={() => {
-                  if (threadId !== null)
-                    navigation.navigate("Thread", {
-                      environmentId: String(props.environmentId),
-                      threadId: String(threadId),
-                    });
+                  if (target === null) return;
+                  if (
+                    openInspector(
+                      { environmentId: props.environmentId, threadId: members[0]!.threadId },
+                      {
+                        type: "thread",
+                        environmentId: target.environmentId,
+                        threadId: target.threadId,
+                      },
+                    )
+                  )
+                    return;
+                  navigation.dispatch(
+                    StackActions.push("Thread", {
+                      environmentId: String(target.environmentId),
+                      threadId: String(target.threadId),
+                    }),
+                  );
                 }}
-                className="min-h-14 flex-row items-center gap-3 rounded-lg px-2 py-2 active:bg-subtle"
+                className="rounded-lg px-3 py-3 active:bg-subtle"
               >
-                <SubagentAvatar
-                  item={agent.item}
-                  iconUrl={iconUrl(agent.item)}
-                  status={agent.status}
+                <SubagentRow
+                  environmentId={props.environmentId}
+                  subagent={agent}
+                  canOpenRemote={target !== null}
+                  elapsed={<SubagentElapsed agents={[agent]} />}
                 />
-                <View className="min-w-0 flex-1 gap-0.5">
-                  <View className="flex-row items-baseline gap-2">
-                    <Text
-                      numberOfLines={1}
-                      className="min-w-0 shrink font-t3-medium text-sm text-foreground"
-                    >
-                      {presentation.title}
-                    </Text>
-                    {detail && agent.status !== "completed" ? (
-                      <Text
-                        className={cn(
-                          "shrink-0 text-2xs text-foreground-muted",
-                          agent.status === "failed" && "text-adaptive-rose-600-400",
-                        )}
-                      >
-                        {presentation.statusLabel}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <Text
-                    numberOfLines={1}
-                    className={cn(
-                      "text-xs text-foreground-muted",
-                      agent.status === "failed" && "text-adaptive-rose-600-400",
-                    )}
-                  >
-                    {detail ?? presentation.statusLabel}
-                  </Text>
-                </View>
-                <SubagentElapsed agents={[agent]} />
-                {threadId !== null ? (
-                  <SymbolView
-                    name="chevron.right"
-                    size={12}
-                    tintColorClassName="accent-icon-subtle"
-                  />
-                ) : null}
               </Pressable>
             );
           })}

@@ -1,14 +1,5 @@
-/**
- * Platform-neutral manager for one OpenAI Realtime voice session over WebRTC.
- *
- * The client talks to OpenAI directly using a short-lived client secret
- * minted by the T3 server; JSON events flow over the `oai-events` data
- * channel. Everything platform-specific — microphone acquisition, peer
- * construction, remote-audio playback — is injected via `VoicePlatform`, so
- * the same protocol driver serves the browser (native WebRTC) and React
- * Native (react-native-webrtc). Structural types below are the minimal
- * WebRTC surface this driver touches; both platforms satisfy them.
- */
+// Platform-specific WebRTC and microphone operations are injected through VoicePlatform.
+// Audio goes directly to OpenAI using a short-lived secret minted by the server.
 
 import { summarizeVoiceConnectionStats } from "./voiceDiagnostics.ts";
 
@@ -306,11 +297,8 @@ export class RealtimeVoiceSession {
               noise_reduction: {
                 type: this.platform.audioEnvironment ?? "far_field",
               },
-              // Deliberately less trigger-happy than the defaults. Any audio
-              // the speaker leaks back into the mic reads as the user
-              // barging in, which cuts the oracle off mid-sentence; a higher
-              // threshold plus a longer silence window makes a real
-              // interruption the only thing that stops it.
+              // Speaker leakage can look like an interruption; require louder speech
+              // and longer silence to avoid cutting the oracle off mid-sentence.
               turn_detection: {
                 type: "server_vad",
                 // Tuned for a phone in a room with other things happening.

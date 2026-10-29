@@ -1,9 +1,5 @@
-// The Meetings project (Roost): where questions about the user's meetings are
-// asked. tui records meetings into a folder (~/Meetings unless tui's config
-// says otherwise); this project is rooted there, so an agent asked about them
-// runs among them, with the history tools that search them by words and by
-// meaning. Made on first use, never at startup: a server whose user records no
-// meetings never grows one.
+// Create the Meetings project on first use, rooted at tui’s recordings folder,
+// so questions run among the recordings without creating an unused startup project.
 import {
   CommandId,
   DEFAULT_MODEL,
@@ -32,17 +28,17 @@ export class MeetingsProjectError extends Schema.TaggedError<MeetingsProjectErro
 ) {}
 
 /** What an agent in the Meetings project is told about where it is. */
-export const AGENT_INSTRUCTIONS = `# Your meetings
+const AGENT_INSTRUCTIONS = `# Your meetings
 
 This folder holds the user's recorded meetings, one folder each, named
 yyyy.MM.dd-HHmm. tui records, transcribes and writes the notes; you answer
 questions about them.
 
 In a meeting folder:
-- summary.md — the notes: a summary, key points, decisions, action items.
-- transcript.md — everything said, timestamped, by speaker ("me" is the user).
-- notes.md — what the user typed during the meeting, when there is one.
-- slides.md — text read off screens shared in it; meta.json — when and how long.
+- summary.md: the notes: a summary, key points, decisions, action items.
+- transcript.md: everything said, timestamped, by speaker ("me" is the user).
+- notes.md: what the user typed during the meeting, when there is one.
+- slides.md: text read off screens shared in it; meta.json: when and how long.
 
 Search before you read. t3_history_search with sources ["meetings"] finds
 meetings by words and by meaning; add meetingParts ["action"] for action items
@@ -72,7 +68,7 @@ export const ensureMeetingsProject = Effect.gen(function* () {
   const workspaceRoot = yield* meetingsRoot;
   if (workspaceRoot === null) {
     return yield* new MeetingsProjectError({
-      message: "No meetings folder yet — tui creates it with the first recording.",
+      message: "No meetings folder yet. tui creates it with the first recording.",
     });
   }
   // The agents' instructions, written once; a user's own edit is kept.
@@ -85,9 +81,9 @@ export const ensureMeetingsProject = Effect.gen(function* () {
       yield* fs.writeFileString(target, text).pipe(Effect.ignore);
     }
   }
-  const id = yield* crypto.randomUUIDv4.pipe(
-    Effect.mapError((cause) => new MeetingsProjectError({ message: String(cause) })),
-  );
+  const id = yield* crypto
+    .randomUUIDv4()
+    .pipe(Effect.mapError((cause) => new MeetingsProjectError({ message: String(cause) })));
   const bootstrapped = yield* projects
     .bootstrap({
       commandId: CommandId.make(`meetings-project:${id}`),
@@ -114,91 +110,80 @@ export const ensureMeetingsProject = Effect.gen(function* () {
   return { projectId: bootstrapped.project.id, workspaceRoot };
 });
 
-/**
- * A question about meetings, asked, on the environment's default model. Asked
- * of one meeting (`meetingId`), it goes into that meeting's chat: the thread
- * named in its chat.json, continued, or a new one recorded there — so the
- * conversation lives on the meeting, and a client shows it beside the notes.
- * `fresh` starts the meeting's chat over. Asked of all meetings, it is a new
- * thread, and `threadId` follows one up. Every client asks this way — the web and phone Meetings pages, and
- * tui's "ask anything about your meetings" — so the answer always lands in
- * the same place.
- */
-export const askMeetings = (input: {
+// Per-meeting questions continue the thread in chat.json unless fresh is set.
+// All-meeting questions create a thread; threadId continues an existing one.
+export const askMeetings = Effect.fn("MeetingsProject.askMeetings")(function* (input: {
   readonly question: string;
   readonly meetingId?: string | undefined;
   readonly fresh?: boolean | undefined;
   readonly threadId?: string | undefined;
-}) =>
-  Effect.gen(function* () {
-    const { projectId, workspaceRoot } = yield* ensureMeetingsProject;
-    const crypto = yield* Crypto.Crypto;
-    const uuid = crypto.randomUUIDv4.pipe(
-      Effect.mapError((cause) => new MeetingsProjectError({ message: String(cause) })),
-    );
-    const question = input.question.trim();
-    const meetingId =
-      input.meetingId !== undefined && Meetings.isMeetingId(input.meetingId)
-        ? input.meetingId
-        : null;
+}) {
+  const { projectId, workspaceRoot } = yield* ensureMeetingsProject;
+  const crypto = yield* Crypto.Crypto;
+  const uuid = crypto
+    .randomUUIDv4()
+    .pipe(Effect.mapError((cause) => new MeetingsProjectError({ message: String(cause) })));
+  const question = input.question.trim();
+  const meetingId =
+    input.meetingId !== undefined && Meetings.isMeetingId(input.meetingId) ? input.meetingId : null;
 
-    const chatThreadId =
-      input.fresh === true
-        ? null
-        : meetingId !== null
-          ? yield* Meetings.readChatThreadId(workspaceRoot, meetingId)
-          : (input.threadId ?? null);
-    if (chatThreadId !== null) {
-      // Behind an answer still being written, never steering it; a chat
-      // whose thread was archived or deleted is started again below.
-      const sent = yield* (yield* ThreadManagement.ThreadManagementService)
-        .sendToThread({
-          projectId,
-          commandId: CommandId.make(`meetings-ask:${yield* uuid}`),
-          threadId: ThreadId.make(chatThreadId),
-          messageId: MessageId.make(yield* uuid),
-          text: question,
-          attachments: [],
-          mode: "queue",
-          createdBy: "user",
-          creationSource: "web",
-        })
-        .pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        );
-      if (sent) return { projectId, threadId: chatThreadId };
-    }
-
-    const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings.pipe(
-      Effect.mapError((cause) => new MeetingsProjectError({ message: String(cause) })),
-    );
-    const resolved = resolveProjectSettings(settings, projectId).settings;
-    const text = meetingId === null ? question : `About the meeting [[${meetingId}]]: ${question}`;
-    const launched = yield* (yield* ThreadLaunch.ThreadLaunchService)
-      .launch({
-        commandId: CommandId.make(`meetings-ask:${yield* uuid}`),
+  const chatThreadId =
+    input.fresh === true
+      ? null
+      : meetingId !== null
+        ? yield* Meetings.readChatThreadId(workspaceRoot, meetingId)
+        : (input.threadId ?? null);
+  if (chatThreadId !== null) {
+    // Behind an answer still being written, never steering it; a chat
+    // whose thread was archived or deleted is started again below.
+    const sent = yield* (yield* ThreadManagement.ThreadManagementService)
+      .sendToThread({
         projectId,
-        title: question.length > 60 ? `${question.slice(0, 57)}…` : question,
-        generateTitle: true,
-        modelSelection: resolved.defaultModelSelection ?? {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: DEFAULT_MODEL,
-        },
-        runtimeMode: resolved.defaultRuntimeMode,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        workspaceStrategy: { type: "root" },
-        initialMessage: { text, attachments: [] },
+        commandId: CommandId.make(`meetings-ask:${yield* uuid}`),
+        threadId: ThreadId.make(chatThreadId),
+        messageId: MessageId.make(yield* uuid),
+        text: question,
+        attachments: [],
+        mode: "queue",
         createdBy: "user",
         creationSource: "web",
       })
-      .pipe(Effect.mapError((error) => new MeetingsProjectError({ message: error.message })));
-    if (meetingId !== null) {
-      yield* Meetings.writeChatThreadId(workspaceRoot, meetingId, launched.threadId).pipe(
-        Effect.mapError(
-          () => new MeetingsProjectError({ message: "Could not keep the chat with the meeting." }),
-        ),
+      .pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
       );
-    }
-    return { projectId, threadId: launched.threadId };
-  });
+    if (sent) return { projectId, threadId: chatThreadId };
+  }
+
+  const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings.pipe(
+    Effect.mapError((cause) => new MeetingsProjectError({ message: String(cause) })),
+  );
+  const resolved = resolveProjectSettings(settings, projectId).settings;
+  const text = meetingId === null ? question : `About the meeting [[${meetingId}]]: ${question}`;
+  const launched = yield* (yield* ThreadLaunch.ThreadLaunchService)
+    .launch({
+      commandId: CommandId.make(`meetings-ask:${yield* uuid}`),
+      projectId,
+      title: question.length > 60 ? `${question.slice(0, 57)}…` : question,
+      generateTitle: true,
+      modelSelection: resolved.defaultModelSelection ?? {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: DEFAULT_MODEL,
+      },
+      runtimeMode: resolved.defaultRuntimeMode,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      workspaceStrategy: { type: "root" },
+      initialMessage: { text, attachments: [] },
+      createdBy: "user",
+      creationSource: "web",
+    })
+    .pipe(Effect.mapError((error) => new MeetingsProjectError({ message: error.message })));
+  if (meetingId !== null) {
+    yield* Meetings.writeChatThreadId(workspaceRoot, meetingId, launched.threadId).pipe(
+      Effect.mapError(
+        () => new MeetingsProjectError({ message: "Could not keep the chat with the meeting." }),
+      ),
+    );
+  }
+  return { projectId, threadId: launched.threadId };
+});

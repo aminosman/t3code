@@ -4,7 +4,7 @@ import {
   type PushSettings,
   type VoiceSettings,
 } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
@@ -26,9 +26,6 @@ function VoiceTextSetting({
   onCommit: (next: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
 
   return (
     <Input
@@ -72,7 +69,7 @@ function VoiceApiKeyControl({
         autoComplete="off"
         className="w-full sm:w-64"
         value={draft}
-        placeholder={configured ? "Configured — enter a new key to replace" : "sk-…"}
+        placeholder={configured ? "Configured. Enter a new key to replace" : "sk-…"}
         aria-label="OpenAI API key for voice sessions"
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {
@@ -188,7 +185,7 @@ function PushAuthKeyControl({
         value={draft}
         placeholder={
           configured
-            ? "Configured — paste a new key to replace"
+            ? "Configured. Paste a new key to replace"
             : "-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----"
         }
         aria-label="APNs auth key"
@@ -232,6 +229,7 @@ export function VoiceSettingsPanel() {
           description={`Realtime speech model for the oracle. Leave blank for ${DEFAULT_VOICE_REALTIME_MODEL}.`}
           control={
             <VoiceTextSetting
+              key={voice.model}
               value={voice.model}
               placeholder={DEFAULT_VOICE_REALTIME_MODEL}
               ariaLabel="Voice realtime model"
@@ -249,6 +247,7 @@ export function VoiceSettingsPanel() {
           description={`How the oracle sounds. Any OpenAI Realtime voice name works. Leave blank for ${DEFAULT_VOICE_REALTIME_VOICE}.`}
           control={
             <VoiceTextSetting
+              key={voice.voice}
               value={voice.voice}
               placeholder={DEFAULT_VOICE_REALTIME_VOICE}
               ariaLabel="Oracle voice"
@@ -260,7 +259,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection title="Phone notifications">
         <SettingsRow
           {...searchableSetting("push-enabled")}
-          description="Notify paired phones when an agent finishes, fails, or needs you. This server talks to Apple directly with the key below — no T3 Connect account and nothing in between."
+          description="Notify paired phones when an agent finishes, fails, or needs you. This server talks to Apple directly with the key below, with no T3 Connect account and nothing in between."
           control={
             <Switch
               checked={push.enabled}
@@ -281,6 +280,7 @@ export function VoiceSettingsPanel() {
           description="Key ID shown next to the auth key in the Apple developer portal."
           control={
             <VoiceTextSetting
+              key={push.keyId}
               value={push.keyId}
               placeholder="ABCD123456"
               ariaLabel="APNs key id"
@@ -293,6 +293,7 @@ export function VoiceSettingsPanel() {
           description="Your Apple Developer team id."
           control={
             <VoiceTextSetting
+              key={push.teamId}
               value={push.teamId}
               placeholder="ABCD123456"
               ariaLabel="Apple team id"
@@ -305,6 +306,7 @@ export function VoiceSettingsPanel() {
           description="Bundle id of the mobile app that receives the notifications."
           control={
             <VoiceTextSetting
+              key={push.bundleId}
               value={push.bundleId}
               placeholder="co.example.app"
               ariaLabel="Mobile app bundle id"

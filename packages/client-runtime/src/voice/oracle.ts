@@ -111,7 +111,7 @@ export const VOICE_ORACLE_TOOLS: ReadonlyArray<VoiceToolDefinition> = [
   {
     name: "end_voice_session",
     description:
-      "Hang up and close the voice overlay. Call this as soon as the conversation reaches a natural stop — above all right after handing work to the coding agent, which can run for many minutes. Do not sit on an open microphone waiting for it. Say one short closing line as you call this; the session ends when you finish speaking, and the user can tap the voice button to pick the conversation back up.",
+      "Hang up and close the voice overlay. Call this as soon as the conversation reaches a natural stop. above all right after handing work to the coding agent, which can run for many minutes. Do not sit on an open microphone waiting for it. Say one short closing line as you call this; the session ends when you finish speaking, and the user can tap the voice button to pick the conversation back up.",
     parameters: {
       type: "object",
       properties: {
@@ -125,7 +125,7 @@ export const VOICE_ORACLE_TOOLS: ReadonlyArray<VoiceToolDefinition> = [
   },
 ];
 
-export function providerDisplayName(providerName: string | null | undefined): string {
+function providerDisplayName(providerName: string | null | undefined): string {
   if (!providerName) return "the coding agent";
   return (
     (PROVIDER_DISPLAY_NAMES as Record<string, string | undefined>)[providerName] ?? providerName
@@ -137,11 +137,11 @@ export function buildOracleInstructions(view: VoiceOracleThreadView): string {
   const project = view.projectName ? ` on the project "${view.projectName}"` : "";
   return [
     `You are the T3 Code oracle: a calm, sharp spoken copilot helping the user direct ${provider}${project}, in the thread "${view.threadTitle}".`,
-    "You are voice-only. Keep replies short — one to three sentences — and conversational. No markdown, no lists, no code unless the user asks you to read some aloud.",
+    "You are voice-only. Keep replies short. one to three sentences. and conversational. No markdown, no lists, no code unless the user asks you to read some aloud.",
     "Ground yourself with get_thread_transcript and get_agent_status before answering questions about the work; never invent agent output.",
     "When the user wants the agent to do something, compose a clear standalone instruction and call send_message_to_agent. Confirm first only when the request is ambiguous or destructive.",
     "System messages will tell you when the agent starts and finishes a turn. When it finishes, briefly summarize the outcome and surface anything that needs the user's decision.",
-    "Do not linger on an open microphone. Once you have handed work to the agent, or the user is done talking, say one short closing line and call end_voice_session. Agent turns can run for many minutes, and the user will tap the voice button again when they want you back — you will be caught up on what happened while you were away.",
+    "Do not linger on an open microphone. Once you have handed work to the agent, or the user is done talking, say one short closing line and call end_voice_session. Agent turns can run for many minutes, and the user will tap the voice button again when they want you back. you will be caught up on what happened while you were away.",
   ].join("\n");
 }
 
@@ -163,7 +163,7 @@ export function buildResumeContext(view: VoiceOracleThreadView): string {
   )?.text;
 
   return [
-    "The user just opened voice mode on this thread. You are picking the conversation back up — you may have been away while the agent worked.",
+    "The user just opened voice mode on this thread. You are picking the conversation back up. you may have been away while the agent worked.",
     `Agent status: ${activity.label}${activity.working ? " (still running right now)" : ""}.`,
     lastUserMessage
       ? `The user's most recent instruction was:\n${truncateForVoice(lastUserMessage, 600)}`

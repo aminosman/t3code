@@ -1,12 +1,5 @@
-/**
- * Answers a thread from its notification, without opening the app.
- *
- * The phone posts what the user did on the lock screen: typed a reply, or
- * tapped Approve or Decline. A reply to a question the thread is still
- * waiting on answers it; any other reply is a new message, queued behind
- * whatever the thread is doing. The phone's reply id becomes the command id,
- * so a reply retried after a dropped connection is applied once.
- */
+// The phone reply id becomes the command id so retries apply once.
+// Replies answer pending questions or queue a new message behind current work.
 import {
   CommandId,
   MessageId,
@@ -21,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import type { PendingRequestItem } from "./threadNotification.ts";
 
-export class PushReplyError extends Data.TaggedError("PushReplyError")<{
+class PushReplyError extends Data.TaggedError("PushReplyError")<{
   /** HTTP status the route answers with. */
   readonly status: 404 | 409 | 422 | 502;
   readonly message: string;

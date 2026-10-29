@@ -1,0 +1,269 @@
+// Session and weekly limits apply to every model; model-scoped limits apply
+// only to that family. A critical warning alone does not imply exhaustion.
+import type { ProviderInstanceId } from "@t3tools/contracts";
+
+/** Applied when `switchAtPercent` is empty. Leaves room to finish a turn. */
+export const DEFAULT_SWITCH_AT_PERCENT = 85;
+
+export type ClaudeUsageSeverity = "normal" | "warning" | "critical" | "blocked";
+
+export interface ClaudeUsageWindow {
+  readonly kind: "session" | "weekly" | "weeklyScoped";
+  /** Lower-cased model family a `weeklyScoped` window applies to, e.g. `fable`. */
+  readonly model?: string | undefined;
+  readonly usedPercent: number;
+  readonly severity?: ClaudeUsageSeverity | undefined;
+  readonly resetsAt?: string | undefined;
+}
+
+export interface ClaudeAccountCandidate {
+  readonly instanceId: ProviderInstanceId;
+  readonly accountGroup: string;
+  readonly switchAtPercent: number;
+  readonly enabled: boolean;
+  /** `undefined` when nothing could be read; an empty array means "no limits". */
+  readonly windows: ReadonlyArray<ClaudeUsageWindow> | undefined;
+}
+
+export type ClaudeStayReason =
+  /** No group configured, so this instance is not in rotation. */
+  | "ungrouped"
+  /** No usable window data for the requested instance; never reroute on a guess. */
+  | "noUsageData"
+  /** The requested instance is the one to drain right now. */
+  | "preferred";
+
+export type ClaudeSwitchReason =
+  /** The requested instance is out for this model. */
+  | "blocked"
+  /** Both have budget; the sibling's window resets sooner, so it is drained first. */
+  | "resetsSooner";
+
+export interface ClaudeAccountStanding {
+  readonly instanceId: ProviderInstanceId;
+  /** Highest effective percent among the windows that bind this model. */
+  readonly pressurePercent: number;
+  /** When the model's binding weekly window resets, if known and still ahead. */
+  readonly resetsAt: string | undefined;
+  /** Which window put the account out, when it is out. */
+  readonly blockedBy: ClaudeUsageWindow["kind"] | undefined;
+  /** A binding window is full or reported blocked: no turn can run here. */
+  readonly spent: boolean;
+}
+
+export type ClaudeRoutingDecision =
+  | {
+      readonly _tag: "Stay";
+      readonly instanceId: ProviderInstanceId;
+      readonly reason: ClaudeStayReason;
+      readonly standing: ClaudeAccountStanding | undefined;
+    }
+  | {
+      readonly _tag: "Switch";
+      readonly from: ProviderInstanceId;
+      readonly to: ProviderInstanceId;
+      readonly reason: ClaudeSwitchReason;
+      readonly fromStanding: ClaudeAccountStanding;
+      readonly toStanding: ClaudeAccountStanding;
+    }
+  | {
+      readonly _tag: "Exhausted";
+      readonly instanceId: ProviderInstanceId;
+      readonly standing: ClaudeAccountStanding;
+      /** Earliest moment any group member frees up for this model, when known. */
+      readonly retryAt: string | undefined;
+    };
+
+/** Empty means "use the default"; the schema already bounds the digits. */
+export function parseSwitchAtPercent(raw: string): number {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return DEFAULT_SWITCH_AT_PERCENT;
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 100
+    ? parsed
+    : DEFAULT_SWITCH_AT_PERCENT;
+}
+
+/**
+ * `claude-fable-5-1[1m]` → `fable`, `claude-opus-5` → `opus`. Claude names
+ * scoped windows by the model's display name, which matches the family token.
+ */
+export function modelFamily(model: string | undefined): string | undefined {
+  if (!model) return undefined;
+  const match = /^claude-([a-z]+)/i.exec(model.trim());
+  return match?.[1]?.toLowerCase();
+}
+
+function millis(iso: string | undefined): number | undefined {
+  if (!iso) return undefined;
+  const value = Date.parse(iso);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function elapsed(window: ClaudeUsageWindow, nowMs: number): boolean {
+  const resetsAtMs = millis(window.resetsAt);
+  return resetsAtMs !== undefined && resetsAtMs <= nowMs;
+}
+
+/** A window whose reset has passed is spent, whatever it last reported. */
+function effectivePercent(window: ClaudeUsageWindow, nowMs: number): number {
+  return elapsed(window, nowMs) ? 0 : window.usedPercent;
+}
+
+/** The windows that can stop a turn on this model. */
+function bindingWindows(
+  windows: ReadonlyArray<ClaudeUsageWindow>,
+  family: string | undefined,
+): ReadonlyArray<ClaudeUsageWindow> {
+  return windows.filter(
+    (window) => window.kind !== "weeklyScoped" || (family !== undefined && window.model === family),
+  );
+}
+
+export function accountStanding(
+  candidate: ClaudeAccountCandidate,
+  family: string | undefined,
+  nowMs: number,
+): ClaudeAccountStanding | undefined {
+  if (candidate.windows === undefined) return undefined;
+  const binding = bindingWindows(candidate.windows, family);
+
+  let pressurePercent = 0;
+  let blockedBy: ClaudeUsageWindow["kind"] | undefined;
+  let spent = false;
+  for (const window of binding) {
+    if (elapsed(window, nowMs)) continue;
+    const percent = effectivePercent(window, nowMs);
+    pressurePercent = Math.max(pressurePercent, percent);
+    const hard = window.severity === "blocked" || percent >= 100;
+    spent ||= hard;
+    if ((hard || percent >= candidate.switchAtPercent) && blockedBy === undefined) {
+      blockedBy = window.kind;
+    }
+  }
+
+  // The model's own weekly decides when this account is worth draining; the
+  // overall weekly stands in when the model has no scoped window.
+  const weekly =
+    binding.find((window) => window.kind === "weeklyScoped") ??
+    binding.find((window) => window.kind === "weekly");
+  const resetsAt = weekly && !elapsed(weekly, nowMs) ? weekly.resetsAt : undefined;
+
+  return { instanceId: candidate.instanceId, pressurePercent, resetsAt, blockedBy, spent };
+}
+
+/**
+ * Soonest reset first; an unknown reset means a fresh window with a week
+ * ahead, so it sorts last. Ties go to the fuller account (drain it out), then
+ * to instance id so the choice is deterministic.
+ */
+function drainFirst(left: ClaudeAccountStanding, right: ClaudeAccountStanding): number {
+  const l = millis(left.resetsAt) ?? Number.POSITIVE_INFINITY;
+  const r = millis(right.resetsAt) ?? Number.POSITIVE_INFINITY;
+  return (
+    l - r ||
+    right.pressurePercent - left.pressurePercent ||
+    left.instanceId.localeCompare(right.instanceId)
+  );
+}
+
+function earliestReset(
+  standings: ReadonlyArray<ClaudeAccountStanding>,
+  nowMs: number,
+): string | undefined {
+  let best: { readonly at: number; readonly iso: string } | undefined;
+  for (const standing of standings) {
+    const at = millis(standing.resetsAt);
+    if (at === undefined || at <= nowMs) continue;
+    if (!best || at < best.at) best = { at, iso: standing.resetsAt! };
+  }
+  return best?.iso;
+}
+
+export function selectClaudeAccount(input: {
+  readonly requestedInstanceId: ProviderInstanceId;
+  readonly requestedModel: string | undefined;
+  readonly candidates: ReadonlyArray<ClaudeAccountCandidate>;
+  readonly nowMs: number;
+}): ClaudeRoutingDecision {
+  const { requestedInstanceId, candidates, nowMs } = input;
+  const family = modelFamily(input.requestedModel);
+  const requested = candidates.find((candidate) => candidate.instanceId === requestedInstanceId);
+
+  const group = requested?.accountGroup.trim() ?? "";
+  if (!requested || group.length === 0) {
+    return {
+      _tag: "Stay",
+      instanceId: requestedInstanceId,
+      reason: "ungrouped",
+      standing: undefined,
+    };
+  }
+
+  const requestedStanding = accountStanding(requested, family, nowMs);
+  if (requestedStanding === undefined) {
+    return {
+      _tag: "Stay",
+      instanceId: requestedInstanceId,
+      reason: "noUsageData",
+      standing: undefined,
+    };
+  }
+
+  const members = candidates.filter(
+    (candidate) => candidate.enabled && candidate.accountGroup.trim() === group,
+  );
+  const standings = new Map<ProviderInstanceId, ClaudeAccountStanding>();
+  for (const member of members) {
+    // A sibling that has never reported is assumed fresh: it has either never
+    // run or never been read, and the alternative is refusing to hand over.
+    const standing =
+      accountStanding(member, family, nowMs) ??
+      ({
+        instanceId: member.instanceId,
+        pressurePercent: 0,
+        resetsAt: undefined,
+        blockedBy: undefined,
+        spent: false,
+      } satisfies ClaudeAccountStanding);
+    standings.set(member.instanceId, standing);
+  }
+  standings.set(requestedInstanceId, requestedStanding);
+
+  const eligible = [...standings.values()]
+    .filter((standing) => standing.blockedBy === undefined)
+    .toSorted(drainFirst);
+  const headroom = [...standings.values()]
+    .filter((standing) => !standing.spent)
+    .toSorted(
+      (left, right) =>
+        left.pressurePercent - right.pressurePercent ||
+        left.instanceId.localeCompare(right.instanceId),
+    );
+
+  const winner = eligible[0] ?? headroom[0];
+  if (!winner) {
+    return {
+      _tag: "Exhausted",
+      instanceId: requestedInstanceId,
+      standing: requestedStanding,
+      retryAt: earliestReset([...standings.values()], nowMs),
+    };
+  }
+  if (winner.instanceId === requestedInstanceId) {
+    return {
+      _tag: "Stay",
+      instanceId: requestedInstanceId,
+      reason: "preferred",
+      standing: requestedStanding,
+    };
+  }
+  return {
+    _tag: "Switch",
+    from: requestedInstanceId,
+    to: winner.instanceId,
+    reason: requestedStanding.blockedBy === undefined ? "resetsSooner" : "blocked",
+    fromStanding: requestedStanding,
+    toStanding: winner,
+  };
+}

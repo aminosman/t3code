@@ -2,12 +2,7 @@ import { Schema } from "effect";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-// ── history (Roost) ──────────────────────────────────────────────────
-//
-// The search agents reach as `t3_history_search` — threads and the meetings
-// recorded on this Mac, matched by words and by meaning — and the readers
-// beside it, offered to clients as well: tui's meetings page searches and
-// reads through these, so there is one index and one ranking, never a copy.
+// Thread projections and meeting files share one search index and ranking.
 
 export const HistorySource = Schema.Literals(["threads", "meetings"]);
 export type HistorySource = typeof HistorySource.Type;
@@ -202,13 +197,8 @@ export const HistoryMeetingNotesWriteInput = Schema.Struct({
 });
 export type HistoryMeetingNotesWriteInput = typeof HistoryMeetingNotesWriteInput.Type;
 
-/**
- * A meeting recorded on the phone, sent to the Mac in two steps: the audio
- * first (to the URL `historyPhoneMeetingUploadUrl` signs), then this, which
- * writes its transcript, the user's notes and, last, meta.json — the sign tui
- * reads as "finished", after which it transcribes the audio itself, writes the
- * notes and files the meeting like one it recorded.
- */
+// Publish meta.json last: tui treats it as the signal that the phone recording
+// is ready for transcription and filing.
 export const HistoryPhoneMeetingTranscriptLine = Schema.Struct({
   seconds: Schema.Number,
   text: Schema.String.check(Schema.isMaxLength(20_000)),

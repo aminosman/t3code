@@ -6,7 +6,7 @@ import {
   useAudioRecorder,
 } from "expo-audio";
 import { File } from "expo-file-system";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 export interface TuiVoiceNote {
   readonly base64: string;
@@ -37,13 +37,35 @@ export function useTuiVoiceNote() {
   const [error, setError] = useState<string | null>(null);
   const startedAt = useRef(0);
   const limit = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stopRef = useRef<(() => Promise<TuiVoiceNote | null>) | null>(null);
   // A note stopped by the time limit, waiting for the finger to lift.
   const autoStopped = useRef<Promise<TuiVoiceNote | null> | null>(null);
   // One recorder transition at a time: a press while the last note is
   // still stopping would prepare the recorder under its shutdown.
   const busy = useRef<Promise<unknown> | null>(null);
 
+  const stop = useCallback(async (): Promise<TuiVoiceNote | null> => {
+    if (limit.current) clearTimeout(limit.current);
+    limit.current = null;
+    if (startedAt.current === 0) return null;
+    const durationMs = Date.now() - startedAt.current;
+    startedAt.current = 0;
+    setRecording(false);
+    await recorder.stop().finally(() => releaseAudio().catch(() => undefined));
+    const uri = recorder.uri;
+    if (!uri) return null;
+    const file = new File(uri);
+    const note =
+      durationMs < 400
+        ? Promise.resolve(null)
+        : file.base64().then((base64) => ({ base64, mimeType: "audio/mp4", durationMs }));
+    return note.finally(() => {
+      try {
+        file.delete();
+      } catch {
+        // A note left in the cache is cleaned up by the OS.
+      }
+    });
+  }, [recorder]);
   const start = useCallback(async (): Promise<boolean> => {
     if (busy.current) await busy.current.catch(() => undefined);
     setError(null);
@@ -65,7 +87,7 @@ export function useTuiVoiceNote() {
       startedAt.current = Date.now();
       setRecording(true);
       limit.current = setTimeout(() => {
-        autoStopped.current = stopRef.current?.() ?? null;
+        autoStopped.current = stop();
       }, MAX_NOTE_MS);
       return true;
     } catch (cause) {
@@ -73,37 +95,9 @@ export function useTuiVoiceNote() {
       setError(cause instanceof Error ? cause.message : "Could not start recording.");
       return false;
     }
-  }, [recorder]);
+  }, [recorder, stop]);
 
-  const stop = useCallback(async (): Promise<TuiVoiceNote | null> => {
-    if (limit.current) clearTimeout(limit.current);
-    limit.current = null;
-    if (startedAt.current === 0) return null;
-    const durationMs = Date.now() - startedAt.current;
-    startedAt.current = 0;
-    setRecording(false);
-    try {
-      await recorder.stop();
-    } finally {
-      await releaseAudio().catch(() => undefined);
-    }
-    const uri = recorder.uri;
-    if (!uri) return null;
-    const file = new File(uri);
-    try {
-      if (durationMs < 400) return null;
-      return { base64: await file.base64(), mimeType: "audio/mp4", durationMs };
-    } finally {
-      try {
-        file.delete();
-      } catch {
-        // A note left in the cache is cleaned up by the OS.
-      }
-    }
-  }, [recorder]);
-  useEffect(() => {
-    stopRef.current = stop;
-  }, [stop]);
+  const stopCurrent = useEffectEvent(stop);
 
   /** Stops and returns the note; null when it was too short to be words. */
   const finish = useCallback(async (): Promise<TuiVoiceNote | null> => {
@@ -111,17 +105,16 @@ export function useTuiVoiceNote() {
     autoStopped.current = null;
     const stopping = pending ?? stop();
     busy.current = stopping;
-    try {
-      return await stopping;
-    } finally {
+    return stopping.finally(() => {
       if (busy.current === stopping) busy.current = null;
-    }
+    });
   }, [stop]);
 
   // Leaving the screen mid-note stops the mic and drops the note.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Stop the native microphone when leaving the screen mid-note.
   useEffect(
     () => () => {
-      void stopRef.current?.();
+      void stopCurrent();
     },
     [],
   );

@@ -1,33 +1,14 @@
-/**
- * Embedder — turns a passage into a vector, so search can match by meaning.
- *
- * Word search finds "billing" when asked for "billing". It does not find it
- * when asked for "invoice", and no amount of stemming or spelling tolerance
- * will. An embedding model does: it puts passages that mean the same thing
- * near each other whatever words they use.
- *
- * The model runs on this Mac, through Ollama. Threads and meetings are the
- * most private text the user has; they are not sent to a hosted embedding API
- * to be made searchable. The cost of that choice is that meaning search is
- * optional: no Ollama, or no embedding model in it, and search is by words
- * alone, and says so. When Ollama is there without the model, the model is
- * pulled once, in the background (about 600 MB).
- *
- * `embeddinggemma` is the default because it was measured here against
- * `nomic-embed-text` on paraphrases of real threads ("the assistant texted
- * someone without permission" against the iMessage incident): it separated
- * the right passage from the wrong ones by 2-5x where nomic's margins were a
- * few hundredths, at 37 passages a second on an M-series Mac.
- *
- * @module historySearch/Embedder
- */
+// Embeddings stay local through Ollama. Missing Ollama or models degrades to
+// word search; a missing model is pulled once in the background.
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 /**
  * Kept dimensions: all of embeddinggemma's. The model is trained so that a
@@ -88,8 +69,8 @@ export const layerNone = Layer.succeed(
   Embedder,
   Embedder.of({
     status: Effect.succeed({ available: false, model: "none", reason: "no embedder configured" }),
-    embedDocuments: () => Effect.succeed(null),
-    embedQuery: () => Effect.succeed(null),
+    embedDocuments: Effect.fn("Embedder.embedDocuments")(() => Effect.succeed(null)),
+    embedQuery: Effect.fn("Embedder.embedQuery")(() => Effect.succeed(null)),
   }),
 );
 
@@ -174,36 +155,35 @@ export const layerOllama = Layer.effect(
       return next;
     });
 
-    const embed = (
+    const embed = Effect.fn("Embedder.embed")(function* (
       inputs: ReadonlyArray<string>,
       timeout: typeof EMBED_TIMEOUT | typeof QUERY_TIMEOUT,
-    ) =>
-      Effect.gen(function* () {
-        if (!(yield* status).available) return null;
-        return yield* post("/api/embed", { model, input: inputs }).pipe(
-          Effect.flatMap(HttpClientResponse.schemaBodyJson(EmbedResponse)),
-          Effect.timeout(timeout),
-          Effect.map((response) =>
-            response.embeddings.length === inputs.length
-              ? response.embeddings.map(normalize)
-              : null,
-          ),
-          // Stopped, restarted, out of memory: ask again after the next probe.
-          Effect.catchCause(() => Ref.set(checked, null).pipe(Effect.as(null))),
-        );
-      });
+    ) {
+      if (!(yield* status).available) return null;
+      return yield* post("/api/embed", { model, input: inputs }).pipe(
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(EmbedResponse)),
+        Effect.timeout(timeout),
+        Effect.map((response) =>
+          response.embeddings.length === inputs.length ? response.embeddings.map(normalize) : null,
+        ),
+        // Stopped, restarted, out of memory: ask again after the next probe.
+        Effect.catchCause(() => Ref.set(checked, null).pipe(Effect.as(null))),
+      );
+    });
 
     return Embedder.of({
       status,
-      embedDocuments: (texts) =>
+      embedDocuments: Effect.fn("Embedder.embedDocuments")((texts) =>
         embed(
           texts.map((text) => asDocument(model, text)),
           EMBED_TIMEOUT,
         ),
-      embedQuery: (text) =>
+      ),
+      embedQuery: Effect.fn("Embedder.embedQuery")((text) =>
         embed([asQuery(model, text)], QUERY_TIMEOUT).pipe(
           Effect.map((vectors) => vectors?.[0] ?? null),
         ),
+      ),
     });
   }),
 );

@@ -1,42 +1,23 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import {
-  createContext,
-  use,
-  useMemo,
-  useCallback,
-  useState,
-  type Dispatch,
-  type ReactNode,
-  type SetStateAction,
-} from "react";
+import { useMemo, useCallback, type Dispatch, type SetStateAction } from "react";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
-import {
-  createDraft,
-  scheduledTaskDefaultModel,
-  hasScheduledTaskDraftChanges,
-  type ScheduledTaskDraft,
-} from "./scheduledTaskDraft";
+import { createDraft, scheduledTaskDefaultModel } from "./scheduledTaskDraft";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 
-type ScheduledTaskEditor = {
-  readonly environmentId: EnvironmentId;
-  readonly environmentLabel: string;
-  readonly draft: ScheduledTaskDraft;
-};
+import {
+  scheduledTaskEditorHasChanges,
+  scheduledTaskEditorSessionAtom,
+  startScheduledTaskEditor,
+  updateScheduledTaskEditor,
+  readScheduledTaskEditor,
+  type ScheduledTaskEditor,
+} from "./scheduled-task-editor-state";
 
-const ScheduledTaskEditorContext = createContext<{
-  readonly editor: ScheduledTaskEditor | null;
-  readonly setEditor: Dispatch<SetStateAction<ScheduledTaskEditor | null>>;
-  readonly startEditor: (editor: ScheduledTaskEditor | null) => void;
-  readonly hasChanges: boolean;
-  readonly resetEditor: () => void;
-  readonly draftForEnvironment: (environmentId: EnvironmentId) => ScheduledTaskDraft;
-} | null>(null);
-
-/** Keeps the form draft alive while its native picker routes are on top. */
-export function ScheduledTaskEditorProvider({ children }: { readonly children: ReactNode }) {
+/** The form draft lives in an atom, so it survives while its native picker routes are on top. */
+export function useScheduledTaskEditor() {
   const { selectedTargets, selectedProjectKey, projectGroups } = useSettingsEnvironmentFilter();
   const selectedGroup = projectGroups.find((group) => group.key === selectedProjectKey);
   const configs = useServerConfigs();
@@ -76,43 +57,25 @@ export function ScheduledTaskEditorProvider({ children }: { readonly children: R
         : null,
     [defaultTarget, draftForEnvironment],
   );
-  const [session, setSession] = useState<{
-    readonly initial: ScheduledTaskEditor | null;
-    readonly current: ScheduledTaskEditor | null;
-  } | null>(null);
-  const editor = session?.current ?? defaultEditor;
-  const initial = session?.initial ?? defaultEditor;
-  const hasChanges = Boolean(
-    initial &&
-    editor &&
-    (initial.environmentId !== editor.environmentId ||
-      hasScheduledTaskDraftChanges(initial.draft, editor.draft)),
-  );
-  const setEditor = useCallback<Dispatch<SetStateAction<ScheduledTaskEditor | null>>>(
-    (update) => {
-      setSession((current) => {
-        const previous = current?.current ?? defaultEditor;
-        return {
-          initial: current?.initial ?? previous,
-          current: typeof update === "function" ? update(previous) : update,
-        };
-      });
-    },
-    [defaultEditor],
-  );
-  const startEditor = useCallback((next: ScheduledTaskEditor | null) => {
-    setSession({ initial: next, current: next });
-  }, []);
-  const resetEditor = useCallback(() => startEditor(defaultEditor), [defaultEditor, startEditor]);
-  const value = useMemo(
-    () => ({ editor, setEditor, startEditor, hasChanges, resetEditor, draftForEnvironment }),
-    [editor, setEditor, startEditor, hasChanges, resetEditor, draftForEnvironment],
-  );
-  return <ScheduledTaskEditorContext value={value}>{children}</ScheduledTaskEditorContext>;
-}
-
-export function useScheduledTaskEditor() {
-  const context = use(ScheduledTaskEditorContext);
-  if (!context) throw new Error("Scheduled task editor provider is missing.");
-  return context;
+  const session = useAtomValue(scheduledTaskEditorSessionAtom);
+  const voiceOwnerKey = `scheduled-task:${session?.id ?? 0}`;
+  const editor = session ? session.current : defaultEditor;
+  const initial = session ? session.initial : defaultEditor;
+  const hasChanges = scheduledTaskEditorHasChanges(initial, editor);
+  const setEditor: Dispatch<SetStateAction<ScheduledTaskEditor | null>> = (update) => {
+    updateScheduledTaskEditor(update, defaultEditor);
+  };
+  const startEditor = startScheduledTaskEditor;
+  const resetEditor = () => startEditor(defaultEditor);
+  const readEditor = () => readScheduledTaskEditor(voiceOwnerKey, defaultEditor);
+  return {
+    editor,
+    voiceOwnerKey,
+    readEditor,
+    setEditor,
+    startEditor,
+    hasChanges,
+    resetEditor,
+    draftForEnvironment,
+  };
 }

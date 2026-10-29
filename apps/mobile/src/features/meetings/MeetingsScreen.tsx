@@ -1,3 +1,4 @@
+import { StackActions } from "@react-navigation/native";
 import type { HistoryMeetingSummary } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { useMemo, useState } from "react";
@@ -5,8 +6,8 @@ import { Pressable, RefreshControl, SectionList, TextInput, View } from "react-n
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { GUTTER, GrHeader, GrInputSurface, GrPage, SERIF, SPACE } from "../../design/granola";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
@@ -33,13 +34,6 @@ function meetingDetails(meeting: HistoryMeetingSummary): string {
     .join(" · ");
 }
 
-/**
- * Meetings: start a recording on the phone, what was recorded here, and the
- * meetings Roost keeps on the Mac by day, under a header that stays put, with
- * a box to ask about them (the answer is a thread in the Meetings project).
- * `embedded` is the left page of the home pager; otherwise it is a pushed
- * screen with the native header (links, iPad).
- */
 export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
   const embedded = props.embedded === true;
   const navigation = useNavigation();
@@ -79,10 +73,12 @@ export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
       return;
     }
     setQuestion("");
-    navigation.navigate("Thread", {
-      environmentId,
-      threadId: result.value.threadId,
-    } as never);
+    navigation.dispatch(
+      StackActions.push("Thread", {
+        environmentId,
+        threadId: result.value.threadId,
+      }),
+    );
   };
 
   const footer = embedded ? tabsFootprint(insets.bottom) : insets.bottom + SPACE.sm;

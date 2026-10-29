@@ -8,7 +8,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
@@ -59,44 +59,41 @@ export const mintEnvironmentVoiceRealtimeSession = Effect.fn(
       ? {}
       : { remoteAuthorization: input.remoteAuthorization }),
     method: "POST",
-    url: (httpBaseUrl) => {
-      requestUrl = environmentEndpointUrl(httpBaseUrl, VOICE_REALTIME_SESSION_PATH);
+    url: (urls) => {
+      requestUrl = environmentEndpointUrl(urls.descriptor(), VOICE_REALTIME_SESSION_PATH);
       return requestUrl;
     },
     timeoutMs: MINT_TIMEOUT_MS,
-    request: ({ headers }) =>
-      Effect.gen(function* () {
-        const client = yield* HttpClient.HttpClient;
-        const response = yield* client.post(requestUrl, {
-          headers: {
-            ...(headers.authorization === undefined
-              ? {}
-              : { authorization: headers.authorization }),
-            ...(headers.dpop === undefined ? {} : { dpop: headers.dpop }),
-          },
-        });
-        // The shared helper fixes its own error channel, so the mint failure is
-        // carried out as a value and converted once the request settles.
-        if (response.status < 200 || response.status >= 300) {
-          const rawBody = yield* response.json.pipe(Effect.orElseSucceed(() => undefined));
-          const decoded = decodeErrorResponse(rawBody);
-          return Option.isSome(decoded)
-            ? {
-                ok: false as const,
-                code: decoded.value.error,
-                message: decoded.value.message,
-              }
-            : {
-                ok: false as const,
-                code: "unavailable" as const,
-                message: `Voice session request failed with status ${response.status}.`,
-              };
-        }
-        const session = yield* HttpClientResponse.schemaBodyJson(VoiceRealtimeSessionResponse)(
-          response,
-        );
-        return { ok: true as const, value: session };
-      }),
+    request: Effect.fn("clientRuntime.state.voiceHttp.request")(function* ({ headers }) {
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.post(requestUrl, {
+        headers: {
+          ...(headers.authorization === undefined ? {} : { authorization: headers.authorization }),
+          ...(headers.dpop === undefined ? {} : { dpop: headers.dpop }),
+        },
+      });
+      // The shared helper fixes its own error channel, so the mint failure is
+      // carried out as a value and converted once the request settles.
+      if (response.status < 200 || response.status >= 300) {
+        const rawBody = yield* response.json.pipe(Effect.orElseSucceed(() => undefined));
+        const decoded = decodeErrorResponse(rawBody);
+        return Option.isSome(decoded)
+          ? {
+              ok: false as const,
+              code: decoded.value.error,
+              message: decoded.value.message,
+            }
+          : {
+              ok: false as const,
+              code: "unavailable" as const,
+              message: `Voice session request failed with status ${response.status}.`,
+            };
+      }
+      const session = yield* HttpClientResponse.schemaBodyJson(VoiceRealtimeSessionResponse)(
+        response,
+      );
+      return { ok: true as const, value: session };
+    }),
   }).pipe(
     Effect.mapError(
       (cause) =>

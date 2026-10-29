@@ -1,13 +1,5 @@
-/**
- * Environment-delivered push notifications.
- *
- * The relay path publishes agent activity to T3 Connect and lets the relay
- * decide who to notify. This does the same job without the middleman: the
- * environment watches its own orchestration events, projects the same shared
- * awareness state, and posts straight to APNs with its own auth key. Devices
- * register with the environment, so a self-hosted server notifies its own
- * phone with nobody else in the path.
- */
+// Send environment-local notifications only when configured and appropriate
+// for the thread’s current attention state.
 import { type AgentAwarenessPhase, projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -70,7 +62,7 @@ export class PushNotifier extends Context.Service<
   }
 >()("t3/push/PushNotifier") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
@@ -242,21 +234,19 @@ export const make = Effect.gen(function* () {
       );
   });
 
-  const start = Effect.gen(function* () {
-    yield* forkParked(
-      Stream.runForEach(threads.streamDomainEvents, (event) => {
-        const threadId = event.threadId;
-        if (!shouldPublishAgentAwarenessEvent(event)) {
-          return Effect.void;
-        }
-        return notifyThread(threadId).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("push: thread notification failed", { threadId, cause }),
-          ),
-        );
-      }),
-    );
-  });
+  const start = forkParked(
+    Stream.runForEach(threads.streamDomainEvents, (event) => {
+      const threadId = event.threadId;
+      if (!shouldPublishAgentAwarenessEvent(event)) {
+        return Effect.void;
+      }
+      return notifyThread(threadId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("push: thread notification failed", { threadId, cause }),
+        ),
+      );
+    }),
+  );
 
   return PushNotifier.of({ start, sendTest });
 });

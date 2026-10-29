@@ -6,15 +6,16 @@ import type { EnvironmentId, VoiceRealtimeSessionResponse } from "@t3tools/contr
 import * as Option from "effect/Option";
 
 import { runtime } from "../../lib/runtime";
+import { connectionAtomRuntime } from "../../connection/runtime";
+import { readEnvironmentHttpAuthServices } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentSession } from "../../state/session";
 import { MicrophoneAccessError } from "./voicePlatform";
 
 /**
  * Mint a short-lived OpenAI Realtime client secret from the thread's
- * environment. Mirrors the web helper: cookie/bearer connections work;
- * relay/DPoP connections degrade with a clear error (no signer is threaded
- * through this imperative path yet).
+ * environment. Uses the connection runtime's cookie, bearer, or relay/DPoP
+ * authorization for the raw session-mint request.
  */
 export async function mintVoiceRealtimeSession(
   environmentId: EnvironmentId,
@@ -29,7 +30,10 @@ export async function mintVoiceRealtimeSession(
     });
   }
   return runtime.runPromise(
-    mintEnvironmentVoiceRealtimeSession({ prepared, signer: Option.none() }),
+    mintEnvironmentVoiceRealtimeSession({
+      prepared,
+      ...readEnvironmentHttpAuthServices(connectionAtomRuntime, appAtomRegistry),
+    }),
   );
 }
 

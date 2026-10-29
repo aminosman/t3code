@@ -3,8 +3,10 @@ import {
   mintEnvironmentVoiceRealtimeSession,
   VoiceRealtimeSessionMintError,
 } from "@t3tools/client-runtime/state/voiceHttp";
-import * as Option from "effect/Option";
 import { runtime } from "~/lib/runtime";
+import { connectionAtomRuntime } from "~/connection/runtime";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { readEnvironmentHttpAuthServices } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import { readPreparedConnection } from "~/state/session";
 import { MicrophoneAccessError } from "./microphoneAccess";
 
@@ -23,14 +25,11 @@ export async function mintVoiceRealtimeSession(
       message: "This environment is not connected.",
     });
   }
-  // No DPoP signer is available outside the connection runtime, so voice
-  // sessions require a cookie or bearer connection (same constraint as the
-  // HTTP thread-snapshot fast path, which also degrades over relay).
-  // Run on the general runtime rather than `runPrimaryHttp`: the voice
-  // endpoint is issued as a raw request, so it needs `HttpClient`, which the
-  // primary runtime does not expose (it publishes the typed API client only).
   return runtime.runPromise(
-    mintEnvironmentVoiceRealtimeSession({ prepared, signer: Option.none() }),
+    mintEnvironmentVoiceRealtimeSession({
+      prepared,
+      ...readEnvironmentHttpAuthServices(connectionAtomRuntime, appAtomRegistry),
+    }),
   );
 }
 

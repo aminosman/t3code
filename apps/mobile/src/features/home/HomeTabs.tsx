@@ -1,7 +1,7 @@
 import { Pressable, View } from "react-native";
 import Animated, { type SharedValue, useAnimatedStyle } from "react-native-reanimated";
 
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { FLOAT_SHADOW } from "../../design/granola";
 
 export type HomeTab = "meetings" | "home" | "chats";

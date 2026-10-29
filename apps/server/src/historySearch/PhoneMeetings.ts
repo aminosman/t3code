@@ -1,22 +1,6 @@
-/**
- * Meetings recorded on the phone, put on the Mac.
- *
- * The phone records and transcribes on its own, so a meeting is never lost
- * offline. When the Mac is reachable it hands the meeting over in two steps:
- *
- * 1. The audio, streamed to a signed URL into `~/Meetings/<id>/phone.m4a`.
- * 2. The rest: `transcript.md` (the phone's own transcript, so the meeting
- *    reads at once), `notes.md` (what the user typed) and, last, `meta.json`.
- *
- * `meta.json` is the sign tui reads as "this recording is finished": it then
- * transcribes `phone.m4a` itself (Parakeet, with room diarization), writes the
- * notes and files the meeting into a project, exactly as for a meeting it
- * recorded. Nothing here runs tui; the folder is the interface, as for the
- * reader in Meetings.ts.
- *
- * @module historySearch/PhoneMeetings
- */
-import * as NodeCrypto from "node:crypto";
+// Upload audio first, then transcript and notes, then meta.json.
+// Publishing meta.json tells tui the offline recording is ready for processing.
+import * as Crypto from "effect/Crypto";
 
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -26,7 +10,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import type {
   HistoryPhoneMeetingImportInput,
@@ -80,21 +64,22 @@ const signingSecret = Effect.gen(function* () {
   return yield* secrets.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
 });
 
-const folderOf = (meetingsDir: string, meetingId: string) =>
-  Effect.gen(function* () {
-    if (!Meetings.isMeetingId(meetingId)) {
-      return yield* new PhoneMeetingError({ reason: `not a meeting name: ${meetingId}` });
-    }
-    const path = yield* Path.Path;
-    return path.join(meetingsDir, meetingId);
-  });
+const folderOf = Effect.fn("PhoneMeetings.folderOf")(function* (
+  meetingsDir: string,
+  meetingId: string,
+) {
+  if (!Meetings.isMeetingId(meetingId)) {
+    return yield* new PhoneMeetingError({ reason: `not a meeting name: ${meetingId}` });
+  }
+  const path = yield* Path.Path;
+  return path.join(meetingsDir, meetingId);
+});
 
-const fileSize = (file: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const info = yield* fs.stat(file).pipe(Effect.option);
-    return info._tag === "Some" && info.value.type === "File" ? Number(info.value.size) : null;
-  });
+const fileSize = Effect.fn("PhoneMeetings.fileSize")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.stat(file).pipe(Effect.option);
+  return info._tag === "Some" && info.value.type === "File" ? Number(info.value.size) : null;
+});
 
 /** Signs a URL for the audio, or says it is already on the Mac (a retry). */
 export const issueAudioUploadUrl = Effect.fn("PhoneMeetings.issueAudioUploadUrl")(function* (
@@ -161,7 +146,9 @@ export const storeAudioUpload = Effect.fn("PhoneMeetings.storeAudio")(function* 
     return { ok: false, status: 400, detail: "Not a meeting name." } satisfies StoreAudioResult;
   }
   const finalPath = path.join(folder.value, PHONE_MEETING_AUDIO_FILE);
-  const partPath = `${finalPath}.${NodeCrypto.randomUUID()}.part`;
+  const crypto = yield* Crypto.Crypto;
+  const uploadId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+  const partPath = `${finalPath}.${uploadId}.part`;
   let received = 0;
   return yield* Effect.gen(function* () {
     yield* fs.makeDirectory(folder.value, { recursive: true });

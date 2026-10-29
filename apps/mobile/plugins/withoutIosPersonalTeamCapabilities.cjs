@@ -1,13 +1,6 @@
 const { withEntitlementsPlist } = require("expo/config-plugins");
 
-/**
- * Strips entitlements a free Apple Developer ("personal") team cannot sign.
- *
- * A *paid* team building under its own bundle id is a different case: it can
- * sign push, it just isn't the T3 Tools org. `T3CODE_IOS_KEEP_PUSH=1` keeps
- * `aps-environment` so those builds can register for notifications, provided
- * the App ID has the Push Notifications capability enabled.
- */
+// Personal teams cannot sign push. Paid teams can opt in with T3CODE_IOS_KEEP_PUSH=1.
 module.exports = function withoutIosPersonalTeamCapabilities(config) {
   return withEntitlementsPlist(config, (modConfig) => {
     if (process.env.T3CODE_IOS_KEEP_PUSH !== "1") {

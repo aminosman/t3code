@@ -34,6 +34,7 @@ export function useTuiEnvironment(): {
     );
   }, [environments, savedConnectionsById]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Remember the selected Mac across home mounts in the environment selection registry.
   useEffect(() => {
     if (pick) lastEnvironmentId = pick.environmentId;
   }, [pick]);

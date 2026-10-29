@@ -86,13 +86,6 @@ export function nextGroupDisplayState(
   }
 }
 
-/**
- * Structural equality for list items. Item objects are rebuilt on every
- * collapse/show-more toggle; without this the lists would consider every
- * mounted row changed and re-render all of them (each carrying a swipeable +
- * a vcs-status subscription). Group/thread references are stable across
- * toggles.
- */
 export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem): boolean {
   switch (item.type) {
     case "header":
@@ -166,11 +159,6 @@ export function buildHomeListLayout(input: {
     const { topLevel, childrenByOwner } = groupOwnedThreads(group.threads);
     const topLevelIds = new Set(topLevel.map((thread) => thread.id));
     const totalCount = topLevel.length;
-    // Default to the group's recent-activity window (last few days, or a small
-    // fallback for stale projects), capped at the initial page size. Until the
-    // user taps "Show more", older threads stay hidden to save vertical space;
-    // "Show less" resets visibleCount to the initial constant, which lands back
-    // here at the recency baseline.
     const baselineCount = Math.min(
       group.recentThreads.filter((thread) => topLevelIds.has(thread.id)).length,
       HOME_INITIAL_VISIBLE_THREADS,

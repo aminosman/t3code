@@ -9,24 +9,17 @@ import {
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import { McpConnectionId } from "@t3tools/contracts";
 
-import * as McpProviderSession from "../McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../McpSessionRegistry.ts";
 import { MCP_OAUTH_CALLBACK_PATH, McpConnectionService } from "./McpConnectionService.ts";
 import * as McpStdioHost from "./McpStdioHost.ts";
 
-/**
- * `/mcp/connections/:id` is how an agent reaches a user MCP connection: the
- * same per-thread bearer that guards `/mcp` comes in, the project's real
- * credential goes out, and the JSON-RPC body passes through untouched. The
- * agent never holds a third-party token, and every CLI sees an ordinary
- * streamable HTTP server. Stdio connections take the same door and end at the
- * host that owns the child process.
- */
+// Proxy MCP credentials server-side so agents never receive upstream secrets.
 
-export const MCP_CONNECTIONS_ROUTE = "/mcp/connections/:id";
+const MCP_CONNECTIONS_ROUTE = "/mcp/connections/:id";
 
 const FORWARDED_REQUEST_HEADERS = [
   "content-type",
@@ -95,9 +88,10 @@ const proxyRoute = Effect.gen(function* () {
     yield* Effect.logWarning("rejected MCP connection request with an unusable credential", { id });
     return unauthorized;
   }
-  const entry = McpProviderSession.readMcpProviderSessionConnections(scope.threadId).find(
-    (candidate) => candidate.id === id,
-  );
+  const sessions = yield* McpProviderSessions.McpProviderSessions;
+  const config = yield* sessions.read(scope.thread.threadId);
+  if (config?.providerSessionId !== scope.thread.providerSessionId) return unauthorized;
+  const entry = (config.connections ?? []).find((candidate) => candidate.id === id);
   if (entry === undefined) {
     // Either the connection does not exist or this thread's project is not
     // signed in to it; the session only lists usable connections.
@@ -192,19 +186,20 @@ const proxyRoute = Effect.gen(function* () {
     ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
   });
 }).pipe(
-  Effect.catchTag("HttpClientError", (error) =>
-    Effect.logWarning("MCP connection upstream request failed", { error }).pipe(
-      Effect.as(
-        HttpServerResponse.jsonUnsafe(
-          {
-            error: "mcp_connection_upstream_failed",
-            message: "The MCP server could not be reached.",
-          },
-          { status: 502, headers: { "cache-control": "no-store" } },
+  Effect.catchTags({
+    HttpClientError: (error) =>
+      Effect.logWarning("MCP connection upstream request failed", { error }).pipe(
+        Effect.as(
+          HttpServerResponse.jsonUnsafe(
+            {
+              error: "mcp_connection_upstream_failed",
+              message: "The MCP server could not be reached.",
+            },
+            { status: 502, headers: { "cache-control": "no-store" } },
+          ),
         ),
       ),
-    ),
-  ),
+  }),
 );
 
 const escapeHtml = (value: string) =>
@@ -215,7 +210,7 @@ const escapeHtml = (value: string) =>
   );
 
 /** What the browser shows after the authorization server sends it back. */
-export function mcpConnectionCallbackPage(input: {
+function mcpConnectionCallbackPage(input: {
   readonly success: boolean;
   readonly name: string;
   readonly detail?: string;

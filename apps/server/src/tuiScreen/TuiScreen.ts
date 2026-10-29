@@ -1,23 +1,5 @@
-/**
- * The tui screen: the Mac's display on a phone, through this server.
- *
- * tui holds one `connect` stream. While at least one phone is on
- * `subscribe`, it is told so (`viewers`) and posts JPEG frames with `frame`;
- * when the last phone leaves, it is told that too and stops capturing. The
- * phone's taps, scrolls and typing arrive with `control` and go to tui on
- * its stream, which puts them on the Mac as real input. The case it exists
- * for: an agent opens a sign-in page the user must click through themselves,
- * from wherever they are.
- *
- * An agent thread blocked on the user at the Mac asks with `ask` (the
- * `t3_screen_hand_over` MCP tool). The ask is listed to phones and to tui,
- * which shows the display holding the window it names; the phone's Done or
- * Not now comes back through `resolve` and is handed to the asker's answer,
- * which sends it into the thread.
- *
- * Frames are not queued: a phone that falls behind gets the newest frame
- * next, not the one after the last it saw. Nothing is kept across a restart.
- */
+// Frames skip ahead when a phone falls behind; nothing survives a restart.
+// Hand-over requests return the phone’s answer to the asking thread.
 import {
   TuiScreenError,
   type TuiScreenEvent,
@@ -98,7 +80,7 @@ export const make = Effect.gen(function* () {
   const subscribers = new Set<Queue.Queue<TuiScreenEvent, Cause.Done>>();
   const pending = new Map<string, Pending>();
 
-  const uuid = crypto.randomUUIDv4.pipe(Effect.orDie);
+  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
 
   const broadcast = (event: TuiScreenEvent) =>
     Effect.forEach(subscribers, (queue) => Queue.offer(queue, event), { discard: true });
@@ -120,14 +102,13 @@ export const make = Effect.gen(function* () {
     yield* Queue.offer(host.queue, { type: "viewers", count: subscribers.size });
   });
 
-  const releaseHost = (queue: Host["queue"]) =>
-    Effect.gen(function* () {
-      if (host?.queue !== queue) return;
-      host = null;
-      lastFrame = null;
-      lastStatus = { state: "idle" };
-      yield* broadcast({ type: "host", connected: false });
-    });
+  const releaseHost = Effect.fn("TuiScreen.releaseHost")(function* (queue: Host["queue"]) {
+    if (host?.queue !== queue) return;
+    host = null;
+    lastFrame = null;
+    lastStatus = { state: "idle" };
+    yield* broadcast({ type: "host", connected: false });
+  });
 
   const connect: TuiScreen["Service"]["connect"] = (registration) =>
     Effect.succeed(

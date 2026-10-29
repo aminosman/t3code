@@ -1,23 +1,5 @@
-/**
- * The `threads` toolkit, wired to the V2 orchestrator.
- *
- * Shells and commands go through `ThreadManagementService`, the same service
- * upstream's own MCP thread tools use; writes are `message.dispatch` and
- * `thread.archive` commands, so every invariant the UI is held to (no
- * archiving twice, no sending to a deleted thread) holds for
- * an agent too. `thread.delete` is never dispatched from here. Unlike
- * upstream's tools, these reach every project, not only the caller's.
- *
- * Message reads (the latest window, a window around one message, an archived
- * thread) go through `HistorySearch`, which reads the projection tables
- * directly. Meetings are files on this Mac and are read there too.
- *
- * The calling thread comes off the invocation scope and is the default
- * project for listing. It is also the one thread that cannot be
- * archived from here: it is running this very call.
- *
- * @module mcp/toolkits/threads/handlers
- */
+// Agent writes use the same orchestration services and invariants as client writes.
+// Tools can reach other projects, but cannot archive their own calling thread.
 import {
   CommandId,
   MessageId,
@@ -35,8 +17,9 @@ import * as Ref from "effect/Ref";
 
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import { ProjectService } from "../../../project/ProjectService.ts";
-import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { HistorySearch, type ThreadMessagesOutput } from "../../../historySearch/HistorySearch.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { type ThreadSummary, ThreadsToolkit, ThreadToolError } from "./tools.ts";
 
@@ -143,14 +126,14 @@ const makeHandlers = Effect.gen(function* () {
         reason: "this agent session was not granted access to Roost threads",
       });
     }
-    return scope;
+    return yield* McpInvocationContext.requireThreadScope(scope, "Roost history and thread tools");
   });
 
   /** The thread making the call, as the projection sees it right now. */
   const requireCaller = Effect.gen(function* () {
     const scope = yield* requireScope;
     const caller = yield* threads
-      .getThreadShell(scope.threadId)
+      .getThreadShell(scope.thread.threadId)
       .pipe(Effect.mapError(failWith("could not read the calling thread")));
     if (caller === null || caller.archivedAt !== null) {
       return yield* new ThreadToolError({
@@ -160,28 +143,29 @@ const makeHandlers = Effect.gen(function* () {
     return caller;
   });
 
-  const requireProject = (projectId: ProjectId) =>
-    Effect.gen(function* () {
-      const project = yield* projects
-        .getById(projectId)
-        .pipe(Effect.mapError(failWith("could not read the project")));
-      if (Option.isNone(project)) {
-        return yield* new ThreadToolError({ reason: `no project with id ${projectId}` });
-      }
-      return project.value;
-    });
+  const requireProject = Effect.fn("Threads.requireProject")(function* (projectId: ProjectId) {
+    const project = yield* projects
+      .getById(projectId)
+      .pipe(Effect.mapError(failWith("could not read the project")));
+    if (Option.isNone(project)) {
+      return yield* new ThreadToolError({ reason: `no project with id ${projectId}` });
+    }
+    return project.value;
+  });
 
   /** A thread that exists and is not archived, or a reason why not. */
-  const requireActiveThread = (threadId: ThreadId, missing: string) =>
-    Effect.gen(function* () {
-      const thread = yield* threads
-        .getThreadShell(threadId)
-        .pipe(Effect.mapError(failWith("could not read the thread")));
-      if (thread === null || thread.archivedAt !== null) {
-        return yield* new ThreadToolError({ reason: missing });
-      }
-      return thread;
-    });
+  const requireActiveThread = Effect.fn("Threads.requireActiveThread")(function* (
+    threadId: ThreadId,
+    missing: string,
+  ) {
+    const thread = yield* threads
+      .getThreadShell(threadId)
+      .pipe(Effect.mapError(failWith("could not read the thread")));
+    if (thread === null || thread.archivedAt !== null) {
+      return yield* new ThreadToolError({ reason: missing });
+    }
+    return thread;
+  });
 
   const fromRows = (rows: ThreadMessagesOutput, callerThreadId: ThreadId, maxChars: number) => ({
     thread: {
@@ -201,7 +185,7 @@ const makeHandlers = Effect.gen(function* () {
     hasNewer: rows.hasNewer,
   });
 
-  return {
+  const handlers = {
     t3_history_search: Effect.fn("ThreadsToolkit.t3_history_search")(function* (input: {
       readonly query: string;
       readonly sources?: ReadonlyArray<"threads" | "meetings"> | undefined;
@@ -224,8 +208,8 @@ const makeHandlers = Effect.gen(function* () {
           role: input.role,
           since: input.since,
           limit: input.limit,
-          excludeThreadId: input.includeCurrent ? undefined : scope.threadId,
-          caller: { threadId: scope.threadId, provider: scope.providerInstanceId },
+          excludeThreadId: input.includeCurrent ? undefined : scope.thread.threadId,
+          caller: { threadId: scope.thread.threadId, provider: scope.thread.providerInstanceId },
         })
         .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
     }),
@@ -237,7 +221,7 @@ const makeHandlers = Effect.gen(function* () {
     }) {
       const scope = yield* requireScope;
       const searchId = yield* history.recordFeedback({
-        callerThreadId: scope.threadId,
+        callerThreadId: scope.thread.threadId,
         searchId: input.searchId,
         found: input.found,
         note: input.note,
@@ -263,7 +247,7 @@ const makeHandlers = Effect.gen(function* () {
     }) {
       const scope = yield* requireScope;
       yield* history.recordOpen({
-        callerThreadId: scope.threadId,
+        callerThreadId: scope.thread.threadId,
         kind: "meeting",
         id: input.meetingId,
       });
@@ -453,14 +437,14 @@ const makeHandlers = Effect.gen(function* () {
       // agent answering it both know nobody typed this.
       const text =
         `[Sent by the agent in thread "${caller.title}" (${caller.id}), not typed by the user. ` +
-        `Answer in your reply — that thread will read it.]\n\n${input.message.trim()}`;
+        `Answer in your reply. that thread will read it.]\n\n${input.message.trim()}`;
       yield* threads
         .sendToThread({
           projectId: target.projectId,
-          commandId: CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+          commandId: CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
           threadId: target.id,
           senderThreadId: caller.id,
-          messageId: MessageId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie)),
+          messageId: MessageId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
           text,
           attachments: [],
           mode: "auto",
@@ -542,13 +526,32 @@ const makeHandlers = Effect.gen(function* () {
         input.threadId,
         `no active thread with id ${input.threadId} (already archived, or never existed)`,
       );
-      const commandId = CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
+      const commandId = CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
       yield* threads
         .dispatch({ type: "thread.archive", commandId, threadId: input.threadId })
         .pipe(Effect.mapError(failWith("could not archive the thread")));
       return { threadId: input.threadId, archived: true as const };
     }),
-  } satisfies Parameters<typeof ThreadsToolkit.toLayer>[0];
+  };
+
+  return {
+    t3_history_search: McpToolAccess.readsAsCaller(handlers.t3_history_search),
+    t3_history_feedback: McpToolAccess.actsAsCaller(handlers.t3_history_feedback),
+    t3_meeting_list: McpToolAccess.readsAsCaller(handlers.t3_meeting_list),
+    t3_meeting_read: McpToolAccess.readsAsCaller(handlers.t3_meeting_read),
+    t3_any_thread_list: McpToolAccess.readsAsCaller(handlers.t3_any_thread_list),
+    t3_any_thread_read: McpToolAccess.readsAsCaller(handlers.t3_any_thread_read),
+    t3_model_list: McpToolAccess.readsAsCaller(handlers.t3_model_list),
+    t3_any_thread_send: McpToolAccess.writesThreads(
+      (input: { readonly threadId: ThreadId }) => [input.threadId],
+      handlers.t3_any_thread_send,
+    ),
+    t3_any_thread_wait: McpToolAccess.readsAsCaller(handlers.t3_any_thread_wait),
+    t3_thread_archive: McpToolAccess.writesThreads(
+      (input: { readonly threadId: ThreadId }) => [input.threadId],
+      handlers.t3_thread_archive,
+    ),
+  } satisfies McpToolAccess.Handlers<typeof ThreadsToolkit.tools>;
 });
 
-export const ThreadsToolkitHandlersLive = ThreadsToolkit.toLayer(makeHandlers);
+export const layer = McpToolAccess.toLayer(ThreadsToolkit, makeHandlers);

@@ -9,7 +9,6 @@ import {
   voiceOracleThreadView,
   truncateForVoice,
   VOICE_ORACLE_TOOLS,
-  type VoiceOracleThreadView,
 } from "@t3tools/client-runtime/voice/oracle";
 import {
   RealtimeVoiceSession,
@@ -18,8 +17,8 @@ import {
 import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { AsyncResult } from "effect/reactivity";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { View } from "react-native";
 import Animated, {
   cancelAnimation,
@@ -31,8 +30,8 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { ControlPill } from "../../components/ControlPill";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ControlPill } from "../../components/ui/ControlPill";
 import { makeQueuedMessageMetadata } from "../../lib/commandMetadata";
 import { uuidv4 } from "../../lib/uuid";
 import { recordLocalDiagnostic, recordLocalDiagnosticError } from "../diagnostics/localDiagnostics";
@@ -98,8 +97,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     projection: thread,
     shell,
   });
-  const viewRef = useRef<VoiceOracleThreadView>(view);
-  viewRef.current = view;
+  const readView = useEffectEvent(() => view);
 
   const sendToAgent = useCallback(
     async (text: string): Promise<string | null> => {
@@ -133,8 +131,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     },
     [environmentId, shell, startTurn, threadId],
   );
-  const sendToAgentRef = useRef(sendToAgent);
-  sendToAgentRef.current = sendToAgent;
+  const sendCurrentToAgent = useEffectEvent(sendToAgent);
 
   const voiceSessionRef = useRef<RealtimeVoiceSession | null>(null);
   const lastTurnRef = useRef<{ turnId: string | null; state: string | null }>({
@@ -142,6 +139,16 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     state: view.latestRun?.status ?? null,
   });
 
+  const reflectConnectedSession = useEffectEvent(() => {
+    setSpeakerOn(isVoiceSpeakerphoneOn());
+    setExternalAudio(currentVoiceAudioSession()?.hasExternalAudioDevice ?? false);
+    lastTurnRef.current = {
+      turnId: view.latestRun?.runId ?? null,
+      state: view.latestRun?.status ?? null,
+    };
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to native audio route changes.
   useEffect(
     () =>
       subscribeVoiceSpeakerphone((enabled, externalOutput) => {
@@ -151,6 +158,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     [],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the realtime voice connection and close it on unmount.
   useEffect(() => {
     let disposed = false;
     let voiceSession: RealtimeVoiceSession | null = null;
@@ -165,9 +173,9 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
           {
             clientSecret: minted.clientSecret,
             model: minted.model,
-            instructions: buildOracleInstructions(viewRef.current),
+            instructions: buildOracleInstructions(readView()),
             tools: VOICE_ORACLE_TOOLS,
-            openingContext: buildResumeContext(viewRef.current),
+            openingContext: buildResumeContext(readView()),
             onDiagnosticEvent: (event, fields) => {
               recordLocalDiagnostic(event, { voiceSessionId, ...fields });
             },
@@ -175,8 +183,8 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
               executeVoiceOracleTool({
                 name,
                 args,
-                view: viewRef.current,
-                sendToAgent: (text) => sendToAgentRef.current(text),
+                view: readView(),
+                sendToAgent: (text) => sendCurrentToAgent(text),
                 endSession: () => {
                   setHangingUp(true);
                   session.requestHangUp();
@@ -218,12 +226,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
         recordLocalDiagnostic("voice.connected", { voiceSessionId });
         // The session picks the initial route (headphones win over speaker);
         // reflect whatever it chose so the toggle starts truthful.
-        setSpeakerOn(isVoiceSpeakerphoneOn());
-        setExternalAudio(currentVoiceAudioSession()?.hasExternalAudioDevice ?? false);
-        lastTurnRef.current = {
-          turnId: viewRef.current.latestRun?.runId ?? null,
-          state: viewRef.current.latestRun?.status ?? null,
-        };
+        reflectConnectedSession();
       } catch (error) {
         recordLocalDiagnosticError("voice.connect_failed", error);
         if (disposed) return;
@@ -250,6 +253,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
   // Report coding-agent turn transitions into the live voice conversation.
   const latestTurnId = view.latestRun?.runId ?? null;
   const latestTurnState = view.latestRun?.status ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Inject coding-agent turn transitions into the live voice connection.
   useEffect(() => {
     const voiceSession = voiceSessionRef.current;
     const previous = lastTurnRef.current;
@@ -266,7 +270,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     const wasRunningTurn = previous.turnId === latestTurnId && isRunActive(previous.state);
     if (!wasRunningTurn) return;
 
-    const lastAssistantText = [...viewRef.current.messages]
+    const lastAssistantText = [...readView().messages]
       .reverse()
       .find((message) => message.role === "assistant" && message.text.trim().length > 0)?.text;
     const outcome =
@@ -290,37 +294,38 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
   // Orb: gentle status-driven pulse while the session is live.
   const orbScale = useSharedValue(1);
   const status = phase.kind === "active" ? phase.status : "connecting";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Drive the native voice orb animation from session status.
   useEffect(() => {
     cancelAnimation(orbScale);
     if (status === "speaking" || status === "thinking") {
       const amplitude = status === "speaking" ? 1.12 : 1.05;
       const duration = status === "speaking" ? 420 : 900;
-      orbScale.value = withRepeat(
-        withTiming(amplitude, { duration, easing: Easing.inOut(Easing.quad) }),
-        -1,
-        true,
+      orbScale.set(
+        withRepeat(
+          withTiming(amplitude, { duration, easing: Easing.inOut(Easing.quad) }),
+          -1,
+          true,
+        ),
       );
     } else {
-      orbScale.value = withTiming(1, { duration: 350 });
+      orbScale.set(withTiming(1, { duration: 350 }));
     }
   }, [orbScale, status]);
   const orbStyle = useAnimatedStyle(() => ({ transform: [{ scale: orbScale.value }] }));
 
-  const agentActivity = describeAgentActivity(viewRef.current);
+  const agentActivity = describeAgentActivity(view);
 
-  const toggleMuted = useCallback(() => {
-    setMuted((current) => {
-      const next = !current;
-      voiceSessionRef.current?.setMuted(next);
-      return next;
-    });
-  }, []);
+  const toggleMuted = () => {
+    const next = !muted;
+    voiceSessionRef.current?.setMuted(next);
+    setMuted(next);
+  };
 
-  const toggleSpeaker = useCallback(() => {
+  const toggleSpeaker = () => {
     const next = !speakerOn;
     setVoiceSpeakerphone(next);
     setSpeakerOn(next);
-  }, [speakerOn]);
+  };
 
   const endSession = useCallback(() => {
     navigation.goBack();
@@ -333,7 +338,7 @@ export function VoiceOracleScreen({ route }: VoiceOracleScreenProps) {
     >
       <View className="items-center px-6">
         <Text className="font-t3-bold text-foreground text-base" numberOfLines={1}>
-          {viewRef.current.threadTitle}
+          {view.threadTitle}
         </Text>
         <Text className="text-foreground-muted mt-1 text-xs">
           {agentActivity.label}

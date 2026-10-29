@@ -1,11 +1,5 @@
-/**
- * Voice oracle HTTP route.
- *
- * Mints short-lived OpenAI Realtime client secrets so browser clients can
- * open a WebRTC speech session directly with OpenAI. The long-lived API key
- * stays server-side (settings secret store or OPENAI_API_KEY); audio never
- * flows through the T3 server.
- */
+// Mint short-lived Realtime secrets; keep the API key server-side.
+// Audio flows directly between the client and OpenAI.
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_VOICE_REALTIME_MODEL,
@@ -23,7 +17,7 @@ import {
   HttpRouter,
   HttpServerRespondable,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import { authenticateRawRouteWithScope } from "../http.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -54,9 +48,10 @@ export const voiceRealtimeSessionRouteLayer = HttpRouter.add(
     const httpClient = yield* HttpClient.HttpClient;
 
     const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchTag("ServerSettingsError", (cause) =>
-        Effect.logWarning("voice: failed to read settings", { cause }).pipe(Effect.as(undefined)),
-      ),
+      Effect.catchTags({
+        ServerSettingsError: (cause) =>
+          Effect.logWarning("voice: failed to read settings", { cause }).pipe(Effect.as(undefined)),
+      }),
     );
     const apiKey = settings?.voice.openaiApiKey || process.env.OPENAI_API_KEY || "";
     if (apiKey.length === 0) {
@@ -105,7 +100,7 @@ export const voiceRealtimeSessionRouteLayer = HttpRouter.add(
               error: "upstream-error",
               message:
                 status === 401 || status === 403
-                  ? "OpenAI rejected the API key. It may have been rotated or revoked — re-enter it in Settings → Voice."
+                  ? "OpenAI rejected the API key. It may have been rotated or revoked. re-enter it in Settings → Voice."
                   : status === 404
                     ? "OpenAI does not recognize the configured realtime model. Clear the model in Settings → Voice to use the default."
                     : "OpenAI rejected the realtime session request. Check the API key and model.",

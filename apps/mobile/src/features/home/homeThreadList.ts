@@ -59,6 +59,7 @@ export function buildHomeProjectScopes(input: {
   );
   return buildProjectGroups({
     projects,
+    groupScratchProjects: true,
     settings: {
       sidebarProjectGroupingMode: input.projectGroupingMode,
       sidebarProjectGroupingOverrides: {},
@@ -72,6 +73,24 @@ export function buildHomeProjectScopes(input: {
       projectRefs: group.memberProjectRefs,
     };
   });
+}
+
+export function findHomeProjectScope(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  key: string | null,
+): HomeProjectScope | null {
+  if (key === null) {
+    return null;
+  }
+  return (
+    scopes.find((scope) => scope.key === key) ??
+    scopes.find((scope) =>
+      scope.projectRefs.some(
+        (projectRef) => scopedProjectKey(projectRef.environmentId, projectRef.projectId) === key,
+      ),
+    ) ??
+    null
+  );
 }
 
 export function sortHomeProjectScopes(input: {
@@ -152,14 +171,6 @@ export interface HomeThreadGroup {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   /** Subset shown by default: threads from the last few days, or the most recent few. */
   readonly recentThreads: ReadonlyArray<EnvironmentThreadShell>;
-  /**
-   * Where a quick "new thread in this project" should land. For aggregated
-   * groups (same repo on several machines) this is the member that owns the
-   * group's most recent thread — the machine the user last worked on — rather
-   * than the arbitrary first member; the draft's computer picker covers
-   * switching from there. Null only for synthetic pending-project groups,
-   * whose single "project" is a placeholder built from queued-task metadata.
-   */
   readonly newThreadTarget: EnvironmentProject | null;
 }
 

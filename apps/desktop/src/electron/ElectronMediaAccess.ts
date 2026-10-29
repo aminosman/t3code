@@ -1,5 +1,5 @@
 import type { DesktopMicrophoneAccess } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -25,7 +25,7 @@ export class ElectronMediaAccess extends Context.Service<
 
 export const make = ElectronMediaAccess.of({
   requestMicrophone: Effect.gen(function* () {
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     if (platform !== "darwin") {
       return "unsupported" as const;
     }
@@ -35,12 +35,8 @@ export const make = ElectronMediaAccess.of({
         return Effect.succeed<DesktopMicrophoneAccess>(status);
       }
       return Effect.promise(() => Electron.systemPreferences.askForMediaAccess("microphone")).pipe(
-        // `ask` returning false covers two very different cases: the user
-        // declined (status flips to "denied") or macOS suppressed the prompt
-        // entirely (status stays "not-determined" and nothing is recorded —
-        // headless/scripted launch contexts do this). Re-read the status
-        // instead of assuming a denial, so a suppressed prompt does not
-        // block the renderer's own getUserMedia prompt path.
+        // A suppressed macOS prompt leaves status not-determined. Re-read it so
+        // the renderer can still prompt with getUserMedia rather than treating it as denied.
         Effect.map((granted): DesktopMicrophoneAccess =>
           granted ? "granted" : Electron.systemPreferences.getMediaAccessStatus("microphone"),
         ),

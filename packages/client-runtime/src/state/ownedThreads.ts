@@ -1,11 +1,5 @@
-/**
- * Roost: a thread that another thread owns — a delegate_task child, or a
- * subagent the provider spawned itself — is drawn under its owner, and a
- * thread nobody owns stays at the top of the project's list (Amin, Oct 5
- * 2026: "nest owned and unnest non owned"). Ownership is the server's
- * `lineage.relationshipToParent === "subagent"`; a fork is not owned and stays
- * flat. Shared by the desktop's legacy sidebar and the phone's grouped list.
- */
+// Only subagent lineage implies ownership. Forks remain top-level threads.
+// Shared by desktop and phone thread lists.
 interface OwnableThread {
   readonly id: string;
   readonly lineage: {
@@ -25,7 +19,7 @@ export interface OwnedThreadRow<T> {
   readonly expanded: boolean;
 }
 
-export function ownerThreadId(thread: OwnableThread): string | null {
+function ownerThreadId(thread: OwnableThread): string | null {
   return thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null;
 }
 

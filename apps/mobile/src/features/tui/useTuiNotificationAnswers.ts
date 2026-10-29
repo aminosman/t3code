@@ -18,6 +18,7 @@ export function useTuiNotificationAnswers(): void {
     label: "answer tui from a notification",
     reportFailure: false,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Register the native notification action handler and release it on unmount.
   useEffect(() => {
     void registerTuiNotificationCategory();
     setTuiNotificationAnswerHandler(async (answer) => {

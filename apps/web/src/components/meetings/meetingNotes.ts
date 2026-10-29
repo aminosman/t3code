@@ -1,9 +1,3 @@
-// A meeting's notes (summary.md) as its page draws them: a title, the summary,
-// sections of bullets — each line marked as the user's own words or the
-// model's. Granola keeps what the user typed in black and what the AI added in
-// grey; a line is the user's when it carries most of the words of one line they
-// typed (notes.md). Pure, so it is tested.
-
 export interface NoteLine {
   readonly text: string;
   readonly mine: boolean;
@@ -33,7 +27,7 @@ const words = (text: string): Set<string> =>
   );
 
 /** At least two thirds of the words of something the user typed. */
-export function isMine(text: string, typed: ReadonlyArray<Set<string>>): boolean {
+function isMine(text: string, typed: ReadonlyArray<Set<string>>): boolean {
   const have = words(text);
   if (have.size === 0) return false;
   return typed.some((mine) => {

@@ -1,12 +1,3 @@
-/**
- * Reply, Approve and Decline on a thread's notification, without opening the app.
- *
- * iOS hands the action to the app in the background (launching it when it
- * was not running). The answer goes to the environment over plain HTTP, which
- * needs only the saved connection, not a socket. On a cold launch even that
- * takes a moment to restore, so an answer is held and retried briefly; one
- * that cannot go is said in a local notification that opens the thread.
- */
 import {
   EnvironmentId,
   PUSH_APPROVE_ACTION,
@@ -18,10 +9,12 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { sendPushReply } from "@t3tools/client-runtime/state/pushHttp";
+import { readEnvironmentHttpAuthServices } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import * as Option from "effect/Option";
 import * as Notifications from "expo-notifications";
 
 import { runtime } from "../../lib/runtime";
+import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentSession } from "../../state/session";
 
@@ -90,7 +83,13 @@ async function send(answer: ThreadNotificationAnswer): Promise<Outcome> {
   // The saved connection is still being restored after a cold launch.
   if (!prepared) return "retry";
   return runtime
-    .runPromise(sendPushReply({ prepared, signer: Option.none(), reply: answer.reply }))
+    .runPromise(
+      sendPushReply({
+        prepared,
+        ...readEnvironmentHttpAuthServices(connectionAtomRuntime, appAtomRegistry),
+        reply: answer.reply,
+      }),
+    )
     .then(
       (): Outcome => "delivered",
       (error: { readonly status?: number; readonly message?: string }): Outcome =>

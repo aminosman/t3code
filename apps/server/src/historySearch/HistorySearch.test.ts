@@ -12,13 +12,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Embedder from "./Embedder.ts";
 import * as HistorySearch from "./HistorySearch.ts";
 import * as Meetings from "./Meetings.ts";
@@ -91,7 +91,7 @@ const FakeEmbedder = Layer.succeed(
 
 const layer = it.layer(
   HistorySearchTest.pipe(
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(NodeServices.layer),
   ),
 );
@@ -632,7 +632,7 @@ layer("HistorySearch", (it) => {
 it.effect("builds the index at launch and folds in new messages as thread events arrive", () =>
   Effect.gen(function* () {
     const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-    const persistence = SqlitePersistenceMemory;
+    const persistence = SqlitePersistence.layerMemory;
     const seeded = Layer.effectDiscard(
       Effect.gen(function* () {
         yield* addProject("p-live", "live");
@@ -742,7 +742,7 @@ it.effect("finds by meaning what shares no word with the question, and says whic
     Effect.provide(
       HistorySearch.layerWith({ meetingsDir }).pipe(
         Layer.provide(FakeEmbedder),
-        Layer.provideMerge(SqlitePersistenceMemory),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
         Layer.provide(NodeServices.layer),
       ),
     ),
@@ -845,7 +845,7 @@ it.effect("keeps a record of its use: the search, what was opened from it, and t
   }).pipe(
     Effect.provide(
       HistorySearchTest.pipe(
-        Layer.provideMerge(SqlitePersistenceMemory),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
         Layer.provide(NodeServices.layer),
       ),
     ),

@@ -34,7 +34,7 @@ const AUTH_LABELS: Readonly<Record<McpConnectionHttpAuth, string>> = {
 };
 
 /** A slug every CLI accepts as a server key: lowercase, dashes, 32 chars. */
-export function mcpConnectionIdFromName(name: string): string {
+function mcpConnectionIdFromName(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

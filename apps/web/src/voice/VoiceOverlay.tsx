@@ -1,7 +1,8 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { MicIcon, MicOffIcon, SettingsIcon, XIcon } from "lucide-react";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
 import { Button } from "../components/ui/button";
 import { describeVoiceMintError, mintVoiceRealtimeSession } from "./mintVoiceSession";
@@ -72,20 +73,16 @@ export const VoiceOverlay = memo(function VoiceOverlay({
   const voiceSessionRef = useRef<RealtimeVoiceSession | null>(null);
   const orbRef = useRef<HTMLDivElement | null>(null);
 
-  // Tools and the turn watcher always read the freshest thread facts without
-  // re-tearing the WebRTC session on every stream update.
-  const viewRef = useRef<VoiceOracleThreadView>(view);
-  viewRef.current = view;
-  const sendToAgentRef = useRef(onSendToAgent);
-  sendToAgentRef.current = onSendToAgent;
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  const getView = useStableCallback(() => view);
+  const sendToAgent = useStableCallback(onSendToAgent);
+  const close = useStableCallback(onClose);
 
   const lastTurnRef = useRef<{ turnId: string | null; state: string | null }>({
     turnId: view.latestRun?.runId ?? null,
     state: view.latestRun?.status ?? null,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the realtime session's connection and disposal.
   useEffect(() => {
     let disposed = false;
     let voiceSession: RealtimeVoiceSession | null = null;
@@ -97,15 +94,15 @@ export const VoiceOverlay = memo(function VoiceOverlay({
         voiceSession = await RealtimeVoiceSession.connect({
           clientSecret: minted.clientSecret,
           model: minted.model,
-          instructions: buildOracleInstructions(viewRef.current),
+          instructions: buildOracleInstructions(getView()),
           tools: VOICE_ORACLE_TOOLS,
-          openingContext: buildResumeContext(viewRef.current),
+          openingContext: buildResumeContext(getView()),
           onToolCall: (name, args, session) =>
             executeVoiceOracleTool({
               name,
               args,
-              view: viewRef.current,
-              sendToAgent: (text) => sendToAgentRef.current(text),
+              view: getView(),
+              sendToAgent,
               endSession: () => {
                 setHangingUp(true);
                 session.requestHangUp();
@@ -113,7 +110,7 @@ export const VoiceOverlay = memo(function VoiceOverlay({
             }),
           onHangUp: () => {
             if (disposed) return;
-            onCloseRef.current();
+            close();
           },
           onStatusChange: (status) => {
             if (disposed || status === "ended") return;
@@ -144,8 +141,8 @@ export const VoiceOverlay = memo(function VoiceOverlay({
         setSessionReady(true);
         // Announce only turn changes that happen while the oracle is live.
         lastTurnRef.current = {
-          turnId: viewRef.current.latestRun?.runId ?? null,
-          state: viewRef.current.latestRun?.status ?? null,
+          turnId: getView().latestRun?.runId ?? null,
+          state: getView().latestRun?.status ?? null,
         };
       } catch (error) {
         if (disposed) return;
@@ -165,11 +162,12 @@ export const VoiceOverlay = memo(function VoiceOverlay({
       setSessionReady(false);
       voiceSession?.close();
     };
-  }, [environmentId]);
+  }, [environmentId, getView, sendToAgent, close]);
 
   // Report coding-agent turn transitions into the live voice conversation.
   const latestTurnId = view.latestRun?.runId ?? null;
   const latestTurnState = view.latestRun?.status ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Injects agent lifecycle events into the live voice session.
   useEffect(() => {
     const voiceSession = voiceSessionRef.current;
     const previous = lastTurnRef.current;
@@ -186,8 +184,8 @@ export const VoiceOverlay = memo(function VoiceOverlay({
     const wasRunningTurn = previous.turnId === latestTurnId && isRunActive(previous.state);
     if (!wasRunningTurn) return;
 
-    const lastAssistantText = viewRef.current.messages
-      .toReversed()
+    const lastAssistantText = getView()
+      .messages.toReversed()
       .find((message) => message.role === "assistant" && message.text.trim().length > 0)?.text;
     const outcome =
       latestTurnState === "completed"
@@ -205,12 +203,13 @@ export const VoiceOverlay = memo(function VoiceOverlay({
       ].join("\n"),
       { respond: true },
     );
-  }, [latestTurnId, latestTurnState]);
+  }, [latestTurnId, latestTurnState, getView]);
 
   // Drive the orb from live audio levels. Writes CSS variables directly so
   // silence costs nothing: when the level settles, style writes stop and the
   // compositor has nothing to repaint.
   const isActive = phase.kind === "active";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Drives audio analysers, CSS variables, and animation-frame cleanup.
   useEffect(() => {
     if (!isActive || !sessionReady) return;
     const voiceSession = voiceSessionRef.current;
@@ -267,6 +266,7 @@ export const VoiceOverlay = memo(function VoiceOverlay({
     };
   }, [isActive, sessionReady]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Registers the Escape listener and removes it on unmount.
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -278,18 +278,18 @@ export const VoiceOverlay = memo(function VoiceOverlay({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const toggleMuted = useCallback(() => {
+  const toggleMuted = () => {
     setMuted((current) => {
       const next = !current;
       voiceSessionRef.current?.setMuted(next);
       return next;
     });
-  }, []);
+  };
 
-  const openVoiceSettings = useCallback(() => {
+  const openVoiceSettings = () => {
     onClose();
     void navigate({ to: "/settings/voice" });
-  }, [navigate, onClose]);
+  };
 
   const agentActivity = describeAgentActivity(view);
   const orbStatus: VoiceSessionStatus = phase.kind === "active" ? phase.status : "connecting";

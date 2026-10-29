@@ -1,11 +1,13 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
+import { useNowMinuteMs } from "../../lib/clock";
+import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useMemo } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { GUTTER, SERIF, SPACE } from "../../design/granola";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useThreadShells } from "../../state/entities";
@@ -55,14 +57,18 @@ export function OwnedThreadsSheet({ route }: OwnedThreadsSheetProps) {
     () => ownedThreadRows(threads, environmentId, threadId),
     [environmentId, threadId, threads],
   );
-  const now = Date.now();
+  const now = useNowMinuteMs();
+  const selectDetail = useSelectWorkspaceDetail();
 
   const open = (thread: EnvironmentThreadShell) => {
     navigation.goBack();
-    navigation.navigate("Thread", {
-      environmentId: thread.environmentId,
-      threadId: thread.id,
-    } as never);
+    selectDetail({
+      name: "Thread",
+      params: {
+        environmentId: thread.environmentId,
+        threadId: thread.id,
+      },
+    });
   };
 
   return (

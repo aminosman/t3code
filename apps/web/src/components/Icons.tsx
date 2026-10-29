@@ -69,18 +69,6 @@ export const LinuxIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-export const GitHubIcon: Icon = (props) => (
-  <svg {...props} viewBox="0 0 1024 1024" fill="none">
-    <path
-      fillRule="evenodd"
-      clipRule="evenodd"
-      d="M8 0C3.58 0 0 3.58 0 8C0 11.54 2.29 14.53 5.47 15.59C5.87 15.66 6.02 15.42 6.02 15.21C6.02 15.02 6.01 14.39 6.01 13.72C4 14.09 3.48 13.23 3.32 12.78C3.23 12.55 2.84 11.84 2.5 11.65C2.22 11.5 1.82 11.13 2.49 11.12C3.12 11.11 3.57 11.7 3.72 11.94C4.44 13.15 5.59 12.81 6.05 12.6C6.12 12.08 6.33 11.73 6.56 11.53C4.78 11.33 2.92 10.64 2.92 7.58C2.92 6.71 3.23 5.99 3.74 5.43C3.66 5.23 3.38 4.41 3.82 3.31C3.82 3.31 4.49 3.1 6.02 4.13C6.66 3.95 7.34 3.86 8.02 3.86C8.7 3.86 9.38 3.95 10.02 4.13C11.55 3.09 12.22 3.31 12.22 3.31C12.66 4.41 12.38 5.23 12.3 5.43C12.81 5.99 13.12 6.7 13.12 7.58C13.12 10.65 11.25 11.33 9.47 11.53C9.76 11.78 10.01 12.26 10.01 13.01C10.01 14.08 10 14.94 10 15.21C10 15.42 10.15 15.67 10.55 15.59C13.71 14.53 16 11.53 16 8C16 3.58 12.42 0 8 0Z"
-      transform="scale(64)"
-      fill="currentColor"
-    />
-  </svg>
-);
-
 export const GitIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 256 256">
     <path
@@ -134,130 +122,6 @@ export const JujutsuIcon: Icon = (props) => {
   );
 };
 
-export const GitLabIcon = ({
-  monochrome = false,
-  ...props
-}: SVGProps<SVGSVGElement> & { readonly monochrome?: boolean }) => (
-  <svg {...props} viewBox="0 0 32 32" fill="none">
-    <path
-      d="m31.46 12.78-.04-.12-4.35-11.35A1.14 1.14 0 0 0 25.94.6c-.24 0-.47.1-.66.24-.19.15-.33.36-.39.6l-2.94 9h-11.9l-2.94-9A1.14 1.14 0 0 0 6.07.58a1.15 1.15 0 0 0-1.14.72L.58 12.68l-.05.11a8.1 8.1 0 0 0 2.68 9.34l.02.01.04.03 6.63 4.97 3.28 2.48 2 1.52a1.35 1.35 0 0 0 1.62 0l2-1.52 3.28-2.48 6.67-5h.02a8.09 8.09 0 0 0 2.7-9.36Z"
-      fill={monochrome ? "currentColor" : "#E24329"}
-    />
-    <path
-      d="m31.46 12.78-.04-.12a14.75 14.75 0 0 0-5.86 2.64l-9.55 7.24 6.09 4.6 6.67-5h.02a8.09 8.09 0 0 0 2.67-9.36Z"
-      fill={monochrome ? "currentColor" : "#FC6D26"}
-    />
-    <path
-      d="m9.9 27.14 3.28 2.48 2 1.52a1.35 1.35 0 0 0 1.62 0l2-1.52 3.28-2.48-6.1-4.6-6.07 4.6Z"
-      fill={monochrome ? "currentColor" : "#FCA326"}
-    />
-    <path
-      d="M6.44 15.3a14.71 14.71 0 0 0-5.86-2.63l-.05.12a8.1 8.1 0 0 0 2.68 9.34l.02.01.04.03 6.63 4.97 6.1-4.6-9.56-7.24Z"
-      fill={monochrome ? "currentColor" : "#FC6D26"}
-    />
-  </svg>
-);
-
-export const AzureDevOpsIcon: Icon = (props) => {
-  const id = useId().replaceAll(":", "");
-  const gradientA = `${id}-azure-a`;
-  const gradientB = `${id}-azure-b`;
-  const gradientC = `${id}-azure-c`;
-
-  return (
-    <svg {...props} viewBox="0 0 96 96">
-      <defs>
-        <linearGradient
-          id={gradientA}
-          x1="-1032.17"
-          x2="-1059.21"
-          y1="145.31"
-          y2="65.43"
-          gradientTransform="matrix(1 0 0 -1 1075 158)"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0" stopColor="#114a8b" />
-          <stop offset="1" stopColor="#0669bc" />
-        </linearGradient>
-        <linearGradient
-          id={gradientB}
-          x1="-1023.73"
-          x2="-1029.98"
-          y1="108.08"
-          y2="105.97"
-          gradientTransform="matrix(1 0 0 -1 1075 158)"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0" stopOpacity=".3" />
-          <stop offset=".07" stopOpacity=".2" />
-          <stop offset=".32" stopOpacity=".1" />
-          <stop offset=".62" stopOpacity=".05" />
-          <stop offset="1" stopOpacity="0" />
-        </linearGradient>
-        <linearGradient
-          id={gradientC}
-          x1="-1027.16"
-          x2="-997.48"
-          y1="147.64"
-          y2="68.56"
-          gradientTransform="matrix(1 0 0 -1 1075 158)"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0" stopColor="#3ccbf4" />
-          <stop offset="1" stopColor="#2892df" />
-        </linearGradient>
-      </defs>
-      <path
-        fill={`url(#${gradientA})`}
-        d="M33.34 6.54h26.04l-27.03 80.1a4.15 4.15 0 0 1-3.94 2.81H8.15a4.14 4.14 0 0 1-3.93-5.47L29.4 9.38a4.15 4.15 0 0 1 3.94-2.83z"
-      />
-      <path
-        fill="#0078d4"
-        d="M71.17 60.26H29.88a1.91 1.91 0 0 0-1.3 3.31l26.53 24.76a4.17 4.17 0 0 0 2.85 1.13h23.38z"
-      />
-      <path
-        fill={`url(#${gradientB})`}
-        d="M33.34 6.54a4.12 4.12 0 0 0-3.95 2.88L4.25 83.92a4.14 4.14 0 0 0 3.91 5.54h20.79a4.44 4.44 0 0 0 3.4-2.9l5.02-14.78 17.91 16.7a4.24 4.24 0 0 0 2.67.97h23.29L71.02 60.26H41.24L59.47 6.55z"
-      />
-      <path
-        fill={`url(#${gradientC})`}
-        d="M66.6 9.36a4.14 4.14 0 0 0-3.93-2.82H33.65a4.15 4.15 0 0 1 3.93 2.82l25.18 74.62a4.15 4.15 0 0 1-3.93 5.48h29.02a4.15 4.15 0 0 0 3.93-5.48z"
-      />
-    </svg>
-  );
-};
-
-export const BitbucketIcon: Icon = (props) => {
-  const id = useId().replaceAll(":", "");
-  const gradientId = `${id}-bitbucket-a`;
-
-  return (
-    <svg {...props} viewBox="8.4 14.39 2481.29 2231.21">
-      <path fill="none" d="M989.97,1493.09h518.05l125.04-730.04H852.22L989.97,1493.09z" />
-      <path
-        fill="#2684FF"
-        d="M88.92,14.4C45.02,13.83,8.97,48.96,8.41,92.86c-0.06,4.61,0.28,9.22,1.02,13.77l337.48,2048.72 c8.68,51.75,53.26,89.8,105.74,90.24h1619.03c39.38,0.5,73.19-27.9,79.49-66.78l337.49-2071.78c7.03-43.34-22.41-84.17-65.75-91.2 c-4.55-0.74-9.15-1.08-13.76-1.02L88.92,14.4z M1509.99,1495.09H993.24l-139.92-731h781.89L1509.99,1495.09z"
-      />
-      <linearGradient
-        id={gradientId}
-        gradientUnits="userSpaceOnUse"
-        x1="945.1094"
-        y1="1524.8389"
-        x2="944.4923"
-        y2="1524.1893"
-        gradientTransform="matrix(1996.6343 0 0 -1480.3047 -1884485.625 2258195)"
-      >
-        <stop offset="0.18" stopColor="#0052CC" />
-        <stop offset="1" stopColor="#2684FF" />
-      </linearGradient>
-      <path
-        fill={`url(#${gradientId})`}
-        d="M2379.27,763.06h-745.5l-125.12,730.42H992.31l-609.67,723.67c19.32,16.71,43.96,26,69.5,26.21h1618.13 c39.35,0.51,73.14-27.88,79.44-66.72L2379.27,763.06z"
-      />
-    </svg>
-  );
-};
-
 export const CursorIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
@@ -268,27 +132,15 @@ export const CursorIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-export const GrokIcon: Icon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="0 0 24 24"
-    fill="none"
-    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
-  >
-    <path d="M9.26905 15.284L17.2479 9.36086C17.6391 9.07047 18.1981 9.18374 18.3845 9.63478C19.3655 12.0135 18.9272 14.8721 16.9755 16.8349C15.0238 18.7976 12.3082 19.228 9.8261 18.2477L7.1146 19.5102C11.0037 22.1834 15.7263 21.5223 18.6774 18.5525C21.0182 16.1985 21.7432 12.9897 21.0653 10.0961L21.0714 10.1023C20.0884 5.85143 21.3131 4.15233 23.8218 0.677913C23.8812 0.595532 23.9406 0.513151 24 0.428711L20.6987 3.74866V3.73836L9.267 15.2861" />
-    <path d="M7.62249 16.7237C4.83113 14.0422 5.3124 9.89222 7.69417 7.49905C9.45541 5.72786 12.341 5.00497 14.86 6.06768L17.5653 4.81138C17.0779 4.45714 16.4533 4.07613 15.7365 3.80839C12.4966 2.46764 8.6178 3.13492 5.98413 5.78141C3.45081 8.32904 2.65415 12.2463 4.02219 15.5889C5.04412 18.0871 3.36889 19.8541 1.68137 21.6377C1.08337 22.2699 0.483318 22.9022 0 23.5716L7.62045 16.7257" />
-  </svg>
-);
-
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
-    {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}
+    {}
     <rect x="1" y="4" width="3" height="14" />
     <rect x="4" y="18" width="18" height="3" />
-    {/* Front frame: top bar + right bar only — left and bottom are replaced by the back strips above */}
+    {}
     <rect x="4" y="4" width="18" height="3" />
     <rect x="19" y="7" width="3" height="11" />
-    {/* Two diamonds, offset slightly to the right within the open area */}
+    {}
     <path d="M11 10L13 12L11 14L9 12Z" />
     <path d="M16 10L18 12L16 14L14 12Z" />
   </svg>
@@ -585,32 +437,6 @@ export const AntigravityIcon: Icon = (props) => (
   </svg>
 );
 
-export const OpenCodeIcon: Icon = (props) => (
-  <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <g clipPath="url(#opencode__clip0_1311_94969)">
-      <path
-        data-opencode-hole="true"
-        className="dark:hidden"
-        d="M24 32H8V16H24V32Z"
-        fill="#CFCECD"
-      />
-      <path className="dark:hidden" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#211E1E" />
-      <path
-        data-opencode-hole="true"
-        className="hidden dark:block"
-        d="M24 32H8V16H24V32Z"
-        fill="#4B4646"
-      />
-      <path className="hidden dark:block" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#F1ECEC" />
-    </g>
-    <defs>
-      <clipPath id="opencode__clip0_1311_94969">
-        <rect width="32" height="40" fill="white" />
-      </clipPath>
-    </defs>
-  </svg>
-);
-
 export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
@@ -622,36 +448,6 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-export const PiAgentIcon: Icon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="165.29 165.29 469.43 469.43"
-    fill="none"
-    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
-  >
-    <path
-      fillRule="evenodd"
-      d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
-    />
-    <path d="M517.36 400H634.72V634.72H517.36Z" />
-  </svg>
-);
-
-// Official two-color mark from https://forgejo.org/favicon.svg.
-export const ForgejoIcon: Icon = (props) => (
-  <svg viewBox="0 0 212 212" aria-hidden="true" {...props}>
-    <g transform="translate(6 6)" fill="none">
-      <path d="M58 168 v-98 a50 50 0 0 1 50-50 h20" stroke="#ff6600" strokeWidth="25" />
-      <path d="M58 168 v-30 a50 50 0 0 1 50-50 h20" stroke="#d40000" strokeWidth="25" />
-      <circle cx="142" cy="20" r="18" stroke="#ff6600" strokeWidth="15" />
-      <circle cx="142" cy="88" r="18" stroke="#d40000" strokeWidth="15" />
-      <circle cx="58" cy="180" r="18" stroke="#d40000" strokeWidth="15" />
-    </g>
-  </svg>
-);
-
-// macOS System Settings > Privacy & Security pane marks, so the SnapShot setup
-// step points at the same icon the user is about to look for.
 export const MacScreenRecordingIcon: Icon = (props) => {
   const gradientId = useId();
   return (
@@ -704,31 +500,6 @@ export const MacAccessibilityIcon: Icon = (props) => {
         stroke="#fff"
         strokeWidth="1.6"
         strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-};
-
-// Codex's Computer Use app mark, shown on computer-use rows in the work log.
-export const ComputerUseAppIcon: Icon = (props) => {
-  const gradientId = `${useId().replaceAll(":", "")}-computer-use-app-gradient`;
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
-      <defs>
-        <linearGradient id={gradientId} x1="2" y1="2" x2="22" y2="22">
-          <stop offset="0" stopColor="#00dff0" />
-          <stop offset="0.42" stopColor="#3b9cff" />
-          <stop offset="0.72" stopColor="#b044f5" />
-          <stop offset="1" stopColor="#ff78b6" />
-        </linearGradient>
-      </defs>
-      <rect x="1" y="1" width="22" height="22" rx="5" fill={`url(#${gradientId})`} />
-      <path
-        d="m7.2 6.2 10.5 4.1-4.2 2.1-2 4.7z"
-        fill="white"
-        stroke="#315cff"
-        strokeWidth="1.1"
         strokeLinejoin="round"
       />
     </svg>

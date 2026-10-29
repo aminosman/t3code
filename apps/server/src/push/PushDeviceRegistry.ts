@@ -1,12 +1,5 @@
-/**
- * Registry of devices this environment pushes to.
- *
- * Registrations are per-environment, not per-account: a device tells the
- * environment it is paired with "notify this APNs token", so there is no
- * cloud identity to reconcile. The list lives in the secret store because a
- * device token is a bearer capability to notify that device, and because it
- * keeps the registry out of the settings file users hand-edit and share.
- */
+// Keep bearer-capability APNs tokens in an environment-local file outside
+// user-editable, shareable settings.
 import type { PushDeviceRegistration } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -71,7 +64,7 @@ export class PushDeviceRegistry extends Context.Service<
   }
 >()("t3/push/PushDeviceRegistry") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const textDecoder = new TextDecoder();
   const textEncoder = new TextEncoder();
@@ -110,58 +103,61 @@ export const make = Effect.gen(function* () {
     return live(devices, nowMs);
   });
 
-  const register: PushDeviceRegistry["Service"]["register"] = (registration) =>
-    Effect.gen(function* () {
-      const [devices, nowMs] = yield* Effect.all([readAll, Clock.currentTimeMillis]);
-      // Keyed by installation, so a token rotation replaces the old entry
-      // instead of leaving a dead one behind to be pushed to forever; and by
-      // token, so an app whose installation id changed is still one device.
-      const next: ReadonlyArray<RegisteredPushDevice> = [
-        ...live(devices, nowMs).filter(
-          (device) =>
-            device.installationId !== registration.installationId &&
-            device.deviceToken !== registration.deviceToken,
-        ),
-        {
-          installationId: registration.installationId,
-          deviceToken: registration.deviceToken,
-          platform: registration.platform,
-          pushEnvironment: registration.pushEnvironment,
-          ...(registration.deviceName ? { deviceName: registration.deviceName } : {}),
-          registeredAt: nowMs,
-        },
-      ];
+  const register: PushDeviceRegistry["Service"]["register"] = Effect.fn(
+    "PushDeviceRegistry.register",
+  )(function* (registration) {
+    const [devices, nowMs] = yield* Effect.all([readAll, Clock.currentTimeMillis]);
+    // Keyed by installation, so a token rotation replaces the old entry
+    // instead of leaving a dead one behind to be pushed to forever; and by
+    // token, so an app whose installation id changed is still one device.
+    const next: ReadonlyArray<RegisteredPushDevice> = [
+      ...live(devices, nowMs).filter(
+        (device) =>
+          device.installationId !== registration.installationId &&
+          device.deviceToken !== registration.deviceToken,
+      ),
+      {
+        installationId: registration.installationId,
+        deviceToken: registration.deviceToken,
+        platform: registration.platform,
+        pushEnvironment: registration.pushEnvironment,
+        ...(registration.deviceName ? { deviceName: registration.deviceName } : {}),
+        registeredAt: nowMs,
+      },
+    ];
+    yield* writeAll(next);
+    return next;
+  });
+
+  const unregister: PushDeviceRegistry["Service"]["unregister"] = Effect.fn(
+    "PushDeviceRegistry.unregister",
+  )(function* (installationId) {
+    const devices = yield* readAll;
+    // Copies of the same token go too, or a hidden duplicate would surface
+    // as the device just removed.
+    const tokens = new Set(
+      devices
+        .filter((device) => device.installationId === installationId)
+        .map((device) => device.deviceToken),
+    );
+    const next = devices.filter(
+      (device) => device.installationId !== installationId && !tokens.has(device.deviceToken),
+    );
+    if (next.length !== devices.length) {
       yield* writeAll(next);
-      return next;
-    });
+    }
+  });
 
-  const unregister: PushDeviceRegistry["Service"]["unregister"] = (installationId) =>
-    Effect.gen(function* () {
-      const devices = yield* readAll;
-      // Copies of the same token go too, or a hidden duplicate would surface
-      // as the device just removed.
-      const tokens = new Set(
-        devices
-          .filter((device) => device.installationId === installationId)
-          .map((device) => device.deviceToken),
-      );
-      const next = devices.filter(
-        (device) => device.installationId !== installationId && !tokens.has(device.deviceToken),
-      );
-      if (next.length !== devices.length) {
-        yield* writeAll(next);
-      }
-    });
-
-  const forget: PushDeviceRegistry["Service"]["forget"] = (deviceToken) =>
-    Effect.gen(function* () {
+  const forget: PushDeviceRegistry["Service"]["forget"] = Effect.fn("PushDeviceRegistry.forget")(
+    function* (deviceToken) {
       const devices = yield* readAll;
       const next = devices.filter((device) => device.deviceToken !== deviceToken);
       if (next.length !== devices.length) {
         yield* Effect.logInfo("push: dropping device token APNs reported as gone");
         yield* writeAll(next);
       }
-    });
+    },
+  );
 
   return PushDeviceRegistry.of({ list, register, unregister, forget });
 });

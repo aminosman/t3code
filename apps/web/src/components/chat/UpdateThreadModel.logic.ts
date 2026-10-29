@@ -1,15 +1,4 @@
-/**
- * Which threads "Update thread model" moves to a newly picked model, and
- * which it leaves alone and why.
- *
- * Amin, Sep 24 2026: "a quick way to flip the default or the model for every
- * thread that's active … interacted with in the last few days". A thread
- * that has started can only move where the composer's own picker would let
- * it: the same agent, the same continuation history, and not onto a provider
- * that refuses model changes mid-conversation.
- *
- * @module UpdateThreadModel.logic
- */
+// Started threads can only move to a model with compatible continuation history.
 import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
 import type { ThreadShell } from "../../types";
 import { threadShellHasStarted } from "../ChatView.logic";
@@ -32,8 +21,6 @@ export type UpdateThreadModelSkipReason =
   | "otherAgent"
   /** Same agent, but a different continuation history (another home). */
   | "otherHistory"
-  /** The provider only takes a model at the start of a conversation. */
-  | "fixedModel"
   /** Its provider is not configured here, so nothing can be checked. */
   | "unknownProvider";
 
@@ -53,12 +40,7 @@ function lastInteractionMs(thread: PlannedThread): number {
 
 export function planUpdateThreadModel<T extends PlannedThread>(input: {
   readonly threads: ReadonlyArray<T>;
-  readonly providers: ReadonlyArray<
-    Pick<
-      ServerProvider,
-      "instanceId" | "driver" | "continuation" | "requiresNewThreadForModelChange"
-    >
-  >;
+  readonly providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver" | "continuation">>;
   readonly target: ModelSelection;
   readonly nowMs: number;
   readonly recentDays?: number;
@@ -108,13 +90,6 @@ export function planUpdateThreadModel<T extends PlannedThread>(input: {
       skipped.push({ thread, reason: "otherHistory" });
       continue;
     }
-    if (
-      currentProvider.requiresNewThreadForModelChange === true ||
-      targetProvider.requiresNewThreadForModelChange === true
-    ) {
-      skipped.push({ thread, reason: "fixedModel" });
-      continue;
-    }
     update.push(thread);
   }
 
@@ -124,7 +99,6 @@ export function planUpdateThreadModel<T extends PlannedThread>(input: {
 const SKIP_REASON_TEXT: Record<UpdateThreadModelSkipReason, string> = {
   otherAgent: "on another agent",
   otherHistory: "on another account's history",
-  fixedModel: "on a provider that can't switch mid-conversation",
   unknownProvider: "on a provider that isn't set up here",
 };
 

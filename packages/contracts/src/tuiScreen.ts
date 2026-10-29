@@ -2,27 +2,10 @@ import { Schema } from "effect";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-// ── tui screen ───────────────────────────────────────────────────────
-//
-// The Mac's screen on the phone, through this server. tui holds one
-// `tuiScreen.connect` stream; while a phone is watching it captures the
-// display and posts JPEG frames with `tuiScreen.frame`, and the phone
-// follows them on `tuiScreen.subscribe`. The phone's taps, scrolls and
-// typing come back on `tuiScreen.control` and reach tui on its stream,
-// which puts them on the Mac as real input. The case it exists for: an
-// agent opens a sign-in page the user must click through themselves.
-//
-// Coordinates are fractions of the frame (0…1 across and down), so neither
-// side needs the other's pixel size.
-//
-// An agent thread that is blocked on something only the user can do at the
-// Mac (a sign-in, a code, a captcha) asks for them with the
-// `t3_screen_hand_over` MCP tool: the ask is pushed to the phone, listed on
-// its screen view, and sent to tui with a hint of which window it is about,
-// so tui shows the display that holds it. The phone's Done or Not now
-// (`tuiScreen.resolve`) is sent back into the thread, which carries on.
+// Coordinates are frame fractions (0…1), independent of pixel size.
+// Frames flow from tui to phones; input and hand-over answers return to tui.
 
-export const TUI_SCREEN_MAX_FRAME_BASE64 = 4 * 1024 * 1024;
+const TUI_SCREEN_MAX_FRAME_BASE64 = 4 * 1024 * 1024;
 
 const Fraction = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
 

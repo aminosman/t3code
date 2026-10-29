@@ -12,40 +12,42 @@ import type * as ApnsClient from "./ApnsClient.ts";
  */
 let warnedMissing = false;
 
-export const readApnsCredentials = (options?: { readonly devicesWaiting?: number }) =>
-  Effect.gen(function* () {
-    const settingsService = yield* ServerSettings.ServerSettingsService;
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchTag("ServerSettingsError", (cause) =>
+export const readApnsCredentials = Effect.fn("push.readApnsCredentials")(function* (options?: {
+  readonly devicesWaiting?: number;
+}) {
+  const settingsService = yield* ServerSettings.ServerSettingsService;
+  const settings = yield* settingsService.getSettings.pipe(
+    Effect.catchTags({
+      ServerSettingsError: (cause) =>
         Effect.logWarning("push: failed to read settings", { cause }).pipe(Effect.as(undefined)),
-      ),
-    );
-    const push = settings?.push;
-    if (
-      !push?.enabled ||
-      push.authKey.length === 0 ||
-      push.keyId.length === 0 ||
-      push.teamId.length === 0 ||
-      push.bundleId.length === 0
-    ) {
-      if (!warnedMissing && (options?.devicesWaiting ?? 0) > 0) {
-        warnedMissing = true;
-        yield* Effect.logWarning(
-          "push: devices are registered but push is not configured; notifications are skipped",
-          {
-            devices: options?.devicesWaiting,
-            enabled: push?.enabled ?? false,
-            hasKey: (push?.authKey.length ?? 0) > 0,
-          },
-        );
-      }
-      return null;
+    }),
+  );
+  const push = settings?.push;
+  if (
+    !push?.enabled ||
+    push.authKey.length === 0 ||
+    push.keyId.length === 0 ||
+    push.teamId.length === 0 ||
+    push.bundleId.length === 0
+  ) {
+    if (!warnedMissing && (options?.devicesWaiting ?? 0) > 0) {
+      warnedMissing = true;
+      yield* Effect.logWarning(
+        "push: devices are registered but push is not configured; notifications are skipped",
+        {
+          devices: options?.devicesWaiting,
+          enabled: push?.enabled ?? false,
+          hasKey: (push?.authKey.length ?? 0) > 0,
+        },
+      );
     }
-    warnedMissing = false;
-    return {
-      teamId: push.teamId,
-      keyId: push.keyId,
-      privateKey: push.authKey,
-      bundleId: push.bundleId,
-    } satisfies ApnsClient.ApnsCredentials;
-  });
+    return null;
+  }
+  warnedMissing = false;
+  return {
+    teamId: push.teamId,
+    keyId: push.keyId,
+    privateKey: push.authKey,
+    bundleId: push.bundleId,
+  } satisfies ApnsClient.ApnsCredentials;
+});

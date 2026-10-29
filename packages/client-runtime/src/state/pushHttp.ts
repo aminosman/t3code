@@ -11,7 +11,7 @@ import type * as Schema from "effect/Schema";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
@@ -26,7 +26,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
  * Registration is best-effort from the client's point of view: failing to
  * register costs notifications, never the session.
  */
-export class PushDeviceRegistrationError extends Data.TaggedError("PushDeviceRegistrationError")<{
+class PushDeviceRegistrationError extends Data.TaggedError("PushDeviceRegistrationError")<{
   readonly message: string;
   /** The environment's HTTP status; absent when it could not be reached. */
   readonly status?: number;
@@ -56,44 +56,41 @@ const postToEnvironment = Effect.fn("clientRuntime.state.postPushDeviceRequest")
       ? {}
       : { remoteAuthorization: input.remoteAuthorization }),
     method: "POST",
-    url: (httpBaseUrl) => {
-      requestUrl = environmentEndpointUrl(httpBaseUrl, input.path);
+    url: (urls) => {
+      requestUrl = environmentEndpointUrl(urls.descriptor(), input.path);
       return requestUrl;
     },
     timeoutMs: REQUEST_TIMEOUT_MS,
-    request: ({ headers }) =>
-      Effect.gen(function* () {
-        const client = yield* HttpClient.HttpClient;
-        const response = yield* client.post(requestUrl, {
-          headers: {
-            ...(headers.authorization === undefined
-              ? {}
-              : { authorization: headers.authorization }),
-            ...(headers.dpop === undefined ? {} : { dpop: headers.dpop }),
-          },
-          body: HttpBody.jsonUnsafe(input.body),
-        });
-        // The shared helper fixes its own error channel, so a rejection is
-        // carried out as a value and converted once the request settles.
-        if (response.status < 200 || response.status >= 300) {
-          // The reply route says why in words ("already answered"); keep them.
-          const said = yield* response.json.pipe(
-            Effect.map((body) =>
-              typeof body === "object" && body !== null && "message" in body
-                ? String(body.message)
-                : null,
-            ),
-            Effect.orElseSucceed(() => null),
-          );
-          return {
-            ok: false as const,
-            status: response.status,
-            message: said ?? `The environment answered with status ${response.status}.`,
-          };
-        }
-        const decoded = yield* HttpClientResponse.schemaBodyJson(input.result)(response);
-        return { ok: true as const, value: decoded };
-      }),
+    request: Effect.fn("clientRuntime.state.pushHttp.request")(function* ({ headers }) {
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.post(requestUrl, {
+        headers: {
+          ...(headers.authorization === undefined ? {} : { authorization: headers.authorization }),
+          ...(headers.dpop === undefined ? {} : { dpop: headers.dpop }),
+        },
+        body: HttpBody.jsonUnsafe(input.body),
+      });
+      // The shared helper fixes its own error channel, so a rejection is
+      // carried out as a value and converted once the request settles.
+      if (response.status < 200 || response.status >= 300) {
+        // The reply route says why in words ("already answered"); keep them.
+        const said = yield* response.json.pipe(
+          Effect.map((body) =>
+            typeof body === "object" && body !== null && "message" in body
+              ? String(body.message)
+              : null,
+          ),
+          Effect.orElseSucceed(() => null),
+        );
+        return {
+          ok: false as const,
+          status: response.status,
+          message: said ?? `The environment answered with status ${response.status}.`,
+        };
+      }
+      const decoded = yield* HttpClientResponse.schemaBodyJson(input.result)(response);
+      return { ok: true as const, value: decoded };
+    }),
   }).pipe(
     Effect.mapError(
       (cause) =>

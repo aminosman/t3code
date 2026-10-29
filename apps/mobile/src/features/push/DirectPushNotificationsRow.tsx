@@ -1,17 +1,11 @@
-/**
- * Notification control for environments that deliver their own push.
- *
- * The relay's notification switch lives behind a T3 Connect account, which is
- * exactly what a self-hosted setup does not have. This row registers the device
- * with the environments it is already paired to, so notifications can be turned
- * on with no cloud account involved.
- */
 import { unregisterEnvironmentPushDevice } from "@t3tools/client-runtime/state/pushHttp";
+import { readEnvironmentHttpAuthServices } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Alert, Platform } from "react-native";
 
 import { runtime } from "../../lib/runtime";
+import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentPresentations } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
@@ -25,11 +19,9 @@ import {
 type RowStatus = "checking" | "off" | "on" | "unsupported";
 
 export function DirectPushNotificationsRow() {
-  const [status, setStatus] = useState<RowStatus>("checking");
-
-  useEffect(() => {
-    setStatus(Platform.OS === "ios" && supportsDirectPush() ? "off" : "unsupported");
-  }, []);
+  const [status, setStatus] = useState<RowStatus>(() =>
+    Platform.OS === "ios" && supportsDirectPush() ? "off" : "unsupported",
+  );
 
   const enable = useCallback(async () => {
     const result = await registerDeviceWithConnectedEnvironments().catch(() => null);
@@ -65,7 +57,11 @@ export function DirectPushNotificationsRow() {
       if (!prepared) continue;
       await runtime
         .runPromise(
-          unregisterEnvironmentPushDevice({ prepared, signer: Option.none(), installationId }),
+          unregisterEnvironmentPushDevice({
+            prepared,
+            ...readEnvironmentHttpAuthServices(connectionAtomRuntime, appAtomRegistry),
+            installationId,
+          }),
         )
         .catch(() => undefined);
     }

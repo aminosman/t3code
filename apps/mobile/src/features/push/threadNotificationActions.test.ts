@@ -4,6 +4,7 @@ vi.mock("expo-notifications", () => ({
   setNotificationCategoryAsync: vi.fn(),
   scheduleNotificationAsync: vi.fn(),
 }));
+vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: {} }));
 vi.mock("../../lib/runtime", () => ({ runtime: {} }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("../../state/session", () => ({ environmentSession: {} }));

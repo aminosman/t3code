@@ -4,21 +4,25 @@ import * as Effect from "effect/Effect";
 
 import * as TuiInbox from "../../../tuiInbox/TuiInbox.ts";
 import * as TuiScreen from "../../../tuiScreen/TuiScreen.ts";
-import { readMutationCaller } from "../../threadAccess.ts";
+import { readCaller } from "../../threadAccess.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { ScreenToolkit } from "./tools.ts";
 
 /** What the thread is told when the phone answers its ask. */
-export function answerText(reason: string, outcome: "done" | "declined", note?: string): string {
+function answerText(reason: string, outcome: "done" | "declined", note?: string): string {
   const said = note?.trim() ? ` They said: "${note.trim()}"` : "";
   return outcome === "done"
     ? `Done at the screen: ${reason}${said} Carry on from where you stopped.`
     : `Not now at the screen: ${reason}${said} Don't wait on it; carry on without it or say what is left.`;
 }
 
-export const ScreenToolkitHandlersLive = ScreenToolkit.toLayer({
-  t3_screen_hand_over: (input) =>
+export const layer = McpToolAccess.toLayer(ScreenToolkit, {
+  t3_screen_hand_over: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const { threads, caller } = yield* readMutationCaller();
+      const { threads, caller, scope } = yield* readCaller();
+      yield* McpInvocationContext.requireThreadScope(scope, "t3_screen_hand_over");
+      if (caller === undefined) return yield* Effect.die("Missing calling thread");
       const screen = yield* TuiScreen.TuiScreen;
       const inbox = yield* TuiInbox.TuiInbox;
       const crypto = yield* Crypto.Crypto;
@@ -43,7 +47,7 @@ export const ScreenToolkitHandlersLive = ScreenToolkit.toLayer({
         },
         (resolution) =>
           Effect.gen(function* () {
-            const id = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+            const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
             yield* threads.sendToThread({
               projectId: caller.projectId,
               commandId: CommandId.make(`tui-screen:${id}`),
@@ -70,4 +74,5 @@ export const ScreenToolkitHandlersLive = ScreenToolkit.toLayer({
           "The user's phone has been asked and shows the screen. End your turn now and say what you are waiting for; a message arrives in this thread when they are done.",
       };
     }),
+  ),
 });

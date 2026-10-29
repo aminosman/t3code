@@ -1,3 +1,4 @@
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 // The fake upstream and the assertions trade opaque JSON-RPC bodies.
 // @effect-diagnostics preferSchemaOverJson:off
 import { NodeHttpServer } from "@effect/platform-node";
@@ -8,7 +9,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import * as NetAddress from "effect/net/NetAddress";
 import {
   FetchHttpClient,
   HttpBody,
@@ -17,13 +18,13 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import * as McpProviderSession from "../McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpSessionRegistry from "../McpSessionRegistry.ts";
 import * as McpConnectionProxy from "./McpConnectionProxy.ts";
 import * as McpConnectionService from "./McpConnectionService.ts";
@@ -80,6 +81,7 @@ const serve = (calls: Array<UpstreamCall>, acceptedKey: string) =>
   ).pipe(
     Layer.provideMerge(McpConnectionService.layer),
     Layer.provideMerge(McpStdioHost.layer),
+    Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(McpSessionRegistry.layer),
     Layer.provide(
       Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -124,7 +126,8 @@ describe("McpConnectionProxy", () => {
           threadId,
           providerInstanceId: ProviderInstanceId.make("codex"),
         });
-        McpProviderSession.setMcpProviderSession({
+        const sessions = Context.get(built, McpProviderSessions.McpProviderSessions);
+        yield* sessions.set({
           ...credential.config,
           connections: [
             {
@@ -178,7 +181,7 @@ describe("McpConnectionProxy", () => {
           body: HttpBody.text('{"jsonrpc":"2.0","id":3,"method":"tools/list"}', "application/json"),
         });
         expect(missing.status).toBe(404);
-        McpProviderSession.clearMcpProviderSession(threadId);
+        yield* sessions.clear(threadId);
       }),
     ).pipe(
       Effect.provide(
@@ -211,7 +214,8 @@ describe("McpConnectionProxy", () => {
           threadId,
           providerInstanceId: ProviderInstanceId.make("claudeAgent"),
         });
-        McpProviderSession.setMcpProviderSession({
+        const sessions = Context.get(built, McpProviderSessions.McpProviderSessions);
+        yield* sessions.set({
           ...credential.config,
           connections: [
             {
@@ -238,7 +242,7 @@ describe("McpConnectionProxy", () => {
         expect(text).toContain("mcp_connection_needs_sign_in");
         expect(text).toContain("Oneleet");
         expect(calls).toHaveLength(1);
-        McpProviderSession.clearMcpProviderSession(threadId);
+        yield* sessions.clear(threadId);
       }),
     ).pipe(
       Effect.provide(

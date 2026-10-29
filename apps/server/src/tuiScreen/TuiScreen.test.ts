@@ -4,6 +4,7 @@ import type { TuiScreenEvent, TuiScreenHostEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as TuiScreen from "./TuiScreen.ts";
 
@@ -11,7 +12,7 @@ const makeScreen = TuiScreen.make.pipe(Effect.provide(NodeServices.layer));
 
 const frame = (seq: number) => ({ seq, width: 2, height: 1, jpegBase64: `f${seq}` });
 
-it.live("tells tui when a phone starts and stops watching, and relays its input", () =>
+it.effect("tells tui when a phone starts and stops watching, and relays its input", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const screen = yield* makeScreen;
@@ -30,11 +31,11 @@ it.live("tells tui when a phone starts and stops watching, and relays its input"
             Stream.runCollect,
             Effect.forkScoped,
           );
-          yield* Effect.sleep("5 millis");
+          yield* TestClock.adjust("5 millis");
           expect(received[2]).toEqual({ type: "viewers", count: 1 });
           yield* screen.control({ type: "click", x: 0.5, y: 0.25 });
           yield* screen.frame(frame(1));
-          yield* Effect.sleep("5 millis");
+          yield* TestClock.adjust("5 millis");
           expect(received[3]).toEqual({
             type: "input",
             input: { type: "click", x: 0.5, y: 0.25 },
@@ -44,13 +45,13 @@ it.live("tells tui when a phone starts and stops watching, and relays its input"
       );
       expect(phone[0]).toMatchObject({ type: "host", connected: true, status: { state: "idle" } });
       expect(phone[1]).toMatchObject({ type: "frame", frame: { seq: 1 } });
-      yield* Effect.sleep("5 millis");
+      yield* TestClock.adjust("5 millis");
       expect(received.at(-1)).toEqual({ type: "viewers", count: 0 });
     }),
   ),
 );
 
-it.live("a phone that falls behind skips to a newer frame, and a late one gets the last", () =>
+it.effect("a phone that falls behind skips to a newer frame, and a late one gets the last", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const screen = yield* makeScreen;
@@ -59,7 +60,7 @@ it.live("a phone that falls behind skips to a newer frame, and a late one gets t
       const stream = yield* screen.subscribe;
       // Not drained yet: the queue fills past the backlog and frames skip.
       const events = yield* stream.pipe(Stream.take(5), Stream.runCollect, Effect.forkScoped);
-      yield* Effect.sleep("5 millis");
+      yield* TestClock.adjust("5 millis");
       for (let seq = 1; seq <= 10; seq += 1) yield* screen.frame(frame(seq));
       yield* screen.status({ state: "capturing" });
       const seen = Array.from(yield* Fiber.join(events)) as TuiScreenEvent[];
@@ -87,7 +88,7 @@ it.effect("refuses input while tui is away", () =>
   }).pipe(Effect.scoped),
 );
 
-it.live(
+it.effect(
   "an agent's ask reaches tui and the phone, and the phone's answer reaches the agent once",
   () =>
     Effect.scoped(
@@ -101,7 +102,7 @@ it.live(
         yield* Stream.runForEach(yield* screen.subscribe, (event) =>
           Effect.sync(() => phone.push(event)),
         ).pipe(Effect.forkScoped);
-        yield* Effect.sleep("5 millis");
+        yield* TestClock.adjust("5 millis");
 
         const answers: string[] = [];
         const answer = (label: string) => (resolution: { outcome: string }) =>
@@ -113,7 +114,7 @@ it.live(
           { reason: "Enter the code", threadId: "t1", target: { app: "Google Chrome" } },
           answer("second"),
         );
-        yield* Effect.sleep("5 millis");
+        yield* TestClock.adjust("5 millis");
         const lastHost = host.filter((event) => event.type === "requests").at(-1);
         expect(lastHost).toMatchObject({
           requests: [{ id: second.request.id, target: { app: "Google Chrome" } }],
@@ -125,7 +126,7 @@ it.live(
         const stale = yield* Effect.flip(screen.resolve({ id: first.request.id, outcome: "done" }));
         expect(stale._tag).toBe("TuiScreenError");
         yield* screen.resolve({ id: second.request.id, outcome: "done" });
-        yield* Effect.sleep("5 millis");
+        yield* TestClock.adjust("5 millis");
         expect(answers).toEqual(["second:done"]);
         expect(phone.at(-1)).toEqual({ type: "requests", requests: [] });
         const again = yield* Effect.flip(

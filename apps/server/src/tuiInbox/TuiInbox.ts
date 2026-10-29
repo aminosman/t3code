@@ -1,19 +1,5 @@
-/**
- * The tui inbox: a phone talking to tui, the Mac's voice assistant, through
- * this server.
- *
- * tui holds one `connect` stream and hears each utterance through the same
- * front door as push-to-talk, so the phone gets tui's one decider and its
- * confirmation cards rather than a second router. The phone `send`s text or a
- * voice note, follows the conversation on `subscribe`, and answers a card or
- * stops a run with `control`. A card also goes out as a push notification with
- * Allow / Decline actions, and anything tui says while no phone is watching
- * goes out as a plain one.
- *
- * Everything is in memory: an utterance sent while tui is away waits for it,
- * and the last entries are kept for the phone to scroll back through, but a
- * server restart starts the conversation over.
- */
+// Utterances wait in memory for tui to connect; a restart clears them.
+// The phone uses tui’s existing decider and confirmation cards.
 import {
   TUI_INBOX_PROMPT_CATEGORY,
   TuiInboxError,
@@ -101,7 +87,7 @@ export const make = Effect.gen(function* () {
   const seenClientIds = new Map<string, string>();
   const openPrompts = new Set<string>();
 
-  const uuid = crypto.randomUUIDv4.pipe(Effect.orDie);
+  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
   const broadcast = (event: TuiInboxEvent) =>
@@ -164,12 +150,11 @@ export const make = Effect.gen(function* () {
       Effect.asVoid,
     );
 
-  const releaseHost = (queue: Host["queue"]) =>
-    Effect.gen(function* () {
-      if (host?.queue !== queue) return;
-      host = null;
-      yield* broadcast({ type: "host", connected: false });
-    });
+  const releaseHost = Effect.fn("TuiInbox.releaseHost")(function* (queue: Host["queue"]) {
+    if (host?.queue !== queue) return;
+    host = null;
+    yield* broadcast({ type: "host", connected: false });
+  });
 
   const connect: TuiInbox["Service"]["connect"] = (registration) =>
     Effect.succeed(

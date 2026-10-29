@@ -1,13 +1,5 @@
-/**
- * Registers this device for notifications delivered by the environment itself.
- *
- * The relay path (`features/agent-awareness/remoteRegistration`) registers with
- * T3 Connect and lets the relay fan out. This registers with the environment
- * directly, which is what lets a self-hosted server notify its own phone with
- * no cloud account in between. The two are independent: a build can use either,
- * both, or neither.
- */
 import { registerEnvironmentPushDevice } from "@t3tools/client-runtime/state/pushHttp";
+import { readEnvironmentHttpAuthServices } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import type { PushDeviceRegistration } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import Constants from "expo-constants";
@@ -18,6 +10,7 @@ import * as Option from "effect/Option";
 
 import { uuidv4 } from "../../lib/uuid";
 import { runtime } from "../../lib/runtime";
+import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentPresentations } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
@@ -99,7 +92,11 @@ export async function registerDeviceWithEnvironment(
   }
 
   return runtime.runPromise(
-    registerEnvironmentPushDevice({ prepared, signer: Option.none(), registration }),
+    registerEnvironmentPushDevice({
+      prepared,
+      ...readEnvironmentHttpAuthServices(connectionAtomRuntime, appAtomRegistry),
+      registration,
+    }),
   );
 }
 
@@ -131,7 +128,13 @@ export async function registerDeviceWithConnectedEnvironments(): Promise<{
     }
     // One unreachable environment must not stop the others from registering.
     const result = await runtime
-      .runPromise(registerEnvironmentPushDevice({ prepared, signer: Option.none(), registration }))
+      .runPromise(
+        registerEnvironmentPushDevice({
+          prepared,
+          ...readEnvironmentHttpAuthServices(connectionAtomRuntime, appAtomRegistry),
+          registration,
+        }),
+      )
       .catch(() => null);
     if (result?.registered) {
       registeredCount += 1;

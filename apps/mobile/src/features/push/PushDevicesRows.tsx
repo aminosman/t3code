@@ -7,7 +7,9 @@
  */
 import type { EnvironmentId, PushDevice } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useEffect, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { Alert } from "react-native";
 
 import { useEnvironmentQuery } from "../../state/query";
@@ -16,6 +18,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "../settings/components/SettingsRow";
 import { resolveInstallationId } from "./directPushRegistration";
+
+const installationIdAtom = Atom.make(Effect.promise(resolveInstallationId));
 
 function registeredLabel(device: PushDevice): string {
   const days = Math.floor((Date.now() - device.registeredAt) / 86_400_000);
@@ -86,10 +90,8 @@ function EnvironmentPushDevices(props: {
 export function PushDevicesRows() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const connections = Object.values(savedConnectionsById);
-  const [thisInstallationId, setThisInstallationId] = useState<string | null>(null);
-  useEffect(() => {
-    void resolveInstallationId().then(setThisInstallationId);
-  }, []);
+  const installationId = useAtomValue(installationIdAtom);
+  const thisInstallationId = AsyncResult.isSuccess(installationId) ? installationId.value : null;
 
   return connections.map((connection) => (
     <EnvironmentPushDevices

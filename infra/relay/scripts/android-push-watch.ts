@@ -19,10 +19,10 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as Socket from "effect/socket/Socket";
 
 import * as RelayConfiguration from "../src/Config.ts";
 import { androidActivityData, fitFcmData } from "../src/agentActivity/fcmPayloads.ts";
@@ -86,19 +86,20 @@ const main = Effect.gen(function* () {
   const connection = yield* readFile(connectionPath).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Connection))),
   );
-  const socketConstructor = Layer.succeed(
+  const layerSocketConstructor = Layer.succeed(
     Socket.WebSocketConstructor,
-    // Socket.makeWebSocket only ever passes its `protocols` option here.
     (url, protocols) =>
       new NodeSocket.NodeWS.WebSocket(url, protocols as string | string[] | undefined, {
         headers: { authorization: `Bearer ${connection.bearerToken}` },
       }) as unknown as globalThis.WebSocket,
   );
-  const protocol = RpcClient.layerProtocolSocket().pipe(
-    Layer.provide(Socket.layerWebSocket(connection.wsUrl).pipe(Layer.provide(socketConstructor))),
+  const layerProtocol = RpcClient.layerProtocolSocket().pipe(
+    Layer.provide(
+      Socket.layerWebSocket(connection.wsUrl).pipe(Layer.provide(layerSocketConstructor)),
+    ),
     Layer.provide(RpcSerialization.layerJson),
   );
-  const fcm = FcmClient.layer.pipe(
+  const layerFcm = FcmClient.layer.pipe(
     Layer.provide(
       FcmAssertionSigner.layer.pipe(
         Layer.provide(Layer.succeed(WebCrypto.WebCrypto, { subtle: globalThis.crypto.subtle })),
@@ -170,7 +171,6 @@ const main = Effect.gen(function* () {
           }
           const state = item.kind === "thread.updated" ? next.get(item.thread.id) : undefined;
           const previous = state ? states.get(state.threadId) : undefined;
-          // A fresh subscription restores ongoing work without announcing old completions.
           const now = yield* Clock.currentTimeMillis;
           const alert =
             state && state.phase !== previous?.phase && item.kind !== "snapshot"
@@ -206,7 +206,7 @@ const main = Effect.gen(function* () {
         }),
       ),
     );
-  }).pipe(Effect.provide(Layer.mergeAll(protocol, fcm)));
+  }).pipe(Effect.provide(Layer.mergeAll(layerProtocol, layerFcm)));
 });
 
 NodeRuntime.runMain(
@@ -220,8 +220,7 @@ NodeRuntime.runMain(
           : new WatchStoppedError({ cause }),
       );
     }),
-    // Socket failures may contain credential-bearing request headers. Keep the
-    // cause on the error, but print only the fixed message at the CLI boundary.
+    // Socket errors can expose credential headers; retain the cause but print only the fixed message.
     Effect.tapError((error) => Effect.logError(error.message)),
   ),
   { disableErrorReporting: true },

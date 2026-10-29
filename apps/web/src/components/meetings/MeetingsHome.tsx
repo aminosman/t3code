@@ -1,7 +1,7 @@
 import type { HistoryMeetingPart, HistoryMeetingSummary } from "@t3tools/contracts";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { MessageCircleIcon, NotebookPenIcon, SearchIcon, SparklesIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -18,7 +18,7 @@ import { MeetingChat } from "./MeetingChat";
 import { useMeetings } from "./useMeetings";
 
 /** "My to-dos", "what did we decide": a kind of passage, not words. */
-export function meetingIntent(query: string): {
+function meetingIntent(query: string): {
   readonly parts: ReadonlyArray<HistoryMeetingPart> | undefined;
   readonly rest: string;
 } {
@@ -85,6 +85,7 @@ export function MeetingsHome() {
   };
   const [query, setQuery] = useState("");
   const [settled, setSettled] = useState("");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounces the external meeting query with a cancellable timer.
   useEffect(() => {
     const timer = setTimeout(() => setSettled(query.trim()), 220);
     return () => clearTimeout(timer);
@@ -110,20 +111,16 @@ export function MeetingsHome() {
         }),
   );
 
-  const byDay = useMemo(() => {
-    const groups = new Map<string, { day: Date; meetings: Array<HistoryMeetingSummary> }>();
-    for (const meeting of list.data?.meetings ?? []) {
-      const date = meetingDate(meeting);
-      const day = date
-        ? new Date(date.getFullYear(), date.getMonth(), date.getDate())
-        : new Date(0);
-      const key = day.toISOString();
-      const group = groups.get(key) ?? { day, meetings: [] };
-      group.meetings.push(meeting);
-      groups.set(key, group);
-    }
-    return [...groups.values()].toSorted((a, b) => b.day.getTime() - a.day.getTime());
-  }, [list.data]);
+  const groups = new Map<string, { day: Date; meetings: Array<HistoryMeetingSummary> }>();
+  for (const meeting of list.data?.meetings ?? []) {
+    const date = meetingDate(meeting);
+    const day = date ? new Date(date.getFullYear(), date.getMonth(), date.getDate()) : new Date(0);
+    const key = day.toISOString();
+    const group = groups.get(key) ?? { day, meetings: [] };
+    group.meetings.push(meeting);
+    groups.set(key, group);
+  }
+  const byDay = [...groups.values()].toSorted((a, b) => b.day.getTime() - a.day.getTime());
 
   if (environmentId === null || root === null) {
     return (
@@ -132,7 +129,7 @@ export function MeetingsHome() {
         <p className="mt-serif text-2xl">No meetings yet</p>
         <p className="max-w-sm text-sm text-(--mt-ink-2)">
           tui records your calls and the meetings you start in the room, writes the notes, and they
-          appear here — searchable, and ready to ask about.
+          appear here, searchable, and ready to ask about.
         </p>
       </div>
     );
@@ -140,7 +137,7 @@ export function MeetingsHome() {
 
   return (
     <div className="flex h-full w-full min-w-0 flex-1">
-      <div className="meetings-surface relative flex h-full min-w-0 flex-1 flex-col overflow-y-auto">
+      <div className="meetings-surface relative flex h-full min-w-0 flex-1 flex-col overflow-y-auto scrollbar-gutter-both">
         <div className="mx-auto w-full max-w-[680px] flex-1 px-8 pt-11 pb-6">
           <div className="mb-6 flex items-end justify-between gap-4">
             <h1 className="mt-serif text-3xl leading-none">Meetings</h1>
@@ -153,7 +150,7 @@ export function MeetingsHome() {
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search every meeting — notes, action items, what was said"
+              placeholder="Search every meeting: notes, action items, what was said"
               className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-(--mt-ink-3)"
             />
           </label>
@@ -181,14 +178,14 @@ export function MeetingsHome() {
                 </p>
               ) : search.error ? (
                 <p className="text-sm text-(--mt-ink-2)">
-                  Search needs a word or two to look for — or ask your agent above.
+                  Search needs a word or two to look for, or ask your agent above.
                 </p>
               ) : (
                 <p className="text-sm text-(--mt-ink-2)">Searching…</p>
               )}
               {search.data?.results.length === 0 ? (
                 <p className="text-sm text-(--mt-ink-2)">
-                  Nothing in your meetings matches that. Ask your agent above — it can read every
+                  Nothing in your meetings matches that. Ask your agent above. It can read every
                   transcript.
                 </p>
               ) : null}

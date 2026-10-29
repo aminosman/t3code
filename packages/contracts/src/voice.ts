@@ -1,12 +1,7 @@
 import * as Schema from "effect/Schema";
 
-// ── Voice oracle (realtime speech session) ────────────────────────────
-//
-// The voice oracle is a browser-side realtime speech agent that helps the
-// user direct the coding agent on a thread. The server's only involvement
-// is minting short-lived OpenAI Realtime client secrets from the API key
-// stored in server settings; audio flows browser ↔ OpenAI directly over
-// WebRTC and never touches the T3 server.
+// The server mints client secrets; audio flows directly over WebRTC
+// between the browser and OpenAI.
 
 export const VOICE_REALTIME_SESSION_PATH = "/api/voice/realtime-session";
 

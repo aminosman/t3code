@@ -3,11 +3,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { toastManager } from "~/components/ui/toast";
-import { useActiveEnvironmentId, useProjects, useThreadShells } from "~/state/entities";
-import { useEnvironments } from "~/state/environments";
+import { useProjects, useThreadShells } from "~/state/entities";
+import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -21,7 +21,7 @@ const samePath = (a: string, b: string) => a.replace(/\/+$/, "") === b.replace(/
  */
 export function useMeetings() {
   const { environments } = useEnvironments();
-  const activeEnvironmentId = useActiveEnvironmentId();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
   const threadShells = useThreadShells();
   const askCommand = useAtomCommand(serverEnvironment.askMeetings, { reportFailure: false });
@@ -31,35 +31,29 @@ export function useMeetings() {
     (entry) => entry.connection.phase === "connected" && entry.serverConfig?.meetingsWorkspaceRoot,
   );
   const environment =
-    offering.find((entry) => entry.environmentId === activeEnvironmentId) ?? offering[0] ?? null;
+    offering.find((entry) => entry.environmentId === primaryEnvironmentId) ?? offering[0] ?? null;
   const environmentId: EnvironmentId | null = environment?.environmentId ?? null;
   const root = environment?.serverConfig?.meetingsWorkspaceRoot ?? null;
 
-  const project = useMemo(
-    () =>
-      root === null
-        ? null
-        : (projects.find(
-            (entry) => entry.environmentId === environmentId && samePath(entry.workspaceRoot, root),
-          ) ?? null),
-    [projects, environmentId, root],
-  );
+  const project =
+    root === null
+      ? null
+      : (projects.find(
+          (entry) => entry.environmentId === environmentId && samePath(entry.workspaceRoot, root),
+        ) ?? null);
 
   /** Questions asked in the Meetings project, newest first. */
-  const asks = useMemo(
-    () =>
-      project === null
-        ? []
-        : threadShells
-            .filter(
-              (thread) =>
-                thread.environmentId === project.environmentId &&
-                thread.projectId === project.id &&
-                thread.archivedAt === null,
-            )
-            .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-    [project, threadShells],
-  );
+  const asks =
+    project === null
+      ? []
+      : threadShells
+          .filter(
+            (thread) =>
+              thread.environmentId === project.environmentId &&
+              thread.projectId === project.id &&
+              thread.archivedAt === null,
+          )
+          .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   /**
    * Ask; the answer is a thread in the Meetings project, shown in the chat
@@ -67,44 +61,41 @@ export function useMeetings() {
    * chat (or starts it over, `fresh`); `threadId` follows up a chat across
    * all meetings. Resolves to the thread, null on failure.
    */
-  const ask = useCallback(
-    async (
-      question: string,
-      options?: {
-        readonly meetingId?: string;
-        readonly fresh?: boolean;
-        /** Follow up this chat. */
-        readonly threadId?: string | null;
-      },
-    ): Promise<string | null> => {
-      const text = question.trim();
-      if (text.length === 0 || environmentId === null || asking) return null;
-      setAsking(true);
-      const result = await askCommand({
-        environmentId,
-        input: {
-          question: text,
-          ...(options?.meetingId === undefined ? {} : { meetingId: options.meetingId }),
-          ...(options?.fresh === true ? { fresh: true } : {}),
-          ...(options?.threadId ? { threadId: options.threadId } : {}),
-        },
-      });
-      setAsking(false);
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add({
-            type: "error",
-            title: "Could not ask about your meetings",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
-        }
-        return null;
-      }
-      return result.value.threadId;
+  const ask = async (
+    question: string,
+    options?: {
+      readonly meetingId?: string;
+      readonly fresh?: boolean;
+      /** Follow up this chat. */
+      readonly threadId?: string | null;
     },
-    [askCommand, asking, environmentId],
-  );
+  ): Promise<string | null> => {
+    const text = question.trim();
+    if (text.length === 0 || environmentId === null || asking) return null;
+    setAsking(true);
+    const result = await askCommand({
+      environmentId,
+      input: {
+        question: text,
+        ...(options?.meetingId === undefined ? {} : { meetingId: options.meetingId }),
+        ...(options?.fresh === true ? { fresh: true } : {}),
+        ...(options?.threadId ? { threadId: options.threadId } : {}),
+      },
+    });
+    setAsking(false);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Could not ask about your meetings",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+      return null;
+    }
+    return result.value.threadId;
+  };
 
   // A meeting's own chat lives on that meeting; the rest are chats across
   // them, listed under Meetings in the sidebar and on the Meetings home.
@@ -113,14 +104,12 @@ export function useMeetings() {
       ? null
       : serverEnvironment.meetingList({ environmentId, input: { limit: 200 } }),
   );
-  const chats = useMemo(() => {
-    const onMeetings = new Set(
-      (listing.data?.meetings ?? []).flatMap((meeting) =>
-        meeting.chatThreadId ? [meeting.chatThreadId] : [],
-      ),
-    );
-    return asks.filter((thread) => !onMeetings.has(thread.id));
-  }, [asks, listing.data]);
+  const onMeetings = new Set(
+    (listing.data?.meetings ?? []).flatMap((meeting) =>
+      meeting.chatThreadId ? [meeting.chatThreadId] : [],
+    ),
+  );
+  const chats = asks.filter((thread) => !onMeetings.has(thread.id));
 
   return { environmentId, root, project, asks, chats, ask, asking };
 }

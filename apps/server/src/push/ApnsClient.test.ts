@@ -1,4 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
+// Effect Crypto has no asymmetric key generation or signature verification API.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 
 import { normalizePrivateKeyPem, signProviderToken } from "./ApnsClient.ts";

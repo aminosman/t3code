@@ -2,21 +2,12 @@ import { Schema } from "effect";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-// ── tui inbox ────────────────────────────────────────────────────────
-//
-// tui is the Mac's voice assistant: one decider classifies every utterance
-// and acts (opens threads, hands work off, drives the Mac). It runs beside
-// this server and holds a long-lived `tuiInbox.connect` stream. A phone
-// sends it text or a voice note from the home screen with `tuiInbox.send`;
-// tui hears it through the same front door as push-to-talk, and posts back
-// what it heard, said, showed and asks (`tuiInbox.post`). The phone follows
-// along on `tuiInbox.subscribe` and answers a prompt, or stops a running
-// hands run, with `tuiInbox.control`. A prompt also goes out as a push
-// notification with Allow / Decline actions.
+// Phones use tui’s existing voice decider through one connect stream.
+// Prompt cards also carry push actions for Allow / Decline.
 
 /** A voice note is capped so one RPC frame carries it. */
-export const TUI_INBOX_MAX_AUDIO_BASE64 = 8 * 1024 * 1024;
-export const TUI_INBOX_MAX_TEXT = 4000;
+const TUI_INBOX_MAX_AUDIO_BASE64 = 8 * 1024 * 1024;
+const TUI_INBOX_MAX_TEXT = 4000;
 /** The push category the phone registers with Allow / Decline actions. */
 export const TUI_INBOX_PROMPT_CATEGORY = "TUI_PROMPT";
 export const TUI_INBOX_PROMPT_ALLOW_ACTION = "TUI_ALLOW";

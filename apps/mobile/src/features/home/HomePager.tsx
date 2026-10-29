@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { Keyboard, Platform, useWindowDimensions, View } from "react-native";
 import Animated, {
   runOnJS,
@@ -30,17 +30,25 @@ export function HomePager(props: { readonly page?: HomeTab }) {
   // Phone recordings go to the Mac by themselves whenever it is reachable.
   usePhoneMeetingSync();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
-  const position = useSharedValue(HOME_INDEX);
-  const [page, setPage] = useState(HOME_INDEX);
+  const [initialPage] = useState(() => (props.page ? HOME_TABS.indexOf(props.page) : HOME_INDEX));
+  const position = useSharedValue(initialPage);
+  const [page, setPage] = useState(initialPage);
+  const [previousRequest, setPreviousRequest] = useState(props.page);
+  if (previousRequest !== props.page) {
+    setPreviousRequest(props.page);
+    if (props.page) setPage(HOME_TABS.indexOf(props.page));
+  }
   const [composing, setComposing] = useState(false);
   const [keyboardUp, setKeyboardUp] = useState(false);
-  const widthRef = useRef(width);
-  const pageRef = useRef(page);
-  useEffect(() => {
-    widthRef.current = width;
-    pageRef.current = page;
+  const resizePage = useEffectEvent((nextWidth: number) => {
+    scrollRef.current?.scrollTo({ x: page * nextWidth, animated: false });
+  });
+  const scrollToRequestedPage = useEffectEvent((requested: HomeTab | undefined) => {
+    if (requested)
+      scrollRef.current?.scrollTo({ x: HOME_TABS.indexOf(requested) * width, animated: true });
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to the native keyboard so the dock avoids it.
   useEffect(() => {
     const show = Keyboard.addListener(
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
@@ -57,13 +65,14 @@ export function HomePager(props: { readonly page?: HomeTab }) {
   }, []);
 
   // Keep the current page in view when the width changes (rotation, split).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the native scroll view on its page when the window resizes.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ x: pageRef.current * width, animated: false });
-  }, [scrollRef, width]);
+    resizePage(width);
+  }, [width]);
 
   const onScroll = useAnimatedScrollHandler({
     onScroll: (event) => {
-      position.value = event.contentOffset.x / Math.max(1, event.layoutMeasurement.width);
+      position.set(event.contentOffset.x / Math.max(1, event.layoutMeasurement.width));
     },
     onMomentumEnd: (event) => {
       const index = Math.round(event.contentOffset.x / Math.max(1, event.layoutMeasurement.width));
@@ -75,18 +84,15 @@ export function HomePager(props: { readonly page?: HomeTab }) {
     const index = HOME_TABS.indexOf(tab);
     Keyboard.dismiss();
     setPage(index);
-    scrollRef.current?.scrollTo({ x: index * widthRef.current, animated: true });
+    scrollRef.current?.scrollTo({ x: index * width, animated: true });
   };
 
   // A link that names a page (t3code://?page=chats) moves there.
   const requestedPage = props.page;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Move the native scroll view when navigation requests a page.
   useEffect(() => {
-    if (!requestedPage) return;
-    const index = HOME_TABS.indexOf(requestedPage);
-    setPage(index);
-    position.value = index;
-    scrollRef.current?.scrollTo({ x: index * widthRef.current, animated: true });
-  }, [position, requestedPage, scrollRef]);
+    scrollToRequestedPage(requestedPage);
+  }, [requestedPage]);
 
   return (
     <View className="flex-1 bg-gr-surface">
@@ -99,7 +105,7 @@ export function HomePager(props: { readonly page?: HomeTab }) {
         directionalLockEnabled
         showsHorizontalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        contentOffset={{ x: HOME_INDEX * width, y: 0 }}
+        contentOffset={{ x: initialPage * width, y: 0 }}
         onScroll={onScroll}
         scrollEventThrottle={16}
         contentInsetAdjustmentBehavior="never"

@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ApnsClient from "../push/ApnsClient.ts";
@@ -99,7 +100,7 @@ it.effect("refuses an empty send", () =>
   }).pipe(Effect.scoped),
 );
 
-it.live("relays a prompt to the phone, pushes it with actions, and routes the verdict", () =>
+it.effect("relays a prompt to the phone, pushes it with actions, and routes the verdict", () =>
   Effect.scoped(
     Effect.gen(function* () {
       sent.length = 0;
@@ -121,18 +122,18 @@ it.live("relays a prompt to the phone, pushes it with actions, and routes the ve
       });
 
       // The push runs beside the post.
-      yield* Effect.sleep("10 millis");
+      yield* TestClock.adjust("10 millis");
       expect(sent).toHaveLength(1);
       expect(sent[0]?.category).toBe(TUI_INBOX_PROMPT_CATEGORY);
       expect(sent[0]?.data.tuiPromptId).toBe("p1");
 
       yield* inbox.control({ type: "verdict", promptId: "p1", verdict: "up" });
-      yield* Effect.sleep("10 millis");
+      yield* TestClock.adjust("10 millis");
       expect(received[1]).toEqual({ type: "verdict", promptId: "p1", verdict: "up" });
 
       // A rating of what was already done is shown, never pushed.
       yield* inbox.post({ type: "prompt", promptId: "p2", text: "Right?", kind: "rate" });
-      yield* Effect.sleep("10 millis");
+      yield* TestClock.adjust("10 millis");
       expect(sent).toHaveLength(1);
 
       yield* inbox.post({ type: "settled", promptId: "p1", outcome: "up" });
@@ -144,20 +145,20 @@ it.live("relays a prompt to the phone, pushes it with actions, and routes the ve
   ),
 );
 
-it.live("says nothing by push while the phone is watching, and pushes when it is not", () =>
+it.effect("says nothing by push while the phone is watching, and pushes when it is not", () =>
   Effect.scoped(
     Effect.gen(function* () {
       sent.length = 0;
       const inbox = yield* makeInbox;
       yield* inbox.post({ type: "say", text: "Opened the Roost thread." });
-      yield* Effect.sleep("10 millis");
+      yield* TestClock.adjust("10 millis");
       expect(sent).toHaveLength(1);
       expect(sent[0]?.category).toBeUndefined();
 
       yield* take(yield* inbox.subscribe, 99);
       yield* Effect.yieldNow;
       yield* inbox.post({ type: "say", text: "Done." });
-      yield* Effect.sleep("10 millis");
+      yield* TestClock.adjust("10 millis");
       expect(sent).toHaveLength(1);
     }),
   ),

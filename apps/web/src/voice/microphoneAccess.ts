@@ -1,11 +1,4 @@
-/**
- * Microphone acquisition, with the OS gate handled before the browser gate.
- *
- * On desktop macOS the TCC grant is resolved in the Electron main process
- * first, so a denial is reported as a denial instead of surfacing later as an
- * opaque `getUserMedia` failure with no way to tell "blocked by macOS" apart
- * from "blocked by the page".
- */
+// Resolve macOS TCC before getUserMedia so OS denials can be distinguished from browser denials.
 
 export class MicrophoneAccessError extends Error {
   readonly blockedBy: "os" | "browser" | "unavailable";

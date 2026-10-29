@@ -1,3 +1,5 @@
+import { useNowMinuteMs } from "../../lib/clock";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { HistoryMeetingSummary } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { formatModelSlugName } from "@t3tools/shared/model";
@@ -15,8 +17,8 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import {
   GUTTER,
   GrCard,
@@ -82,28 +84,17 @@ function greeting(now: Date): string {
   return "Good evening";
 }
 
-/** Re-render once a minute so "4m" stays true. */
-function useMinuteClock(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(timer);
-  }, []);
-  return now;
-}
-
 function PulseDot(props: { readonly className: string; readonly pulse: boolean }) {
   const opacity = useSharedValue(1);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Start and cancel the native status-dot animation.
   useEffect(() => {
     if (!props.pulse) {
       cancelAnimation(opacity);
-      opacity.value = 1;
+      opacity.set(1);
       return;
     }
-    opacity.value = withRepeat(
-      withTiming(0.25, { duration: 700, easing: Easing.inOut(Easing.quad) }),
-      -1,
-      true,
+    opacity.set(
+      withRepeat(withTiming(0.25, { duration: 700, easing: Easing.inOut(Easing.quad) }), -1, true),
     );
     return () => cancelAnimation(opacity);
   }, [opacity, props.pulse]);
@@ -332,7 +323,7 @@ function Shelf(props: {
  * recorded (if any), and the Mac tui is reached through.
  */
 export function useHomeData() {
-  const now = useMinuteClock();
+  const now = useNowMinuteMs();
   const threads = useThreadShells();
   const { environmentId, connected } = useTuiEnvironment();
   const shelves = useMemo(() => buildShelves(threads, now), [threads, now]);
@@ -375,6 +366,7 @@ export function ShelvesHomeScreen(props: {
   const insets = useSafeAreaInsets();
   const projects = useProjects();
   const openThread = useHomeThreadSelection();
+  const { startNewTask } = useAdaptiveWorkspaceLayout();
   const {
     now,
     shelves: allShelves,
@@ -466,20 +458,11 @@ export function ShelvesHomeScreen(props: {
       }
       actions={
         <>
-          <GrIconButton
-            icon="square.and.pencil"
-            label="New task"
-            onPress={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-          />
+          <GrIconButton icon="square.and.pencil" label="New task" onPress={startNewTask} />
           <GrIconButton
             icon="ellipsis"
             label="Open settings"
-            onPress={() =>
-              navigation.navigate("SettingsSheet", {
-                screen: "SettingsContent",
-                params: { screen: "Settings" },
-              })
-            }
+            onPress={() => navigation.navigate("Settings")}
           />
         </>
       }

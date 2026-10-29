@@ -2,7 +2,7 @@
 // them against a schema here would reject traffic the proxy must pass through.
 // @effect-diagnostics preferSchemaOverJson:off
 import * as Effect from "effect/Effect";
-import { HttpBody, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { McpConnectionError } from "@t3tools/contracts";
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
@@ -22,7 +22,7 @@ export const asJsonRpcEnvelope = (value: unknown): JsonRpcEnvelope | null =>
     : null;
 
 /** Data lines of each SSE event, joined, as the MCP streamable HTTP transport emits them. */
-export function parseSseData(body: string): ReadonlyArray<string> {
+function parseSseData(body: string): ReadonlyArray<string> {
   const events: Array<string> = [];
   for (const rawEvent of body.split(/\r?\n\r?\n/u)) {
     const data = rawEvent
@@ -36,7 +36,7 @@ export function parseSseData(body: string): ReadonlyArray<string> {
 }
 
 /** Every JSON-RPC payload in a streamable HTTP response body, whether JSON or SSE. */
-export function parseMcpResponseBody(body: string, contentType: string): ReadonlyArray<unknown> {
+function parseMcpResponseBody(body: string, contentType: string): ReadonlyArray<unknown> {
   const trimmed = body.trim();
   if (trimmed.length === 0) return [];
   const chunks = contentType.includes("text/event-stream") ? parseSseData(trimmed) : [trimmed];

@@ -7,7 +7,7 @@ import {
 import { EMPTY_TUI_SCREEN } from "@t3tools/client-runtime/tui-screen";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { Image } from "expo-image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   KeyboardAvoidingView,
   type LayoutChangeEvent,
@@ -16,11 +16,12 @@ import {
   ScrollView,
   View,
 } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { GestureDetector } from "react-native-gesture-handler";
+import { useTuiScreenGesture } from "./useTuiScreenGesture";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text, AppTextInput } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -32,9 +33,6 @@ type TuiScreenScreenProps = StaticScreenProps<{ readonly environmentId?: string 
 
 /** The environment last looked at, so the screen reopens on it. */
 let lastEnvironmentId: string | null = null;
-
-/** One wheel line per this many points of finger travel. */
-const POINTS_PER_LINE = 12;
 
 const KEYS: ReadonlyArray<{ readonly key: TuiScreenKey; readonly label: string }> = [
   { key: "enter", label: "↩" },
@@ -55,14 +53,6 @@ const SHORTCUTS: ReadonlyArray<{ readonly keys: string; readonly label: string }
   { keys: "cmd tab", label: "⌘⇥" },
 ];
 
-/**
- * The Mac's screen, live, with the phone's finger on it: tap to click,
- * double-tap to double-click, hold for a right click, drag to scroll, and a
- * keyboard row for what a sign-in page needs. tui captures only while this
- * screen is open; closing it stops the capture. An agent thread waiting on
- * the user here (`t3_screen_hand_over`) is listed above the picture, and its
- * Done or Not now goes back into that thread.
- */
 export function TuiScreenScreen({ route }: TuiScreenScreenProps) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -97,6 +87,7 @@ export function TuiScreenScreen({ route }: TuiScreenScreenProps) {
       environments[0] ??
       null);
   const environmentId = environment ? EnvironmentId.make(environment.environmentId) : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Remember the selected Mac across screen mounts in the environment selection registry.
   useEffect(() => {
     if (environmentId) lastEnvironmentId = environmentId;
   }, [environmentId]);
@@ -149,64 +140,8 @@ export function TuiScreenScreen({ route }: TuiScreenScreenProps) {
     const height = frame.height * scale;
     return { width, height, x: (box.width - width) / 2, y: (box.height - height) / 2 };
   }, [frame, box]);
-  const pictureRef = useRef(picture);
-  useEffect(() => {
-    pictureRef.current = picture;
-  }, [picture]);
 
-  const fraction = useCallback((x: number, y: number) => {
-    const p = pictureRef.current;
-    if (!p) return null;
-    const fx = (x - p.x) / p.width;
-    const fy = (y - p.y) / p.height;
-    if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null;
-    return { x: fx, y: fy };
-  }, []);
-
-  const gesture = useMemo(() => {
-    const tap = Gesture.Tap()
-      .numberOfTaps(1)
-      .maxDuration(300)
-      .runOnJS(true)
-      .onEnd((event) => {
-        const at = fraction(event.x, event.y);
-        if (at) void act({ type: "click", ...at });
-      });
-    const doubleTap = Gesture.Tap()
-      .numberOfTaps(2)
-      .runOnJS(true)
-      .onEnd((event) => {
-        const at = fraction(event.x, event.y);
-        if (at) void act({ type: "click", ...at, count: 2 });
-      });
-    const hold = Gesture.LongPress()
-      .minDuration(450)
-      .runOnJS(true)
-      .onStart((event) => {
-        const at = fraction(event.x, event.y);
-        if (at) void act({ type: "click", ...at, button: "right" });
-      });
-    let scrolled = { x: 0, y: 0 };
-    let origin: { x: number; y: number } | null = null;
-    const pan = Gesture.Pan()
-      .minDistance(10)
-      .runOnJS(true)
-      .onStart((event) => {
-        scrolled = { x: 0, y: 0 };
-        origin = fraction(event.x, event.y);
-      })
-      .onUpdate((event) => {
-        if (!origin) return;
-        // Lines the finger has travelled since the last send; a finger
-        // moving down pulls the page down, as on the phone itself.
-        const dx = Math.trunc(-event.translationX / POINTS_PER_LINE) - scrolled.x;
-        const dy = Math.trunc(-event.translationY / POINTS_PER_LINE) - scrolled.y;
-        if (dx === 0 && dy === 0) return;
-        scrolled = { x: scrolled.x + dx, y: scrolled.y + dy };
-        void act({ type: "scroll", ...origin, dx, dy });
-      });
-    return Gesture.Exclusive(doubleTap, Gesture.Race(pan, hold, tap));
-  }, [act, fraction]);
+  const gesture = useTuiScreenGesture(picture, act);
 
   const [draft, setDraft] = useState("");
   const sendText = async () => {

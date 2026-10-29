@@ -1,8 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "./Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "./Sqlite.ts";
 import { repairImportedThreadCreators } from "./roostImportedThreadCreators.ts";
 
 it.effect("says who started each thread copied from V1, once", () =>

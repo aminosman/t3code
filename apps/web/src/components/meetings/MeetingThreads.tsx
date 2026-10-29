@@ -3,7 +3,6 @@ import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, HistoryMeetingReadOutput, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRightIcon, MessageSquarePlusIcon, SendIcon } from "lucide-react";
-import { useMemo } from "react";
 
 import { useThreadShells } from "~/state/entities";
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -39,7 +38,7 @@ const clock = (at: string) =>
 
 /**
  * The meeting's Threads tab: what was asked of Tui in it ("hey Tui, look
- * into…") and the thread each request started or reached — still in its own
+ * into…") and the thread each request started or reached. still in its own
  * project, listed here so the meeting shows what it set going.
  */
 export function MeetingThreads({
@@ -50,7 +49,7 @@ export function MeetingThreads({
   threads: ReadonlyArray<MeetingThread>;
 }) {
   const shells = useThreadShells();
-  const groups = useMemo(() => groupMeetingThreads(threads), [threads]);
+  const groups = groupMeetingThreads(threads);
   if (groups.length === 0) {
     return (
       <p className="text-sm text-(--mt-ink-2)">

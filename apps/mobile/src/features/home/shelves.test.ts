@@ -51,10 +51,10 @@ function subagentOf(id: string, parent: string): Partial<EnvironmentThreadShell>
   };
 }
 
-const waitingOn = (kind: string) =>
-  [{ kind }] as unknown as EnvironmentThreadShell["pendingBackgroundTasks"];
+const waitingOn = (kind: string, awaited = false) =>
+  [{ kind, awaited }] as unknown as EnvironmentThreadShell["pendingBackgroundTasks"];
 
-describe("shelfCardState — the desktop's statuses, then the rest", () => {
+describe("shelfCardState: the desktop's statuses, then the rest", () => {
   it("puts what needs the user ahead of a running turn", () => {
     expect(
       shelfCardState(thread("a", { runtime: runtime("running"), hasPendingApprovals: true })),
@@ -126,7 +126,7 @@ describe("buildShelves", () => {
         thread("failed", { latestRun: run("failed") }),
         thread("waiting", {
           latestRun: run("completed"),
-          pendingBackgroundTasks: waitingOn("monitor"),
+          pendingBackgroundTasks: waitingOn("monitor", true),
         }),
       ],
       NOW,

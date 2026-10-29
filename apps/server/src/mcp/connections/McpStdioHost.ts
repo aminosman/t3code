@@ -11,8 +11,8 @@ import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { McpConnectionError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
@@ -23,16 +23,9 @@ import {
   type JsonRpcEnvelope,
 } from "./McpJsonRpc.ts";
 
-/**
- * Hosts stdio MCP servers inside Roost and exposes each as a streamable HTTP
- * endpoint, so a local server is one process shared by every agent session
- * instead of one copy per CLI, and its environment (API keys) never leaves
- * the server. Agents speak the HTTP transport; this host multiplexes them
- * onto the one stdio session: `initialize` is answered from the server's
- * cached handshake, request ids are remapped per client, and anything the
- * server asks of its client (sampling, elicitation, roots) is declined, since
- * no single agent owns the session.
- */
+// Share one stdio process across agent HTTP sessions without exposing its environment.
+// Cache initialization, remap request ids, and decline server-to-client requests
+// because no single agent owns the session.
 
 export interface McpStdioServerSpec {
   readonly command: string;
@@ -132,7 +125,7 @@ const makeLineFramer = () => {
   };
 };
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
   const layerScope = yield* Effect.scope;
@@ -148,16 +141,18 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const shutdown = (entry: Running, reason: McpConnectionError) =>
-    Effect.gen(function* () {
-      entry.dead = reason;
-      for (const deferred of entry.pending.values()) {
-        yield* Deferred.fail(deferred, reason);
-      }
-      entry.pending.clear();
-      yield* Deferred.fail(entry.initialized, reason).pipe(Effect.ignore);
-      yield* Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
-    });
+  const shutdown = Effect.fn("McpStdioHost.shutdown")(function* (
+    entry: Running,
+    reason: McpConnectionError,
+  ) {
+    entry.dead = reason;
+    for (const deferred of entry.pending.values()) {
+      yield* Deferred.fail(deferred, reason);
+    }
+    entry.pending.clear();
+    yield* Deferred.fail(entry.initialized, reason).pipe(Effect.ignore);
+    yield* Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+  });
 
   const spawn = Effect.fn("McpStdioHost.spawn")(function* (id: string, spec: McpStdioServerSpec) {
     const scope = yield* Scope.make();
@@ -196,38 +191,37 @@ export const make = Effect.gen(function* () {
         Scope.provide(scope),
       );
 
-    const route = (line: string) =>
-      Effect.gen(function* () {
-        const parsed = parseJsonLine(line);
-        if (parsed === undefined) {
-          yield* Effect.logDebug("Dropping non-JSON MCP stdio line", { id, length: line.length });
-          return;
+    const route = Effect.fn("McpStdioHost.route")(function* (line: string) {
+      const parsed = parseJsonLine(line);
+      if (parsed === undefined) {
+        yield* Effect.logDebug("Dropping non-JSON MCP stdio line", { id, length: line.length });
+        return;
+      }
+      const envelope = asJsonRpcEnvelope(parsed);
+      if (envelope === null) return;
+      if (envelope.method === undefined) {
+        // A response: hand it to whoever is waiting on that id.
+        const key = typeof envelope.id === "number" ? envelope.id : Number.NaN;
+        const waiting = entry.pending.get(key);
+        if (waiting !== undefined) {
+          entry.pending.delete(key);
+          yield* Deferred.succeed(waiting, envelope);
         }
-        const envelope = asJsonRpcEnvelope(parsed);
-        if (envelope === null) return;
-        if (envelope.method === undefined) {
-          // A response: hand it to whoever is waiting on that id.
-          const key = typeof envelope.id === "number" ? envelope.id : Number.NaN;
-          const waiting = entry.pending.get(key);
-          if (waiting !== undefined) {
-            entry.pending.delete(key);
-            yield* Deferred.succeed(waiting, envelope);
-          }
-          return;
-        }
-        if (envelope.id !== undefined && envelope.id !== null) {
-          // A server-to-client request. No single agent owns this session, so
-          // decline it instead of guessing which client should answer.
-          yield* Queue.offer(
-            outgoing,
-            new TextEncoder().encode(
-              `${JSON.stringify(jsonRpcError(envelope.id, -32601, "This MCP server is hosted by Roost; client requests are not supported."))}\n`,
-            ),
-          );
-        }
-        // Server notifications (tools/list_changed) have no stream to fan out
-        // on; agents re-list tools on their own schedule.
-      });
+        return;
+      }
+      if (envelope.id !== undefined && envelope.id !== null) {
+        // A server-to-client request. No single agent owns this session, so
+        // decline it instead of guessing which client should answer.
+        yield* Queue.offer(
+          outgoing,
+          new TextEncoder().encode(
+            `${JSON.stringify(jsonRpcError(envelope.id, -32601, "This MCP server is hosted by Roost; client requests are not supported."))}\n`,
+          ),
+        );
+      }
+      // Server notifications (tools/list_changed) have no stream to fan out
+      // on; agents re-list tools on their own schedule.
+    });
 
     yield* Effect.gen(function* () {
       const frame = makeLineFramer();
@@ -261,37 +255,40 @@ export const make = Effect.gen(function* () {
     return entry;
   });
 
-  const send = (entry: Running, payload: unknown) =>
-    Effect.gen(function* () {
-      const line = JSON.stringify(payload);
-      if (Buffer.byteLength(line) > MAX_MESSAGE_BYTES) {
-        return yield* upstreamFailure("MCP message exceeds 8 MiB.");
-      }
-      if (entry.dead !== undefined) return yield* entry.dead;
-      yield* Queue.offer(entry.outgoing, new TextEncoder().encode(`${line}\n`));
-    });
+  const send = Effect.fn("McpStdioHost.send")(function* (entry: Running, payload: unknown) {
+    const line = JSON.stringify(payload);
+    if (Buffer.byteLength(line) > MAX_MESSAGE_BYTES) {
+      return yield* upstreamFailure("MCP message exceeds 8 MiB.");
+    }
+    if (entry.dead !== undefined) return yield* entry.dead;
+    yield* Queue.offer(entry.outgoing, new TextEncoder().encode(`${line}\n`));
+  });
 
-  const call = (entry: Running, method: string, params: unknown, timeout: Duration.Duration) =>
-    Effect.gen(function* () {
-      const id = entry.nextId++;
-      const deferred = yield* Deferred.make<JsonRpcEnvelope, McpConnectionError>();
-      entry.pending.set(id, deferred);
-      yield* send(entry, {
-        jsonrpc: "2.0",
-        id,
-        method,
-        ...(params === undefined ? {} : { params }),
-      }).pipe(Effect.tapError(() => Effect.sync(() => entry.pending.delete(id))));
-      return yield* Deferred.await(deferred).pipe(
-        Effect.timeoutOrElse({
-          duration: timeout,
-          orElse: () =>
-            Effect.sync(() => entry.pending.delete(id)).pipe(
-              Effect.andThen(upstreamFailure(`${method} timed out.`)),
-            ),
-        }),
-      );
-    });
+  const call = Effect.fn("McpStdioHost.call")(function* (
+    entry: Running,
+    method: string,
+    params: unknown,
+    timeout: Duration.Duration,
+  ) {
+    const id = entry.nextId++;
+    const deferred = yield* Deferred.make<JsonRpcEnvelope, McpConnectionError>();
+    entry.pending.set(id, deferred);
+    yield* send(entry, {
+      jsonrpc: "2.0",
+      id,
+      method,
+      ...(params === undefined ? {} : { params }),
+    }).pipe(Effect.tapError(() => Effect.sync(() => entry.pending.delete(id))));
+    return yield* Deferred.await(deferred).pipe(
+      Effect.timeoutOrElse({
+        duration: timeout,
+        orElse: () =>
+          Effect.sync(() => entry.pending.delete(id)).pipe(
+            Effect.andThen(upstreamFailure(`${method} timed out.`)),
+          ),
+      }),
+    );
+  });
 
   const ensureRunning = (id: string, spec: McpStdioServerSpec) =>
     mutexFor(id).pipe(
@@ -347,80 +344,83 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const handle: McpStdioHostShape["handle"] = (id, spec, httpRequest) =>
-    Effect.gen(function* () {
-      if (httpRequest.method === "DELETE") {
-        if (httpRequest.sessionId !== undefined)
-          running.get(id)?.sessions.delete(httpRequest.sessionId);
-        return { status: 204 } satisfies McpStdioHostResponse;
-      }
-      if (httpRequest.method !== "POST") {
-        return { status: 405 } satisfies McpStdioHostResponse;
-      }
-      const parsed = parseJsonLine(httpRequest.body ?? "");
-      if (parsed === undefined) {
-        return jsonResponse(400, jsonRpcError(null, -32700, "Parse error"));
-      }
-      const envelope = asJsonRpcEnvelope(parsed);
-      if (envelope === null || typeof envelope.method !== "string") {
-        return jsonResponse(400, jsonRpcError(null, -32600, "Invalid request"));
-      }
-      const isNotification = envelope.id === undefined || envelope.id === null;
-      if (envelope.method === "initialize") {
-        const entry = yield* ensureRunning(id, spec);
-        const result = yield* Deferred.await(entry.initialized);
-        const sessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
-        entry.sessions.add(sessionId);
-        const serverResult =
-          typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {};
-        return jsonResponse(
-          200,
-          {
-            jsonrpc: "2.0",
-            id: envelope.id,
-            result: {
-              ...serverResult,
-              protocolVersion: serverResult.protocolVersion ?? MCP_PROTOCOL_VERSION,
-            },
+  const handle = Effect.fn("McpStdioHost.handle")(function* (
+    id: string,
+    spec: McpStdioServerSpec,
+    httpRequest: McpStdioHostRequest,
+  ) {
+    if (httpRequest.method === "DELETE") {
+      if (httpRequest.sessionId !== undefined)
+        running.get(id)?.sessions.delete(httpRequest.sessionId);
+      return { status: 204 } satisfies McpStdioHostResponse;
+    }
+    if (httpRequest.method !== "POST") {
+      return { status: 405 } satisfies McpStdioHostResponse;
+    }
+    const parsed = parseJsonLine(httpRequest.body ?? "");
+    if (parsed === undefined) {
+      return jsonResponse(400, jsonRpcError(null, -32700, "Parse error"));
+    }
+    const envelope = asJsonRpcEnvelope(parsed);
+    if (envelope === null || typeof envelope.method !== "string") {
+      return jsonResponse(400, jsonRpcError(null, -32600, "Invalid request"));
+    }
+    const isNotification = envelope.id === undefined || envelope.id === null;
+    if (envelope.method === "initialize") {
+      const entry = yield* ensureRunning(id, spec);
+      const result = yield* Deferred.await(entry.initialized);
+      const sessionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      entry.sessions.add(sessionId);
+      const serverResult =
+        typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {};
+      return jsonResponse(
+        200,
+        {
+          jsonrpc: "2.0",
+          id: envelope.id,
+          result: {
+            ...serverResult,
+            protocolVersion: serverResult.protocolVersion ?? MCP_PROTOCOL_VERSION,
           },
-          sessionId,
-        );
-      }
-      const entry = running.get(id);
-      if (
-        entry === undefined ||
-        entry.dead !== undefined ||
-        httpRequest.sessionId === undefined ||
-        !entry.sessions.has(httpRequest.sessionId)
-      ) {
-        return jsonResponse(
-          404,
-          jsonRpcError(envelope.id, -32000, "Session not found; initialize first."),
-        );
-      }
-      if (isNotification) {
-        if (envelope.method !== "notifications/initialized") {
-          yield* send(entry, {
-            jsonrpc: "2.0",
-            method: envelope.method,
-            ...(envelope.params === undefined ? {} : { params: envelope.params }),
-          }).pipe(Effect.ignore);
-        }
-        return { status: 202 } satisfies McpStdioHostResponse;
-      }
-      const response = yield* call(entry, envelope.method, envelope.params, REQUEST_TIMEOUT).pipe(
-        Effect.catch((error) =>
-          Effect.succeed({ error: { code: -32000, message: error.detail } } as JsonRpcEnvelope),
-        ),
+        },
+        sessionId,
       );
-      return jsonResponse(200, {
-        jsonrpc: "2.0",
-        id: envelope.id,
-        ...(response.error !== undefined
-          ? { error: response.error }
-          : { result: response.result ?? null }),
-      });
+    }
+    const entry = running.get(id);
+    if (
+      entry === undefined ||
+      entry.dead !== undefined ||
+      httpRequest.sessionId === undefined ||
+      !entry.sessions.has(httpRequest.sessionId)
+    ) {
+      return jsonResponse(
+        404,
+        jsonRpcError(envelope.id, -32000, "Session not found; initialize first."),
+      );
+    }
+    if (isNotification) {
+      if (envelope.method !== "notifications/initialized") {
+        yield* send(entry, {
+          jsonrpc: "2.0",
+          method: envelope.method,
+          ...(envelope.params === undefined ? {} : { params: envelope.params }),
+        }).pipe(Effect.ignore);
+      }
+      return { status: 202 } satisfies McpStdioHostResponse;
+    }
+    const response = yield* call(entry, envelope.method, envelope.params, REQUEST_TIMEOUT).pipe(
+      Effect.catch((error) =>
+        Effect.succeed({ error: { code: -32000, message: error.detail } } as JsonRpcEnvelope),
+      ),
+    );
+    return jsonResponse(200, {
+      jsonrpc: "2.0",
+      id: envelope.id,
+      ...(response.error !== undefined
+        ? { error: response.error }
+        : { result: response.result ?? null }),
     });
+  });
 
   const stop: McpStdioHostShape["stop"] = (id) =>
     Effect.suspend(() => {

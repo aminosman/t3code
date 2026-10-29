@@ -4,15 +4,6 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 
 import { threadHasUnseenCompletion } from "../threads/threadListV2";
 
-/**
- * The home screen's rows: one per status, in the desktop sidebar's words and
- * order (resolveThreadStatusPill in apps/web Sidebar.logic.ts) — Pending
- * approval, Awaiting input, Working, Connecting, Waiting, Plan ready,
- * Completed — then what the desktop leaves without a pill, split the same
- * way: Failed, Usage limit, Stopped, Done, Not started. Each thread lands on
- * exactly one row; subagent threads never get a card of their own and are
- * counted on the thread that started them.
- */
 export type ShelfCardState =
   | "needs-approval"
   | "needs-input"

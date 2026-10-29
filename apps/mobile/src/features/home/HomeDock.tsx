@@ -4,8 +4,8 @@ import * as Haptics from "expo-haptics";
 import { useRef, useState } from "react";
 import { Pressable, TextInput, View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { GrInputSurface, RADIUS, SPACE } from "../../design/granola";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";

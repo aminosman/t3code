@@ -46,13 +46,7 @@ function ControlButton({
   );
 }
 
-/**
- * The meeting's recording, from its page: Pause and Stop while tui records
- * it, Resume and End while it is paused, Resume for a while after it ended.
- * tui does the recording; each button is a command sent to it through
- * Roost's tui inbox, and the page follows what tui then writes into the
- * meeting's folder (recording.json, transcript.live).
- */
+// Commands go to tui; the meeting folder reports when recording actually changes.
 export function RecordingControls({
   environmentId,
   meeting,
@@ -68,6 +62,7 @@ export function RecordingControls({
   const state = meeting.live === true ? (meeting.recording ?? "recording") : null;
 
   // The pending label holds until the folder says the command took effect.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Expires the pending recording label if no completion arrives.
   useEffect(() => {
     if (pending === null) return;
     const timer = setTimeout(() => setPending(null), 15_000);
@@ -109,7 +104,7 @@ export function RecordingControls({
     return (
       <div className="mb-3 flex w-fit items-center gap-2 rounded-full border border-(--mt-hairline) bg-(--mt-raised) py-1 pr-1 pl-3 text-xs font-medium text-(--mt-accent)">
         <Bars live />
-        Recording — the notes update as the meeting goes
+        Recording. The notes update as the meeting goes
         <ControlButton
           onClick={() => void send("pause")}
           disabled={busy}
@@ -131,7 +126,7 @@ export function RecordingControls({
     return (
       <div className="mb-3 flex w-fit items-center gap-2 rounded-full border border-(--mt-hairline) bg-(--mt-raised) py-1 pr-1 pl-3 text-xs font-medium text-(--mt-ink-2-strong)">
         <Bars live={false} />
-        Paused — the meeting is still open
+        Paused. The meeting is still open
         <ControlButton
           onClick={() => void send("resume")}
           disabled={busy}
@@ -153,14 +148,14 @@ export function RecordingControls({
     return (
       <div className="mb-3 flex w-fit items-center gap-2 rounded-full border border-(--mt-hairline) bg-(--mt-raised) px-3 py-1 text-xs font-medium text-(--mt-ink-2-strong)">
         <Bars live />
-        Transcribing the whole meeting — the final notes come next
+        Transcribing the whole meeting. The final notes come next
       </div>
     );
   }
   if (meeting.resumable === true) {
     return (
       <div className="mb-3 flex w-fit items-center gap-2 rounded-full border border-(--mt-hairline) bg-(--mt-raised) py-1 pr-1 pl-3 text-xs text-(--mt-ink-2)">
-        Ended — carry on recording into this meeting
+        Ended. Carry on recording into this meeting
         <ControlButton
           onClick={() => void send("resume")}
           disabled={busy}

@@ -1,11 +1,4 @@
-/**
- * Device registration routes for environment-delivered push.
- *
- * A client posts the APNs token of the device it is running on to the
- * environment it is paired with. Authentication is the ordinary environment
- * auth every other route uses, which is what makes the relay unnecessary:
- * being paired to this environment is the whole authorization story.
- */
+// Device registration uses the environment pairing auth; no relay is required.
 import {
   AuthOrchestrationOperateScope,
   PUSH_DEVICE_REGISTER_PATH,
@@ -24,7 +17,7 @@ import {
   HttpServerRequest,
   HttpServerRespondable,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import { authenticateRawRouteWithScope } from "../http.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -39,9 +32,10 @@ const decodeReply = Schema.decodeUnknownEffect(PushReply);
 export const readDeliveryConfigured = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const settings = yield* settingsService.getSettings.pipe(
-    Effect.catchTag("ServerSettingsError", (cause) =>
-      Effect.logWarning("push: failed to read settings", { cause }).pipe(Effect.as(undefined)),
-    ),
+    Effect.catchTags({
+      ServerSettingsError: (cause) =>
+        Effect.logWarning("push: failed to read settings", { cause }).pipe(Effect.as(undefined)),
+    }),
   );
   const push = settings?.push;
   return (
@@ -145,20 +139,21 @@ export const pushReplyRouteLayer = HttpRouter.add(
         }),
       ),
       Effect.map((result) => HttpServerResponse.jsonUnsafe(result)),
-      Effect.catchTag("PushReplyError", (error) =>
-        Effect.logWarning("push: reply from a notification failed", {
-          threadId: reply.value.threadId,
-          action: reply.value.action,
-          message: error.message,
-        }).pipe(
-          Effect.as(
-            HttpServerResponse.jsonUnsafe(
-              { error: "reply-failed", message: error.message },
-              { status: error.status },
+      Effect.catchTags({
+        PushReplyError: (error) =>
+          Effect.logWarning("push: reply from a notification failed", {
+            threadId: reply.value.threadId,
+            action: reply.value.action,
+            message: error.message,
+          }).pipe(
+            Effect.as(
+              HttpServerResponse.jsonUnsafe(
+                { error: "reply-failed", message: error.message },
+                { status: error.status },
+              ),
             ),
           ),
-        ),
-      ),
+      }),
     );
   }).pipe(Effect.catchTags(routeErrorHandlers)),
 );

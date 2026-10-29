@@ -1,13 +1,17 @@
-import { TextInput, View } from "react-native";
-
-import { SymbolView } from "../../components/AppSymbol";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
-import { FLOAT_SHADOW, GrHeader, GrIconButton, RADIUS, SPACE } from "../../design/granola";
+import { useAtomSet } from "@effect/atom-react";
+import { Menu } from "../../components/ui/Menu";
+import { updateMobilePreferencesAtom } from "../../state/preferences";
+import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
+  useThreadSortOrder,
   THREAD_SORT_PREFERENCE_LABELS,
   type ThreadSortPreference,
 } from "../threads/use-thread-sort-order";
+import { TextInput, View } from "react-native";
 
+import { SymbolView } from "../../components/ui/AppSymbol";
+
+import { FLOAT_SHADOW, GrHeader, GrIconButton, RADIUS, SPACE } from "../../design/granola";
 export type ChatsLayout = "recent" | "projects";
 
 /**
@@ -28,7 +32,7 @@ function ChatsViewMenu(props: {
   const shownSort =
     props.layout === "projects" && props.sortOrder === "manual" ? "updated_at" : props.sortOrder;
   return (
-    <ControlPillMenu
+    <Menu
       accessibilityLabel="Sort and layout"
       title="Chats"
       actions={[
@@ -81,7 +85,7 @@ function ChatsViewMenu(props: {
           tintColorClassName="accent-gr-ink"
         />
       </View>
-    </ControlPillMenu>
+    </Menu>
   );
 }
 
@@ -94,22 +98,22 @@ export function ChatsPaneHeader(props: {
   readonly onSearchQueryChange: (query: string) => void;
   readonly onStartNewTask: () => void;
   readonly onOpenSettings: () => void;
-  readonly layout: ChatsLayout;
-  readonly onLayoutChange: (layout: ChatsLayout) => void;
-  readonly sortOrder: ThreadSortPreference;
-  readonly onSortOrderChange: (order: ThreadSortPreference) => void;
 }) {
+  const flat = useThreadListV2Enabled();
+  const save = useAtomSet(updateMobilePreferencesAtom);
+  const [sortOrder, setSortOrder] = useThreadSortOrder();
   return (
     <GrHeader
       title="Chats"
       actions={
         <>
           <ChatsViewMenu
-            layout={props.layout}
-            onLayoutChange={props.onLayoutChange}
-            sortOrder={props.sortOrder}
-            onSortOrderChange={props.onSortOrderChange}
+            layout={flat ? "recent" : "projects"}
+            onLayoutChange={(layout) => save({ legacyThreadListEnabled: layout === "projects" })}
+            sortOrder={sortOrder}
+            onSortOrderChange={setSortOrder}
           />
+
           <GrIconButton icon="square.and.pencil" label="New task" onPress={props.onStartNewTask} />
           <GrIconButton icon="ellipsis" label="Open settings" onPress={props.onOpenSettings} />
         </>

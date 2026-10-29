@@ -17,16 +17,15 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { McpSchema, McpServer } from "effect/unstable/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import {
   ThreadManagementService,
   type ThreadManagementSendInput,
 } from "../../../orchestration-v2/ThreadManagementService.ts";
 import { ProjectService } from "../../../project/ProjectService.ts";
-import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { HistorySearch, type HistorySearchInput } from "../../../historySearch/HistorySearch.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -76,9 +75,16 @@ const shell = (
         : id === doneThreadId
           ? RunId.make("run-done")
           : null,
-    activeRunId: id === siblingThreadId ? RunId.make("run-1") : null,
+    activeRunId:
+      id === callerThreadId
+        ? RunId.make("run-caller")
+        : id === siblingThreadId
+          ? RunId.make("run-1")
+          : null,
     activityRunStatus: id === siblingThreadId ? "running" : null,
     status: id === siblingThreadId ? "running" : id === doneThreadId ? "completed" : "idle",
+    providerInstanceId: modelSelection.instanceId,
+    deletedAt: null,
     pendingRuntimeRequest: null,
     latestUserMessageAt: null,
     createdAt: DateTime.makeUnsafe(updatedAt),
@@ -189,9 +195,13 @@ const invocation = (
 ) =>
   ({
     environmentId: EnvironmentId.make("environment-1"),
-    threadId,
-    providerSessionId: "provider-session-1",
-    providerInstanceId: ProviderInstanceId.make("codex"),
+    requestNamespace: "provider-session-1",
+    client: undefined,
+    thread: {
+      threadId,
+      providerSessionId: "provider-session-1",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
     capabilities,
     issuedAt: 1,
   }) satisfies McpInvocationContext.McpInvocationScope;
@@ -208,7 +218,7 @@ const makeHarness = Effect.gen(function* () {
     (/^[0-9a-f]{8}-/u.test(threadId)
       ? shell(threadId, homeProjectId, "spawned", "2026-09-19T10:06:00.000Z")
       : null);
-  const layer = McpHttpServer.ThreadsToolkitRegistrationLive.pipe(
+  const layer = McpHttpServer.layerThreadsToolkit.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provide(
       Layer.mock(ThreadManagementService)({

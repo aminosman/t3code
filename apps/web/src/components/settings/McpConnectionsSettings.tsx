@@ -10,7 +10,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { Plus as PlusIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { ensureLocalApi } from "~/localApi";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
@@ -47,16 +47,13 @@ export function McpConnectionsSettingsPanel() {
   const connected = selected?.connection.phase === "connected" && selected.serverConfig !== null;
   const environmentId = connected ? selected.environmentId : null;
   const connections = connected ? selected.serverConfig.settings.mcpConnections : {};
-  const projects = useMemo(() => {
-    if (environmentId === null) return [];
-    const members =
-      scope.kind === "project" || scope.kind === "checkout"
-        ? scope.members
-        : groups.flatMap((group) => group.memberProjects);
-    return members
-      .filter((member) => member.environmentId === environmentId)
-      .map((member) => ({ id: member.id, title: member.title }));
-  }, [environmentId, groups, scope]);
+  const members =
+    scope.kind === "project" || scope.kind === "checkout"
+      ? scope.members
+      : groups.flatMap((group) => group.memberProjects);
+  const projects = members
+    .filter((member) => member.environmentId === environmentId)
+    .map((member) => ({ id: member.id, title: member.title }));
   const [adding, setAdding] = useState(false);
 
   return (

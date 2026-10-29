@@ -2,9 +2,8 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { useMemo } from "react";
 
-import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
+import { useProjects, useServerConfigs, useQuietThreadShells } from "~/state/entities";
 
 const trimSlash = (path: string) => path.replace(/\/+$/, "");
 
@@ -18,25 +17,23 @@ export function useSidebarProjectsAndThreads(): {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 } {
   const allProjects = useProjects();
-  const allThreads = useThreadShells();
+  const allThreads = useQuietThreadShells();
   const serverConfigs = useServerConfigs();
-  return useMemo(() => {
-    const hidden = new Set(
-      allProjects
-        .filter((project) => {
-          const root = serverConfigs.get(project.environmentId)?.meetingsWorkspaceRoot;
-          return root !== undefined && trimSlash(project.workspaceRoot) === trimSlash(root);
-        })
-        .map((project) => `${project.environmentId}:${project.id}`),
-    );
-    if (hidden.size === 0) return { projects: allProjects, threads: allThreads };
-    return {
-      projects: allProjects.filter(
-        (project) => !hidden.has(`${project.environmentId}:${project.id}`),
-      ),
-      threads: allThreads.filter(
-        (thread) => !hidden.has(`${thread.environmentId}:${thread.projectId}`),
-      ),
-    };
-  }, [allProjects, allThreads, serverConfigs]);
+  const hidden = new Set(
+    allProjects
+      .filter((project) => {
+        const root = serverConfigs.get(project.environmentId)?.meetingsWorkspaceRoot;
+        return root !== undefined && trimSlash(project.workspaceRoot) === trimSlash(root);
+      })
+      .map((project) => `${project.environmentId}:${project.id}`),
+  );
+  if (hidden.size === 0) return { projects: allProjects, threads: allThreads };
+  return {
+    projects: allProjects.filter(
+      (project) => !hidden.has(`${project.environmentId}:${project.id}`),
+    ),
+    threads: allThreads.filter(
+      (thread) => !hidden.has(`${thread.environmentId}:${thread.projectId}`),
+    ),
+  };
 }

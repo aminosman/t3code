@@ -2,7 +2,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useEffect } from "react";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { GrButton, GrCard, GUTTER, SERIF, SPACE } from "../../design/granola";
 import { meetingDayLabel, meetingTime } from "./meeting-notes";
 import { MeetingDayLabel, MeetingRowView } from "./meeting-rows";
@@ -45,6 +45,7 @@ function PhoneMeetingRow(props: { readonly meeting: PhoneMeeting; readonly onPre
 export function PhoneMeetingsHeader() {
   const navigation = useNavigation();
   const meetings = usePhoneMeetings();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Resume native transcription jobs persisted by previous recording sessions.
   useEffect(() => {
     void resumePendingTranscriptions();
   }, []);

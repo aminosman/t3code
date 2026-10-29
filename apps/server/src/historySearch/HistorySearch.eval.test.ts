@@ -1,20 +1,6 @@
-/**
- * A yardstick for ranking changes, run against a real history.
- *
- * Search quality cannot be judged on a fixture of five messages: everything
- * is findable in a haystack that small. This runs the real service over a copy
- * of a real state database and scores it on questions whose right answers are
- * known — by where the first right thread or meeting lands. The cases name
- * private threads and meetings, so they live outside the repository:
- *
- *   HISTORY_EVAL_DB=/tmp/state-copy.sqlite \
- *   HISTORY_EVAL_CASES=~/.config/roost/history-eval.json \
- *   vp test run src/historySearch/HistorySearch.eval.test.ts --silent=false
- *
- * `{ "cases": [{ "query": "...", "expect": ["<id prefix>", ...] }] }`. Use a
- * COPY of the database; the index is written into it. HISTORY_EVAL_WORDS_ONLY=1
- * scores word search alone. Skipped when the variables are not set.
- */
+// Use HISTORY_EVAL_DB pointing to a COPY: the search index writes to it.
+// HISTORY_EVAL_CASES supplies private { cases: [{ query, expect: [idPrefix] }] }.
+// HISTORY_EVAL_WORDS_ONLY=1 evaluates without embeddings.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -22,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient } from "effect/unstable/http";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as Embedder from "./Embedder.ts";
 import * as HistorySearch from "./HistorySearch.ts";
@@ -85,5 +71,4 @@ it.live.skipIf(database === undefined || casesFile === undefined)(
         ),
       ),
     ),
-  600_000,
 );

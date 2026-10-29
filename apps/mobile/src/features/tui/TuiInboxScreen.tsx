@@ -12,15 +12,16 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text, AppTextInput } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { Toolbar as NativeHeaderToolbar } from "../../components/ui/Toolbar";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useWorkspaceState } from "../../state/workspace";
-import { RequestActionButton } from "../threads/RequestActionButton";
+import { Button as RequestActionButton } from "../../components/ui/Button";
 import { useTuiVoiceNote } from "./useTuiVoiceNote";
 
 type TuiInboxScreenProps = StaticScreenProps<{ readonly environmentId?: string } | undefined>;
@@ -32,13 +33,6 @@ function newClientMessageId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/**
- * Talk to tui, the Mac's voice assistant, from no thread at all: type or
- * hold the mic, and tui decides what it is — a reply, a thread to start or
- * continue, something to do on the Mac — exactly as it does for push-to-talk.
- * A card that waits for ↑ before acting shows here with Allow / Decline,
- * and arrives as a push when the app is closed.
- */
 export function TuiInboxScreen({ route }: TuiInboxScreenProps) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -77,6 +71,7 @@ export function TuiInboxScreen({ route }: TuiInboxScreenProps) {
       environments[0] ??
       null);
   const environmentId = environment ? EnvironmentId.make(environment.environmentId) : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Remember the selected Mac across inbox mounts in the environment selection registry.
   useEffect(() => {
     if (environmentId) lastEnvironmentId = environmentId;
   }, [environmentId]);

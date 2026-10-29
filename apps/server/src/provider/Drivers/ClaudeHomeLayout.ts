@@ -1,24 +1,6 @@
-/**
- * Claude shadow home. Mirrors `CodexHomeLayout` so one account's credentials
- * stay private while every instance sharing a `homePath` reads one store of
- * skills, plugins, plans and transcripts.
- *
- * Claude Code derives its macOS Keychain service name from `CLAUDE_CONFIG_DIR`
- * (`Claude Code-credentials-<hash>`), so pointing two instances at two shadow
- * homes is enough to hold two logins. Note that setting `CLAUDE_CONFIG_DIR` at
- * all — even to `~/.claude` — selects a different slot than leaving it unset,
- * so a shadow never inherits the default install's login.
- *
- * Sharing `projects/` is what lets a thread started on one account resume on
- * another: the transcript `--resume` reads lives in the shared store.
- *
- * Kept separate from `CodexHomeLayout` rather than generalised: the two differ
- * in entry classification, and a shared abstraction would widen the conflict
- * surface against upstream, which is still moving both files.
- *
- * @module provider/Drivers/ClaudeHomeLayout
- */
-import * as NodeOS from "node:os";
+// Claude derives Keychain slots from CLAUDE_CONFIG_DIR, so each shadow has its own login.
+// Share projects/ so sibling accounts can resume the same transcripts.
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { ProviderDriverKind, type ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -27,7 +9,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 export interface ClaudeHomeLayout {
   readonly mode: "direct" | "authOverlay";
@@ -84,10 +66,10 @@ const SHADOW_MERGE_BACKUP_DIRECTORY = ["backups", "shadow-merge"] as const;
  * The config dir itself, unlike `resolveClaudeHomePath`, which answers `$HOME`
  * for a default install because `CLAUDE_CONFIG_DIR` is then left unset.
  */
-function resolveSharedHomePath(path: Path.Path, value: string | undefined): string {
+function resolveSharedHomePath(path: Path.Path, value: string | undefined, home: string): string {
   const trimmed = value?.trim() ?? "";
   return path.resolve(
-    trimmed.length > 0 ? expandHomePath(trimmed) : path.join(NodeOS.homedir(), ".claude"),
+    trimmed.length > 0 ? expandHomePath(trimmed, home) : path.join(home, ".claude"),
   );
 }
 
@@ -95,7 +77,8 @@ export const resolveClaudeHomeLayout = Effect.fn("resolveClaudeHomeLayout")(func
   config: Pick<ClaudeSettings, "homePath" | "shadowHomePath">,
 ): Effect.fn.Return<ClaudeHomeLayout, never, Path.Path> {
   const path = yield* Path.Path;
-  const sharedHomePath = resolveSharedHomePath(path, config.homePath);
+  const home = yield* HostProcess.HomeDirectory;
+  const sharedHomePath = resolveSharedHomePath(path, config.homePath, home);
   const shadowHomePath = config.shadowHomePath.trim();
   if (shadowHomePath.length === 0) {
     return {
@@ -111,7 +94,7 @@ export const resolveClaudeHomeLayout = Effect.fn("resolveClaudeHomeLayout")(func
   return {
     mode: "authOverlay",
     sharedHomePath,
-    effectiveHomePath: path.resolve(expandHomePath(shadowHomePath)),
+    effectiveHomePath: path.resolve(expandHomePath(shadowHomePath, home)),
     continuationKey: `claude:home:${sharedHomePath}`,
   };
 });
@@ -395,11 +378,8 @@ const ensureSymlink = Effect.fn("ClaudeHomeLayout.ensureSymlink")(function* (inp
       yield* removeAt(link, { recursive: true });
       return yield* createLink;
     }
-    // A directory a newer Claude Code created inside the shadow before the
-    // shared home had one of that name (`state`, Sep 2026) is folded into the
-    // shared one — its files move over, and any name the shared home already
-    // holds is set aside under the shadow's backups — then linked like the
-    // rest. A real file is still surfaced, never silently discarded.
+    // Merge shadow-only directories into the shared home before linking them.
+    // Back up conflicting names; never silently discard a file.
     const merged = yield* mergeShadowDirectoryIntoShared({ ...input, link, target });
     if (!merged) {
       return yield* new ClaudeShadowHomeEntryConflictError({

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- phone upload fixtures use real temporary folders and synchronous assertions.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";

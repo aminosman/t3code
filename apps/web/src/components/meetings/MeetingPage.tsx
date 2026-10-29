@@ -7,7 +7,7 @@ import {
   SparkleIcon,
   UsersIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -40,27 +40,35 @@ function NoteBody({ doc }: { doc: MeetingNotesDocument }) {
           {doc.summary.text}
         </p>
       ) : null}
-      {doc.sections.map((section) => (
-        <section key={section.heading || "points"}>
-          {section.heading ? (
-            <h3 className="relative mb-2 text-lg font-semibold text-(--mt-ink-2-strong)">
-              <span className="absolute -left-6 font-normal text-(--mt-ink-3)">#</span>
-              {section.heading}
-            </h3>
-          ) : null}
-          <ul className="flex flex-col gap-1.5">
-            {section.items.map((item, itemIndex) => (
-              <li
-                key={`${item.text}:${itemIndex}`}
-                className={`flex gap-2.5 pl-1.5 ${item.mine ? "text-(--mt-ink)" : "text-(--mt-ink-2)"}`}
-              >
-                <span className="text-(--mt-ink-2)">•</span>
-                <span>{item.text}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+      {doc.sections.map((section) => {
+        const occurrences = new Map<string, number>();
+        const items = section.items.map((item) => {
+          const occurrence = occurrences.get(item.text) ?? 0;
+          occurrences.set(item.text, occurrence + 1);
+          return { ...item, key: JSON.stringify([item.text, occurrence]) };
+        });
+        return (
+          <section key={section.heading || "points"}>
+            {section.heading ? (
+              <h3 className="relative mb-2 text-lg font-semibold text-(--mt-ink-2-strong)">
+                <span className="absolute -left-6 font-normal text-(--mt-ink-3)">#</span>
+                {section.heading}
+              </h3>
+            ) : null}
+            <ul className="flex flex-col gap-1.5">
+              {items.map((item) => (
+                <li
+                  key={item.key}
+                  className={`flex gap-2.5 pl-1.5 ${item.mine ? "text-(--mt-ink)" : "text-(--mt-ink-2)"}`}
+                >
+                  <span className="text-(--mt-ink-2)">•</span>
+                  <span>{item.text}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
       {doc.provenance ? <p className="text-2xs text-(--mt-ink-3)">{doc.provenance}</p> : null}
     </div>
   );
@@ -75,7 +83,7 @@ function Transcript({
   if (lines.length === 0) {
     return (
       <p className="text-sm text-(--mt-ink-2)">
-        No transcript yet — tui transcribes when the meeting ends.
+        No transcript yet. Tui transcribes when the meeting ends.
       </p>
     );
   }
@@ -137,6 +145,7 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
   // Live: tui rewrites the transcript and the notes as the meeting goes, so
   // the page reads the meeting again every few seconds while it records.
   const refresh = read.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Polls tui's live meeting files while recording.
   useEffect(() => {
     if (!live) return;
     const timer = setInterval(() => refresh(), 5000);
@@ -148,13 +157,11 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
   const [saved, setSaved] = useState(true);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const doc = useMemo(
-    () => (meeting?.notes ? parseMeetingNotes(meeting.notes, meeting.myNotes) : null),
-    [meeting?.notes, meeting?.myNotes],
-  );
+  const doc = meeting?.notes ? parseMeetingNotes(meeting.notes, meeting.myNotes) : null;
   const shown: View = view ?? (doc ? "notes" : "mine");
   const text = typed ?? meeting?.myNotes ?? "";
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Clears the external autosave timer on unmount.
   useEffect(
     () => () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -204,7 +211,7 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
 
   return (
     <div className="flex h-full w-full min-w-0 flex-1">
-      <div className="meetings-surface relative flex h-full min-w-0 flex-1 flex-col overflow-y-auto">
+      <div className="meetings-surface relative flex h-full min-w-0 flex-1 flex-col overflow-y-auto scrollbar-gutter-both">
         <div className="sticky top-0 z-10 flex items-center justify-between bg-(--mt-surface)/90 px-5 py-3 backdrop-blur">
           <Link
             to="/meetings"
@@ -336,7 +343,7 @@ export function MeetingPage({ meetingId }: { meetingId: string }) {
                   <textarea
                     value={text}
                     onChange={(event) => onType(event.target.value)}
-                    placeholder="Write notes — the points you write are kept, in your words, in the notes"
+                    placeholder="Write notes. The points you write are kept, in your words, in the notes"
                     className="min-h-[50vh] w-full resize-none bg-transparent text-base leading-loose text-(--mt-ink) outline-none placeholder:text-(--mt-ink-3)"
                   />
                   <p className="text-2xs text-(--mt-ink-3)">{saved ? "Saved" : "Saving…"}</p>

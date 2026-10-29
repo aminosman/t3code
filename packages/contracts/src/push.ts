@@ -1,14 +1,7 @@
 import * as Schema from "effect/Schema";
 import { ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 
-// ── Direct push notifications ────────────────────────────────────────
-//
-// An environment delivers its own notifications: it holds an APNs auth key,
-// signs a provider token, and posts to Apple when a turn finishes. Devices
-// register their APNs token with the environment they care about, so there
-// is no cloud account, relay, or shared identity in the path — the same
-// shape as the voice key. Outbound-only, so an environment behind NAT still
-// notifies fine.
+// Push tokens are environment-local secrets, registered under pairing auth.
 
 export const PUSH_DEVICE_REGISTER_PATH = "/api/push/devices/register";
 export const PUSH_DEVICE_UNREGISTER_PATH = "/api/push/devices/unregister";

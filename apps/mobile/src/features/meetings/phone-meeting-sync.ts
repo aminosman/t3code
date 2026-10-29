@@ -16,15 +16,6 @@ import {
   type PhoneMeeting,
 } from "./phone-meetings";
 
-/**
- * Puts meetings recorded on the phone onto the Mac, by itself, whenever the
- * Mac that records meetings is reachable: the audio first, streamed to a URL
- * Roost signs, then the transcript and the user's notes. Roost writes them into
- * ~/Meetings, and tui transcribes the audio again, writes the notes and files
- * the meeting, as for one it recorded. A meeting stays on the phone until the
- * Mac has it, so nothing recorded offline is lost.
- */
-
 /** Ids being sent now, so a status can say "Sending" and no two runs overlap. */
 let sending = new Set<string>();
 const listeners = new Set<() => void>();
@@ -144,6 +135,7 @@ export function usePhoneMeetingSync(): void {
   const meetings = usePhoneMeetings();
   const waiting = useMemo(() => meetings.filter(needsSync), [meetings]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Upload pending phone recordings to the connected Mac and retry until unmounted.
   useEffect(() => {
     if (!connected || environmentId === null || waiting.length === 0) return;
     let cancelled = false;

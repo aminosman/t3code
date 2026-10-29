@@ -9,7 +9,7 @@ import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import {
   MCP_CONNECTION_RESERVED_IDS,
   McpConnectionError,
@@ -199,7 +199,7 @@ const httpOriginOf = (value: string): string | undefined => {
   }
 };
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const stdioHost = yield* McpStdioHost.McpStdioHost;
@@ -236,14 +236,12 @@ export const make = Effect.gen(function* () {
     record: AuthRecord,
   ) {
     if (record.client === undefined && Object.keys(record.projects).length === 0) {
-      yield* secrets.remove(authSecretName(id)).pipe(Effect.mapError(storageFailure));
+      yield* secrets.remove(authSecretName(id));
       return;
     }
-    const encoded = yield* encodeAuthRecord(record).pipe(Effect.mapError(storageFailure));
-    yield* secrets
-      .set(authSecretName(id), new TextEncoder().encode(encoded))
-      .pipe(Effect.mapError(storageFailure));
-  });
+    const encoded = yield* encodeAuthRecord(record);
+    yield* secrets.set(authSecretName(id), new TextEncoder().encode(encoded));
+  }, Effect.mapError(storageFailure));
 
   const updateAuth = (id: string, update: (record: AuthRecord) => AuthRecord) =>
     withLock(id, readAuth(id).pipe(Effect.flatMap((record) => writeAuth(id, update(record)))));
@@ -334,28 +332,25 @@ export const make = Effect.gen(function* () {
         continue;
       }
       if (variable.value.length > 0) {
-        yield* secrets
-          .set(envSecretName(id, variable.name), new TextEncoder().encode(variable.value))
-          .pipe(Effect.mapError(storageFailure));
+        yield* secrets.set(
+          envSecretName(id, variable.name),
+          new TextEncoder().encode(variable.value),
+        );
         nextEnv.push({ name: variable.name, value: "", sensitive: true, valueRedacted: true });
       } else if (variable.valueRedacted === true) {
         nextEnv.push({ name: variable.name, value: "", sensitive: true, valueRedacted: true });
       } else {
-        yield* secrets
-          .remove(envSecretName(id, variable.name))
-          .pipe(Effect.mapError(storageFailure));
+        yield* secrets.remove(envSecretName(id, variable.name));
         nextEnv.push({ name: variable.name, value: "", sensitive: true });
       }
     }
     for (const variable of previousEnv) {
       if (!next.env.some((candidate) => candidate.name === variable.name && candidate.sensitive)) {
-        yield* secrets
-          .remove(envSecretName(id, variable.name))
-          .pipe(Effect.mapError(storageFailure));
+        yield* secrets.remove(envSecretName(id, variable.name));
       }
     }
     return { ...next, env: nextEnv } satisfies McpConnectionStdioTransport;
-  });
+  }, Effect.mapError(storageFailure));
 
   const removeEnvSecrets = (id: McpConnectionId, config: McpConnection | undefined) =>
     config?.transport.type === "stdio"

@@ -1,6 +1,6 @@
 import { Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { GUTTER, GrTile, SPACE } from "../../design/granola";
 
 /** A day label above its meetings: Granola's 13-point strong secondary. */

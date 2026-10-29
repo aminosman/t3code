@@ -1,17 +1,5 @@
-/**
- * Meetings — the recordings tui keeps on this Mac, read as files.
- *
- * tui records a call into one folder per meeting (`~/Meetings/2026.09.21-1330`)
- * and writes beside the audio what an agent can use: `summary.md` (the notes),
- * `transcript.md` (who said what, when), `slides.md` (what was on screen),
- * `meta.json` (when, how long, which window) and `project.json` (which project
- * it was filed under, and who was named). Roost writes only its own two files
- * there — notes.md (what the user typed on the meeting's page) and chat.json
- * (the meeting's chat) — and nothing here needs tui to be running: the files
- * are the interface.
- *
- * @module historySearch/Meetings
- */
+// Meeting files are the interface; tui need not be running.
+// Roost writes only notes.md and chat.json beside tui’s recordings.
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -51,11 +39,10 @@ export interface MeetingDocument {
 const expandHome = (value: string) =>
   value === "~" || value.startsWith("~/") ? `${NodeOS.homedir()}${value.slice(1)}` : value;
 
-const readText = (file: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
-  });
+const readText = Effect.fn("Meetings.readText")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
+});
 
 const readJson = (file: string) =>
   readText(file).pipe(
@@ -103,53 +90,57 @@ const INDEXED_FILES = [
  * changes when any of its files does. A meeting still being transcribed has no
  * notes or transcript yet and is left for the next look.
  */
-export const scan = (dir: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const names = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
-    const found: Array<{ readonly id: string; readonly version: string }> = [];
-    for (const name of names.toSorted()) {
-      if (!isMeetingId(name)) continue;
-      const stamps: Array<string> = [];
-      let readable = false;
-      for (const file of INDEXED_FILES) {
-        const info = yield* fs.stat(path.join(dir, name, file)).pipe(Effect.option);
-        if (info._tag === "None" || info.value.type !== "File") continue;
-        if (file === "summary.md" || file === "transcript.md") readable = true;
-        const modified = info.value.mtime._tag === "Some" ? info.value.mtime.value.getTime() : 0;
-        stamps.push(`${file}:${modified}:${info.value.size}`);
-      }
-      if (readable) found.push({ id: name, version: [CHUNKING, ...stamps].join("|") });
+export const scan = Effect.fn("Meetings.scan")(function* (dir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const names = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
+  const found: Array<{ readonly id: string; readonly version: string }> = [];
+  for (const name of names.toSorted()) {
+    if (!isMeetingId(name)) continue;
+    const stamps: Array<string> = [];
+    let readable = false;
+    for (const file of INDEXED_FILES) {
+      const info = yield* fs.stat(path.join(dir, name, file)).pipe(Effect.option);
+      if (info._tag === "None" || info.value.type !== "File") continue;
+      if (file === "summary.md" || file === "transcript.md") readable = true;
+      const modified = info.value.mtime._tag === "Some" ? info.value.mtime.value.getTime() : 0;
+      stamps.push(`${file}:${modified}:${info.value.size}`);
     }
-    return found;
-  });
+    if (readable) found.push({ id: name, version: [CHUNKING, ...stamps].join("|") });
+  }
+  return found;
+});
 
 /**
  * The meeting's chat: Roost writes `chat.json` ({"threadId"}) beside the
  * user's notes.md when they first ask about the meeting, so every later
  * question, from any client, continues the same conversation.
  */
-export const CHAT_FILE = "chat.json";
+const CHAT_FILE = "chat.json";
 
-export const readChatThreadId = (dir: string, id: string) =>
-  Effect.gen(function* () {
-    if (!isMeetingId(id)) return null;
-    const path = yield* Path.Path;
-    return str((yield* readJson(path.join(dir, id, CHAT_FILE)))?.["threadId"]);
-  });
+export const readChatThreadId = Effect.fn("Meetings.readChatThreadId")(function* (
+  dir: string,
+  id: string,
+) {
+  if (!isMeetingId(id)) return null;
+  const path = yield* Path.Path;
+  return str((yield* readJson(path.join(dir, id, CHAT_FILE)))?.["threadId"]);
+});
 
 const encodeChatFile = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Struct({ threadId: Schema.String })),
 );
 
-export const writeChatThreadId = (dir: string, id: string, threadId: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const text = yield* encodeChatFile({ threadId });
-    yield* fs.writeFileString(path.join(dir, id, CHAT_FILE), `${text}\n`);
-  });
+export const writeChatThreadId = Effect.fn("Meetings.writeChatThreadId")(function* (
+  dir: string,
+  id: string,
+  threadId: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const text = yield* encodeChatFile({ threadId });
+  yield* fs.writeFileString(path.join(dir, id, CHAT_FILE), `${text}\n`);
+});
 
 /** "12:04" or "1:02:33" into seconds. */
 export const seconds = (at: string): number | null => {
@@ -189,49 +180,45 @@ const ownHeading = (notes: string | null): string | null => {
 const str = (value: unknown): string | null =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 
-export const load = (dir: string, id: string) =>
-  Effect.gen(function* () {
-    if (!isMeetingId(id)) return null;
-    const path = yield* Path.Path;
-    const folder = path.join(dir, id);
-    const notes = yield* readText(path.join(folder, "summary.md"));
-    const transcript = yield* readText(path.join(folder, "transcript.md"));
-    if (notes === null && transcript === null) return null;
-    const slides = yield* readText(path.join(folder, "slides.md"));
-    const typed = yield* readText(path.join(folder, "notes.md"));
-    const meta = yield* readJson(path.join(folder, "meta.json"));
-    const project = yield* readJson(path.join(folder, "project.json"));
+export const load = Effect.fn("Meetings.load")(function* (dir: string, id: string) {
+  if (!isMeetingId(id)) return null;
+  const path = yield* Path.Path;
+  const folder = path.join(dir, id);
+  const notes = yield* readText(path.join(folder, "summary.md"));
+  const transcript = yield* readText(path.join(folder, "transcript.md"));
+  if (notes === null && transcript === null) return null;
+  const slides = yield* readText(path.join(folder, "slides.md"));
+  const typed = yield* readText(path.join(folder, "notes.md"));
+  const meta = yield* readJson(path.join(folder, "meta.json"));
+  const project = yield* readJson(path.join(folder, "project.json"));
 
-    const context = meta?.["context"];
-    const windowTitle =
-      typeof context === "object" && context !== null
-        ? str((context as Record<string, unknown>)["title"])
-        : null;
-    const people = Array.isArray(project?.["people"])
-      ? (project["people"] as ReadonlyArray<unknown>).filter(
-          (person): person is string => typeof person === "string",
-        )
-      : [];
-    const duration = meta?.["duration_seconds"];
-    return {
-      id,
-      // The notes' own heading is "Meeting Notes" every time; the window the
-      // call ran in ("Meet - Ficra Team Sync") says which meeting it was.
-      // The notes' own heading first: written by the user's agent it names the
-      // meeting ("Ficra sync: MVP scope, $500 LOIs"); the call's window title
-      // ("Meet - Ficra Team Sync") when the notes have none worth using.
-      title: ownHeading(notes) ?? windowTitle ?? id,
-      startedAt: str(meta?.["started"]),
-      durationSeconds: typeof duration === "number" ? Math.round(duration) : null,
-      projectId: str(project?.["projectId"]),
-      projectTitle: str(project?.["name"]),
-      people,
-      notes: notes === null ? null : stripGeneratedBy(notes).trim() || null,
-      slides: slides?.trim() || null,
-      typed: typed?.trim() || null,
-      lines: transcript === null ? [] : parseTranscript(transcript),
-    } satisfies Meeting;
-  });
+  const context = meta?.["context"];
+  const windowTitle =
+    typeof context === "object" && context !== null
+      ? str((context as Record<string, unknown>)["title"])
+      : null;
+  const people = Array.isArray(project?.["people"])
+    ? (project["people"] as ReadonlyArray<unknown>).filter(
+        (person): person is string => typeof person === "string",
+      )
+    : [];
+  const duration = meta?.["duration_seconds"];
+  return {
+    id,
+    // Prefer a meaningful notes heading; fall back to the call window title
+    // when the heading is the generic "Meeting Notes".
+    title: ownHeading(notes) ?? windowTitle ?? id,
+    startedAt: str(meta?.["started"]),
+    durationSeconds: typeof duration === "number" ? Math.round(duration) : null,
+    projectId: str(project?.["projectId"]),
+    projectTitle: str(project?.["name"]),
+    people,
+    notes: notes === null ? null : stripGeneratedBy(notes).trim() || null,
+    slides: slides?.trim() || null,
+    typed: typed?.trim() || null,
+    lines: transcript === null ? [] : parseTranscript(transcript),
+  } satisfies Meeting;
+});
 
 const PASSAGE_CHARS = 900;
 /** Bumped when what a meeting is cut into changes, so every meeting is redone. */

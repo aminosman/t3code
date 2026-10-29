@@ -1,11 +1,7 @@
-/**
- * Minimal APNs sender for environment-delivered notifications.
- *
- * APNs speaks HTTP/2 only, which Node's global fetch does not do, so this
- * uses `node:http2` directly. Provider tokens (a short-lived ES256 JWT signed
- * with the account's .p8) are reused until they age out — Apple rejects
- * tokens refreshed more often than once every 20 minutes.
- */
+// APNs requires HTTP/2, unavailable in Node fetch.
+// Reuse ES256 provider tokens: Apple rejects refreshes more often than 20 minutes.
+// Effect Crypto has no asymmetric signing API; APNs requires ES256 with P1363 signatures.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp2 from "node:http2";
 
@@ -68,14 +64,7 @@ const TOKEN_REJECTION_REASONS = new Set([
   "DeviceTokenNotForTopic",
 ]);
 
-/**
- * Rebuilds PEM line structure when it was lost in transit.
- *
- * A .p8 is multi-line, but pasting one into a single-line control strips the
- * newlines, and OpenSSL then refuses the key with an error that surfaces much
- * later as an opaque APNs 403. Re-wrapping the base64 body costs nothing and
- * turns that into a working key.
- */
+// Restore PEM line breaks stripped by single-line inputs before OpenSSL reads the key.
 export const normalizePrivateKeyPem = (value: string): string => {
   const trimmed = value.trim();
   if (trimmed.includes("\n")) {
@@ -168,75 +157,75 @@ export class ApnsClient extends Context.Service<
   }
 >()("t3/push/ApnsClient") {}
 
-export const make = Effect.sync(() => {
+const make = Effect.sync(() => {
   // Cached per key id: a rotated key must not reuse a stale token.
   const tokens = new Map<string, { readonly token: string; readonly issuedAt: number }>();
 
-  const providerToken = (credentials: ApnsCredentials) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const cached = tokens.get(credentials.keyId);
-      if (cached && now - cached.issuedAt < PROVIDER_TOKEN_TTL_MS) {
-        return cached.token;
-      }
-      const token = signProviderToken(credentials, now);
-      tokens.set(credentials.keyId, { token, issuedAt: now });
-      return token;
-    });
+  const providerToken = Effect.fn("ApnsClient.providerToken")(function* (
+    credentials: ApnsCredentials,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const cached = tokens.get(credentials.keyId);
+    if (cached && now - cached.issuedAt < PROVIDER_TOKEN_TTL_MS) {
+      return cached.token;
+    }
+    const token = signProviderToken(credentials, now);
+    tokens.set(credentials.keyId, { token, issuedAt: now });
+    return token;
+  });
 
   return ApnsClient.of({
-    send: (credentials, notification) =>
-      Effect.gen(function* () {
-        const token = yield* providerToken(credentials);
-        // The APNs payload shape is dictated by Apple's wire format, not by a
-        // schema we own, so it is serialized directly.
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        const payload = JSON.stringify({
-          aps: {
-            alert: {
-              title: notification.title,
-              ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
-              body: notification.body,
-            },
-            sound: "default",
-            ...(notification.threadId ? { "thread-id": notification.threadId } : {}),
-            "interruption-level": "active",
-            ...(notification.category ? { category: notification.category } : {}),
+    send: Effect.fn("ApnsClient.send")(function* (credentials, notification) {
+      const token = yield* providerToken(credentials);
+      // The APNs payload shape is dictated by Apple's wire format, not by a
+      // schema we own, so it is serialized directly.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const payload = JSON.stringify({
+        aps: {
+          alert: {
+            title: notification.title,
+            ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
+            body: notification.body,
           },
-          ...notification.data,
+          sound: "default",
+          ...(notification.threadId ? { "thread-id": notification.threadId } : {}),
+          "interruption-level": "active",
+          ...(notification.category ? { category: notification.category } : {}),
+        },
+        ...notification.data,
+      });
+      const response = yield* Effect.tryPromise({
+        try: () =>
+          postToApns({
+            host: notification.production
+              ? "https://api.push.apple.com"
+              : "https://api.sandbox.push.apple.com",
+            path: `/3/device/${notification.deviceToken}`,
+            headers: {
+              authorization: `bearer ${token}`,
+              "apns-topic": credentials.bundleId,
+              "apns-push-type": "alert",
+              "apns-priority": "10",
+              ...(notification.collapseId ? { "apns-collapse-id": notification.collapseId } : {}),
+              "content-type": "application/json",
+            },
+            body: payload,
+          }),
+        catch: (cause) =>
+          new ApnsDeliveryError({
+            status: 0,
+            reason: cause instanceof Error ? cause.message : "transport failure",
+            tokenRejected: false,
+          }),
+      });
+      if (response.status < 200 || response.status >= 300) {
+        return yield* new ApnsDeliveryError({
+          status: response.status,
+          reason: response.reason || "unknown",
+          tokenRejected: TOKEN_REJECTION_REASONS.has(response.reason),
         });
-        const response = yield* Effect.tryPromise({
-          try: () =>
-            postToApns({
-              host: notification.production
-                ? "https://api.push.apple.com"
-                : "https://api.sandbox.push.apple.com",
-              path: `/3/device/${notification.deviceToken}`,
-              headers: {
-                authorization: `bearer ${token}`,
-                "apns-topic": credentials.bundleId,
-                "apns-push-type": "alert",
-                "apns-priority": "10",
-                ...(notification.collapseId ? { "apns-collapse-id": notification.collapseId } : {}),
-                "content-type": "application/json",
-              },
-              body: payload,
-            }),
-          catch: (cause) =>
-            new ApnsDeliveryError({
-              status: 0,
-              reason: cause instanceof Error ? cause.message : "transport failure",
-              tokenRejected: false,
-            }),
-        });
-        if (response.status < 200 || response.status >= 300) {
-          return yield* new ApnsDeliveryError({
-            status: response.status,
-            reason: response.reason || "unknown",
-            tokenRejected: TOKEN_REJECTION_REASONS.has(response.reason),
-          });
-        }
-      }),
+      }
+    }),
   });
 });
 

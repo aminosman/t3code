@@ -1,28 +1,11 @@
-/**
- * The `threads` toolkit — the agent's window onto the rest of Roost.
- *
- * A thread is not alone: the same server holds every project the user works
- * in and every thread inside them. These tools let an agent look across that
- * boundary — search everything that was ever said, in threads and in recorded
- * meetings, list the projects, list a project's threads, read a thread's
- * messages, read a meeting, see which models the user has set up — and take
- * a few writes: send to a thread, archive one. Agents start other agents with
- * upstream's delegate_task and t3_thread_launch (Oct 5 2026).
- * Search comes first on purpose: an agent that wants to know how something
- * was done before should ask for it by what it is, get back the handful of
- * threads that hold it, and read only those. There is deliberately no delete
- * and no interrupt. Archiving is reversible from
- * the archive page; deletion is not, so an agent never holds it.
- *
- * The calling thread is never a parameter. It comes off the invocation scope,
- * so "my project" and "my thread" always mean the session that made the call.
- *
- * @module mcp/toolkits/threads/tools
- */
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+// Invocation scope supplies the calling thread, never a tool parameter.
+// Search before paging through history. Archiving is reversible; deletion
+// is deliberately unavailable to agents.
+import { OrchestratorMcpFailure, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 export class ThreadToolError extends Schema.TaggedError<ThreadToolError>()("ThreadToolError", {
@@ -79,7 +62,7 @@ export const HistorySearchInput = Schema.Struct({
   query: Schema.String.check(Schema.isMinLength(1)).annotate({
     description:
       "What you are looking for, in plain words: the feature, the bug, the file, the error " +
-      "text, the decision, the thing someone said. A sentence is fine — filler words are " +
+      "text, the decision, the thing someone said. A sentence is fine. filler words are " +
       "dropped, words are stemmed (sending = send = sends), any of the words may match, and " +
       "what holds more of them ranks higher. It is also matched by meaning, so describe the " +
       "thing the way you would to a person: 'the assistant texted someone without permission' " +
@@ -94,7 +77,7 @@ export const HistorySearchInput = Schema.Struct({
   projectId: Schema.optional(ProjectId).annotate({
     description:
       "One project only: its threads, and the meetings filed under it. Omit to search " +
-      "everything, which is usually what you want — many meetings are not filed at all.",
+      "everything, which is usually what you want. many meetings are not filed at all.",
   }),
   role: Schema.optional(Schema.Literals(["user", "assistant"])).annotate({
     description:
@@ -105,7 +88,7 @@ export const HistorySearchInput = Schema.Struct({
     Schema.Array(Schema.Literals(["notes", "action", "decision", "transcript", "slides"])),
   ).annotate({
     description:
-      "Meetings only: just these parts — action for action items and to-dos, decision for " +
+      "Meetings only: just these parts. action for action items and to-dos, decision for " +
       "what was decided, notes for the rest of the written notes. Omit for everything.",
   }),
   since: Schema.optional(IsoDateTime).annotate({
@@ -178,7 +161,7 @@ export const HistoryFeedbackInput = Schema.Struct({
     description:
       "One or two sentences that would help someone improve the search. If it missed: what " +
       "you expected to find (the thread, meeting or fact, in your words) and how you found it " +
-      "in the end, if you did. If it worked but was hard: what got in the way — the right " +
+      "in the end, if you did. If it worked but was hard: what got in the way. the right " +
       "result ranked low, the snippet did not show why it matched, too much noise.",
   }),
 });
@@ -205,8 +188,8 @@ export const HistorySearchOutput = Schema.Struct({
   }).annotate({
     description:
       "Whether this search was also matched by meaning. When active is false, or pending is " +
-      "large, it was (partly) by words alone: add synonyms to the query — 'billing invoice " +
-      "charges payment' — because any word may match.",
+      "large, it was (partly) by words alone: add synonyms to the query. 'billing invoice " +
+      "charges payment'. because any word may match.",
   }),
   results: Schema.Array(HistorySearchResult).annotate({ description: "Best first." }),
 });
@@ -321,7 +304,7 @@ export const ModelChoice = Schema.Struct({
     Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Boolean])),
   ).annotate({
     description:
-      "Option id to value, from the model's options in t3_model_list — typically reasoning " +
+      "Option id to value, from the model's options in t3_model_list. typically reasoning " +
       'effort, e.g. {"effort": "high"}. Omit for the model\'s defaults.',
   }),
 });
@@ -431,10 +414,13 @@ export const ThreadArchiveOutput = Schema.Struct({
   archived: Schema.Literal(true),
 });
 
-const failure = ThreadToolError;
-const dependencies = [McpInvocationContext.McpInvocationContext];
+const failure = Schema.Union([ThreadToolError, OrchestratorMcpFailure]);
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
+];
 
-export const HistorySearchTool = Tool.make("t3_history_search", {
+const HistorySearchTool = Tool.make("t3_history_search", {
   description:
     "Search what has been said: every message in every thread on this server (all projects, " +
     "archived threads included) and every meeting recorded on this Mac (notes, transcripts, " +
@@ -463,11 +449,11 @@ export const HistorySearchTool = Tool.make("t3_history_search", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const HistoryFeedbackTool = Tool.make("t3_history_feedback", {
+const HistoryFeedbackTool = Tool.make("t3_history_feedback", {
   description:
     "Say whether t3_history_search gave you what you needed. The search is new and is " +
     "improved from exactly this: each miss becomes a test case. Call it once, after a search " +
-    "that mattered to the work — when it found what you needed, and above all when it did " +
+    "that mattered to the work. when it found what you needed, and above all when it did " +
     "not (nothing relevant, the right thing buried, or you found it some other way). It " +
     "costs one short call; it is not needed after every search.",
   parameters: HistoryFeedbackInput,
@@ -480,7 +466,7 @@ export const HistoryFeedbackTool = Tool.make("t3_history_feedback", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
-export const MeetingListTool = Tool.make("t3_meeting_list", {
+const MeetingListTool = Tool.make("t3_meeting_list", {
   description:
     "List the meetings recorded on this Mac, newest first: when, how long, who was named, and " +
     "the project each was filed under, if any. To find a meeting by what was said in it, use " +
@@ -495,7 +481,7 @@ export const MeetingListTool = Tool.make("t3_meeting_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const MeetingReadTool = Tool.make("t3_meeting_read", {
+const MeetingReadTool = Tool.make("t3_meeting_read", {
   description:
     "Read a meeting. Without around: its notes (summary, key points, decisions, action items). " +
     "With around (the at of a transcript hit from t3_history_search): who said what in the " +
@@ -511,9 +497,9 @@ export const MeetingReadTool = Tool.make("t3_meeting_read", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ThreadListTool = Tool.make("t3_any_thread_list", {
+const ThreadListTool = Tool.make("t3_any_thread_list", {
   description:
-    "List the threads of any project — by default the project this thread belongs to " +
+    "List the threads of any project. by default the project this thread belongs to " +
     "(t3_thread_list is the same for this project, with run filters). " +
     "Each entry carries the latest turn's state, so you can see what is running. " +
     "Archived threads are left out unless includeArchived is set.",
@@ -527,7 +513,7 @@ export const ThreadListTool = Tool.make("t3_any_thread_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ThreadReadTool = Tool.make("t3_any_thread_read", {
+const ThreadReadTool = Tool.make("t3_any_thread_read", {
   description:
     "Read a thread's messages in any project, archived ones included: the user's prompts and " +
     "the agent's replies (t3_thread_read reads this project's threads in full detail). " +
@@ -545,13 +531,13 @@ export const ThreadReadTool = Tool.make("t3_any_thread_read", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ModelListTool = Tool.make("t3_model_list", {
+const ModelListTool = Tool.make("t3_model_list", {
   description:
     "List the agent providers and models the user has set up in this Roost and that can be " +
     "used right now: provider instance, account, how much of its allowance is spent, and each " +
     "model with its options (reasoning effort and the like). The provider and model this " +
     "thread runs on are marked current. Call it before delegate_task or t3_thread_launch when " +
-    "you want a particular model, to see which account has allowance left — never guess a slug.",
+    "you want a particular model, to see which account has allowance left. never guess a slug.",
   parameters: ModelListInput,
   success: ModelListOutput,
   failure,
@@ -562,9 +548,9 @@ export const ModelListTool = Tool.make("t3_model_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ThreadSendTool = Tool.make("t3_any_thread_send", {
+const ThreadSendTool = Tool.make("t3_any_thread_send", {
   description:
-    "Send a message to an existing thread in any project and start it working on it — the " +
+    "Send a message to an existing thread in any project and start it working on it. the " +
     "same as the user typing there. The thread answers on its own model, in its own runtime " +
     "mode, and its agent sees only its own history plus this message, so write it in full. " +
     "Use it to follow up with a thread you started (a question about its review, a second " +
@@ -584,7 +570,7 @@ export const ThreadSendTool = Tool.make("t3_any_thread_send", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
-export const ThreadWaitTool = Tool.make("t3_any_thread_wait", {
+const ThreadWaitTool = Tool.make("t3_any_thread_wait", {
   description:
     "Wait for another thread's current turn to end, in any project, and return its answer: the way to collect " +
     "the reply to a message sent with t3_any_thread_send. Returns early with needs-user if " +
@@ -600,7 +586,7 @@ export const ThreadWaitTool = Tool.make("t3_any_thread_wait", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ThreadArchiveTool = Tool.make("t3_thread_archive", {
+const ThreadArchiveTool = Tool.make("t3_thread_archive", {
   description:
     "Archive a thread. It leaves the sidebar and can be restored from the archive page; " +
     "nothing is deleted. A thread cannot archive itself.",

@@ -6,6 +6,7 @@ import {
   setIsAudioActiveAsync,
   useAudioRecorder,
 } from "expo-audio";
+import { File } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { useKeepAwake } from "expo-keep-awake";
 import { useEffect, useRef, useState } from "react";
@@ -13,7 +14,7 @@ import { Alert, Pressable, TextInput, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { normalizeVoiceInputDecibels } from "../voice-input/voiceInputMetering";
 import { GrChip, GUTTER, RADIUS, SERIF } from "../../design/granola";
@@ -41,6 +42,11 @@ const RECORDING_OPTIONS = {
 const BAR_COUNT = 9;
 /** The bars are fixed positions in a row; they are keyed by position name. */
 const BAR_KEYS = Array.from({ length: BAR_COUNT }, (_, slot) => `bar-${slot}`);
+
+function requireRecordingUri(uri: string | null): string {
+  if (!uri) throw new Error("The recording was not saved.");
+  return uri;
+}
 
 async function releaseAudio(): Promise<void> {
   try {
@@ -74,6 +80,7 @@ export function RecordMeetingScreen({ route }: RecordMeetingScreenProps) {
   const [problem, setProblem] = useState<string | null>(null);
   const stopping = useRef(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the native audio recorder while this recording screen is mounted.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -110,6 +117,7 @@ export function RecordMeetingScreen({ route }: RecordMeetingScreenProps) {
     };
   }, [recorder]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Sample native recorder duration and metering while recording.
   useEffect(() => {
     if (phase !== "recording") return;
     const timer = setInterval(() => {
@@ -126,16 +134,15 @@ export function RecordMeetingScreen({ route }: RecordMeetingScreenProps) {
     stopping.current = true;
     setPhase("saving");
     const durationSeconds = Math.round(recorder.getStatus().durationMillis / 1000);
+    const meetingTitle = title.trim() || defaultMeetingTitle(kind, startedAt.current);
     try {
       await recorder.stop();
       await releaseAudio().catch(() => undefined);
-      const source = recorder.uri;
-      if (!source) throw new Error("The recording was not saved.");
-      const { File } = await import("expo-file-system");
+      const source = requireRecordingUri(recorder.uri);
       new File(source).move(new File(await phoneMeetingAudioUri(id)));
       await savePhoneMeeting({
         id: id,
-        title: title.trim() || defaultMeetingTitle(kind, startedAt.current),
+        title: meetingTitle,
         kind,
         startedAt: startedAt.current.toISOString(),
         durationSeconds,

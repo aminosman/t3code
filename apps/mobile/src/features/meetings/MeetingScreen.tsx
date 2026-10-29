@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -35,6 +35,7 @@ export function MeetingScreen({ route }: MeetingScreenProps) {
   const live = data?.meeting.live === true;
   const { refresh } = query;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh notes from the recording host while its meeting is live.
   useEffect(() => {
     if (!live) return;
     const timer = setInterval(refresh, 10_000);

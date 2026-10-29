@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import { readDeliveryConfigured } from "./http.ts";
 import * as PushDeviceRegistry from "./PushDeviceRegistry.ts";
 
-export function publicPushDevice(device: PushDeviceRegistry.RegisteredPushDevice): PushDevice {
+function publicPushDevice(device: PushDeviceRegistry.RegisteredPushDevice): PushDevice {
   return {
     installationId: device.installationId,
     platform: device.platform,
@@ -30,10 +30,11 @@ export const listPushDevices = Effect.gen(function* () {
   } satisfies PushDeviceList;
 });
 
-export const removePushDevice = (installationId: string) =>
-  Effect.gen(function* () {
-    const registry = yield* PushDeviceRegistry.PushDeviceRegistry;
-    yield* registry.unregister(installationId);
-    yield* Effect.logInfo("push: device removed from settings", { installationId });
-    return yield* listPushDevices;
-  });
+export const removePushDevice = Effect.fn("push.removePushDevice")(function* (
+  installationId: string,
+) {
+  const registry = yield* PushDeviceRegistry.PushDeviceRegistry;
+  yield* registry.unregister(installationId);
+  yield* Effect.logInfo("push: device removed from settings", { installationId });
+  return yield* listPushDevices;
+});

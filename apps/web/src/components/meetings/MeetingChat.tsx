@@ -3,7 +3,7 @@ import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpIcon, ExternalLinkIcon, SquarePenIcon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 
 import ChatMarkdown, { type ChatMarkdownContextReference } from "~/components/ChatMarkdown";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -96,10 +96,7 @@ export function MeetingChat({
   /** The meeting this chat is about, when it is about one. */
   meetingId?: string | null;
 }) {
-  const ref = useMemo(
-    () => (threadId === null ? null : scopeThreadRef(environmentId, threadId as ThreadId)),
-    [environmentId, threadId],
-  );
+  const ref = threadId === null ? null : scopeThreadRef(environmentId, threadId as ThreadId);
   const items = useThreadVisibleTurnItems(ref);
   const shell = useThreadShell(ref);
   const working = asking || threadRuntimeIsActive(shell?.runtime);
@@ -109,40 +106,35 @@ export function MeetingChat({
   const listing = useEnvironmentQuery(
     serverEnvironment.meetingList({ environmentId, input: { limit: 200 } }),
   );
-  const titleOf = useMemo(() => {
-    const titles = new Map(listing.data?.meetings.map((meeting) => [meeting.id, meeting.title]));
-    return (meetingId: string) => titles.get(meetingId);
-  }, [listing.data]);
+  const titles = new Map(listing.data?.meetings.map((meeting) => [meeting.id, meeting.title]));
+  const titleOf = (meetingId: string) => titles.get(meetingId);
 
-  const messages = useMemo(
-    () =>
-      items.flatMap(({ item }) =>
-        item.type === "user_message"
-          ? [
-              {
-                id: item.id,
-                mine: true,
-                text: item.text.replace(MEETING_PREFIX, ""),
-                streaming: false,
-              },
-            ]
-          : item.type === "assistant_message" && item.text.trim().length > 0
-            ? [
-                {
-                  id: item.id,
-                  mine: false,
-                  text: linkMeetingCitations(item.text, meetingId),
-                  streaming: item.streaming,
-                },
-              ]
-            : [],
-      ),
-    [items, meetingId],
+  const messages = items.flatMap(({ item }) =>
+    item.type === "user_message"
+      ? [
+          {
+            id: item.id,
+            mine: true,
+            text: item.text.replace(MEETING_PREFIX, ""),
+            streaming: false,
+          },
+        ]
+      : item.type === "assistant_message" && item.text.trim().length > 0
+        ? [
+            {
+              id: item.id,
+              mine: false,
+              text: linkMeetingCitations(item.text, meetingId),
+              streaming: item.streaming,
+            },
+          ]
+        : [],
   );
 
   // Follow the answer as it is written, unless the user scrolled up to read.
   const last = messages.at(-1);
   const atEnd = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps the chat scroller pinned while the user remains at the end.
   useEffect(() => {
     const list = listRef.current;
     if (list && atEnd.current) list.scrollTop = list.scrollHeight;
@@ -201,7 +193,7 @@ export function MeetingChat({
       >
         {messages.length === 0 && !working && pending === null ? (
           <p className="mt-6 text-center text-sm text-(--mt-ink-2)">
-            Ask anything — your agent reads the notes and the transcript, and answers here.
+            Ask anything. Your agent reads the notes and the transcript, and answers here.
           </p>
         ) : null}
         {messages.map((message) =>
