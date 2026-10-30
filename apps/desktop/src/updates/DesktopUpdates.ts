@@ -324,7 +324,9 @@ function getAutoUpdateDisabledReason(args: {
   hasUpdateFeedConfig: boolean;
   managedByTui?: boolean;
 }): string | null {
-  if (args.managedByTui) return "Roost desktop updates are managed by Tui.";
+  if (args.managedByTui) {
+    return "Roost updates come through Tui. Install Tui, or update it, to check from here.";
+  }
   if (!args.hasUpdateFeedConfig) {
     return "Automatic updates are not available because no update feed is configured.";
   }
@@ -433,7 +435,12 @@ export const make = Effect.gen(function* () {
       : false;
 
   const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
-    Effect.map((appUpdateYmlConfig) => Option.isSome(appUpdateYmlConfig) || config.mockUpdates),
+    Effect.map(
+      (appUpdateYmlConfig) =>
+        Option.isSome(appUpdateYmlConfig) ||
+        config.mockUpdates ||
+        electronUpdater.managedByTui === true,
+    ),
   );
 
   const resolveDisabledReason = Effect.gen(function* () {
@@ -446,7 +453,9 @@ export const make = Effect.gen(function* () {
         appImage: Option.getOrUndefined(config.appImagePath),
         isDebPackage,
         disabledByEnv: config.disableAutoUpdate,
-        managedByTui: !config.mockUpdates,
+        // Roost ships through Tui's feed. With Tui answering (TuiUpdater.ts) the updater runs;
+        // without it T3's feed is not Roost's to read, so the section stays off.
+        managedByTui: !config.mockUpdates && electronUpdater.managedByTui !== true,
         hasUpdateFeedConfig: hasFeedConfig,
       }),
     );

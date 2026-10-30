@@ -1,6 +1,5 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
@@ -58,6 +57,8 @@ export type ElectronUpdaterError = typeof ElectronUpdaterError.Type;
 export class ElectronUpdater extends Context.Service<
   ElectronUpdater,
   {
+    /** True when Tui answers for this updater (TuiUpdater.ts), not electron-updater. */
+    readonly managedByTui?: boolean;
     readonly setFeedURL: (options: ElectronUpdaterFeedUrl) => Effect.Effect<void>;
     readonly setAutoDownload: (value: boolean) => Effect.Effect<void>;
     readonly setAutoInstallOnAppQuit: (value: boolean) => Effect.Effect<void>;
@@ -182,5 +183,3 @@ export const make = ElectronUpdater.of({
     ).pipe(Effect.asVoid);
   }),
 });
-
-export const layer = Layer.succeed(ElectronUpdater, make);
