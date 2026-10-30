@@ -44,8 +44,6 @@ export function planUpdateThreadModel<T extends PlannedThread>(input: {
   readonly target: ModelSelection;
   readonly nowMs: number;
   readonly recentDays?: number;
-  /** Instances that stand for the same accounts as the target (its account group). */
-  readonly sameAccountsAsTarget?: ReadonlySet<string>;
 }): UpdateThreadModelPlan<T> {
   const cutoffMs = input.nowMs - (input.recentDays ?? UPDATE_THREAD_MODEL_RECENT_DAYS) * 86_400_000;
   const targetProvider = input.providers.find(
@@ -61,10 +59,10 @@ export function planUpdateThreadModel<T extends PlannedThread>(input: {
 
     const currentInstanceId =
       thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-    const sameInstance =
-      currentInstanceId === input.target.instanceId ||
-      (input.sameAccountsAsTarget?.has(currentInstanceId) ?? false);
-    if (sameInstance && thread.modelSelection.model === input.target.model) {
+    if (
+      currentInstanceId === input.target.instanceId &&
+      thread.modelSelection.model === input.target.model
+    ) {
       unchanged.push(thread);
       continue;
     }

@@ -12,24 +12,6 @@ if (process.argv.includes("--version")) {
 }
 const loginMarker = process.env.T3_CLAUDE_LOGIN_MARKER;
 const signedOut = loginMarker !== undefined && !NodeFS.existsSync(loginMarker);
-if (process.argv[2] === "auth" && process.argv[3] === "status" && process.argv[4] === "--json") {
-  // Only fixtures that explicitly model subscription auth answer this probe.
-  // Others retain their targeted SDK-capability success/failure behavior.
-  if (loginMarker === undefined) process.exit(2);
-  process.stdout.write(
-    JSON.stringify(
-      signedOut
-        ? { loggedIn: false, authMethod: "none" }
-        : {
-            loggedIn: true,
-            email: "test@example.com",
-            subscriptionType: "pro",
-            authMethod: "claude.ai",
-          },
-    ) + "\n",
-  );
-  process.exit(signedOut ? 1 : 0);
-}
 if (process.env.T3_CLAUDE_PROBE_LOG)
   NodeFS.appendFileSync(process.env.T3_CLAUDE_PROBE_LOG, "probe\n");
 const lines = NodeReadline.createInterface({ input: process.stdin });

@@ -188,7 +188,6 @@ import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import {
-  collapseAccountGroups,
   NO_PROVIDER_MODEL_SELECTION,
   providerInstanceEntriesFor,
   resolveProjectDefaultProviderModelSelection,
@@ -1263,13 +1262,11 @@ export default function ChatView(props: ChatViewProps) {
     automaticEnvironment,
     autoUpdateEnvironments,
   });
-  const groupedProviders = collapseAccountGroups(
-    providerInstanceEntriesFor(providerStatuses, settings, activeProject?.id ?? null),
+  const providerInstanceEntries = providerInstanceEntriesFor(
+    providerStatuses,
     settings,
+    activeProject?.id ?? null,
   );
-  const providerInstanceEntries = groupedProviders.entries;
-  const groupLead = (id: ProviderInstanceId | null | undefined) =>
-    id ? (groupedProviders.leadByInstanceId.get(id) ?? id) : id;
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
@@ -1278,9 +1275,9 @@ export default function ChatView(props: ChatViewProps) {
       activeRuntime?.providerInstanceId,
       activeThreadModelInstanceId,
       activeProjectDefaultModelSelection?.instanceId,
-    ].map(groupLead),
+    ],
     lockedProvider,
-    lockedInstanceId: groupLead(activeRuntime?.providerInstanceId ?? activeThreadModelInstanceId),
+    lockedInstanceId: activeRuntime?.providerInstanceId ?? activeThreadModelInstanceId,
   });
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;

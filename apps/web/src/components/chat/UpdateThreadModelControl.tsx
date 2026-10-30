@@ -12,11 +12,7 @@ import {
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
 } from "~/modelSelection";
-import {
-  collapseAccountGroups,
-  isProviderInstancePickerVisible,
-  providerInstanceEntriesFor,
-} from "~/providerInstances";
+import { isProviderInstancePickerVisible, providerInstanceEntriesFor } from "~/providerInstances";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironmentProviders } from "~/state/environments";
 import { projectEnvironment } from "~/state/projects";
@@ -49,11 +45,9 @@ export const UpdateThreadModelControl = memo(function UpdateThreadModelControl(p
   });
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
 
-  const { entries, leadByInstanceId } = collapseAccountGroups(
-    providerInstanceEntriesFor(providers, settings, null),
-    settings,
+  const pickerEntries = providerInstanceEntriesFor(providers, settings, null).filter(
+    isProviderInstancePickerVisible,
   );
-  const pickerEntries = entries.filter(isProviderInstancePickerVisible);
   const modelOptionsByInstance = new Map<
     ProviderInstanceId,
     ReadonlyArray<ModelEsque & { slug: string }>
@@ -78,17 +72,11 @@ export const UpdateThreadModelControl = memo(function UpdateThreadModelControl(p
           providers.find((provider) => provider.instanceId === instanceId)?.driver,
         )
       : resolvedModel;
-    const sameAccountsAsTarget = new Set<string>([instanceId]);
-    for (const [member, lead] of leadByInstanceId) {
-      if (lead === instanceId) sameAccountsAsTarget.add(member);
-    }
-
     const plan = planUpdateThreadModel({
       threads: threadShells.filter((thread) => thread.environmentId === environmentId),
       providers,
       target,
       nowMs: Date.now(),
-      sameAccountsAsTarget,
     });
 
     setPending(true);

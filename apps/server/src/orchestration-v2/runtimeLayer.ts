@@ -1,7 +1,3 @@
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import { ClaudeAccountRouter, ClaudeAccountRouterLive } from "../provider/ClaudeAccountRouter.ts";
-import { ClaudeUsageReaderLive } from "../provider/claudeUsageReader.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -215,17 +211,6 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
 );
 
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
-  Layer.provide(
-    Layer.unwrap(
-      Effect.serviceOption(ClaudeAccountRouter).pipe(
-        Effect.map((existing) =>
-          Option.isSome(existing)
-            ? Layer.succeed(ClaudeAccountRouter, existing.value)
-            : ClaudeAccountRouterLive.pipe(Layer.provide(ClaudeUsageReaderLive)),
-        ),
-      ),
-    ),
-  ),
   Layer.provide(
     Layer.mergeAll(
       layerCheckpointServiceProvided,

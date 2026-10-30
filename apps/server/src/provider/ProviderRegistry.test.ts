@@ -195,24 +195,6 @@ function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   });
 }
 
-function mockOptionalClaudeAuthStatus(
-  handler: (args: ReadonlyArray<string>) => {
-    stdout: string;
-    stderr: string;
-    code: number;
-  },
-  args: ReadonlyArray<string>,
-) {
-  if (args.join(" ") !== "auth status --json") return handler(args);
-  try {
-    // Older fixtures mocked the pre-JSON command. Keep exercising their
-    // capability fallback when they intentionally do not answer this probe.
-    return handler(["auth", "status"]);
-  } catch {
-    return { stdout: "", stderr: "", code: 1 };
-  }
-}
-
 function layerMockSpawner(
   handler: (args: ReadonlyArray<string>) => {
     stdout: string;
@@ -224,34 +206,9 @@ function layerMockSpawner(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const cmd = command as unknown as { args: ReadonlyArray<string> };
-      return Effect.succeed(mockHandle(mockOptionalClaudeAuthStatus(handler, cmd.args)));
+      return Effect.succeed(mockHandle(handler(cmd.args)));
     }),
   );
-}
-
-function recordingMockSpawnerLayer(
-  handler: (args: ReadonlyArray<string>) => {
-    stdout: string;
-    stderr: string;
-    code: number;
-  },
-) {
-  const commands: Array<{
-    args: ReadonlyArray<string>;
-    env: NodeJS.ProcessEnv | undefined;
-  }> = [];
-  const layer = Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      const cmd = command as unknown as {
-        args: ReadonlyArray<string>;
-        options?: { env?: NodeJS.ProcessEnv };
-      };
-      commands.push({ args: cmd.args, env: cmd.options?.env });
-      return Effect.succeed(mockHandle(mockOptionalClaudeAuthStatus(handler, cmd.args)));
-    }),
-  );
-  return { layer, commands };
 }
 
 const codexModelCapabilities = createModelCapabilities({
@@ -2313,90 +2270,6 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
-    it.effect("reports signed out even when SDK initialization returns capabilities", () =>
-      Effect.gen(function* () {
-        const status = yield* checkClaudeProviderStatus(
-          defaultClaudeSettings,
-          claudeCapabilities({ email: "stale@example.com" }),
-        );
-        assert.strictEqual(status.status, "warning");
-        assert.strictEqual(status.auth.status, "unauthenticated");
-        assert.strictEqual(
-          status.message,
-          "Claude is signed out. Sign in from Providers to continue.",
-        );
-      }).pipe(
-        Effect.provide(
-          layerMockSpawner((args) => {
-            const joined = args.join(" ");
-            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-            if (joined === "auth status")
-              return { stdout: '{"loggedIn":false}\n', stderr: "", code: 1 };
-            throw new Error(`Unexpected args: ${joined}`);
-          }),
-        ),
-      ),
-    );
-
-    it.effect("keeps external Claude credentials independent of subscription login", () =>
-      Effect.gen(function* () {
-        const status = yield* checkClaudeProviderStatus(
-          defaultClaudeSettings,
-          claudeCapabilities({ apiProvider: "bedrock" }),
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          "capabilities",
-        );
-        assert.strictEqual(status.status, "ready");
-        assert.strictEqual(status.auth.status, "authenticated");
-        assert.strictEqual(status.auth.type, "bedrock");
-      }).pipe(
-        Effect.provide(
-          layerMockSpawner((args) => {
-            const joined = args.join(" ");
-            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-            throw new Error(`Unexpected args: ${joined}`);
-          }),
-        ),
-      ),
-    );
-
-    it.effect("ignores inherited API keys when probing a subscription account", () => {
-      const recorded = recordingMockSpawnerLayer((args) => {
-        const joined = args.join(" ");
-        if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-        if (joined === "auth status")
-          return {
-            stdout: '{"loggedIn":true,"authMethod":"claude.ai","email":"sunday@example.com"}\n',
-            stderr: "",
-            code: 0,
-          };
-        throw new Error(`Unexpected args: ${joined}`);
-      });
-      return Effect.gen(function* () {
-        const status = yield* checkClaudeProviderStatus(
-          defaultClaudeSettings,
-          claudeCapabilities(),
-          { ANTHROPIC_API_KEY: "inherited-key", ANTHROPIC_AUTH_TOKEN: "inherited-token" },
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          "subscription",
-        );
-        const authProbe = recorded.commands.find(
-          (command) => command.args.join(" ") === "auth status --json",
-        );
-        assert.strictEqual(status.auth.status, "authenticated");
-        assert.strictEqual(status.auth.email, "sunday@example.com");
-        assert.strictEqual(authProbe?.env?.ANTHROPIC_API_KEY, undefined);
-        assert.strictEqual(authProbe?.env?.ANTHROPIC_AUTH_TOKEN, undefined);
-      }).pipe(Effect.provide(recorded.layer));
-    });
-
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(

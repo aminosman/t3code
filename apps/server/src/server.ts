@@ -41,8 +41,6 @@ import {
 import * as ApnsClient from "./push/ApnsClient.ts";
 import * as PushDeviceRegistry from "./push/PushDeviceRegistry.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
-import { ClaudeAccountRouterLive } from "./provider/ClaudeAccountRouter.ts";
-import { ClaudeUsageReaderLive } from "./provider/claudeUsageReader.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
@@ -542,8 +540,6 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
-  // Rotate grouped Claude accounts before dispatch; upstream owns the rest of the runtime graph.
-  Layer.provide(ClaudeAccountRouterLive.pipe(Layer.provide(ClaudeUsageReaderLive))),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),

@@ -10,7 +10,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
-import { selectionOnGroupLead } from "./components/chat/useComposerProviderModel";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
 import {
   getAppModelOptionsForInstance,
@@ -360,30 +359,6 @@ describe("instance-scoped model selection", () => {
 
     expect(state.selectedModel).toBe("gpt-5.6-sol");
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
-  });
-
-  it("keeps a thread's model and options after the server rotated it to a hidden group member", () => {
-    const lead = ProviderInstanceId.make("claude_max");
-    const member = ProviderInstanceId.make("claude_max_2");
-    const driver = ProviderDriverKind.make("claudeAgent");
-    const providers = [lead, member].map((instanceId) =>
-      provider({ provider: driver, instanceId, models: ["claude-opus-5-5", "claude-fable-5-1"] }),
-    );
-    const thread = createModelSelection(member, "claude-fable-5-1", [
-      { id: "effort", value: "max" },
-    ]);
-    const state = deriveEffectiveComposerModelState({
-      draft: null,
-      providers,
-      selectedProvider: driver,
-      selectedInstanceId: lead,
-      threadModelSelection: selectionOnGroupLead(thread, new Map([[member, lead]])),
-      projectModelSelection: null,
-      settings: settingsWithProviderInstances(),
-    });
-
-    expect(state.selectedModel).toBe("claude-fable-5-1");
-    expect(state.modelOptions?.[lead]).toEqual(thread.options);
   });
 
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {

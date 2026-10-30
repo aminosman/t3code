@@ -53,13 +53,12 @@ const plan = (threads: ReturnType<typeof thread>[]) =>
     providers,
     target,
     nowMs: NOW,
-    sameAccountsAsTarget: new Set(["claudeAgent", "claudeAgent_claude_2"]),
   });
 
 const ids = (list: ReadonlyArray<{ id: string }>) => list.map((entry) => entry.id);
 
 describe("planUpdateThreadModel", () => {
-  it("moves threads used in the last three days, including across a Max account", () => {
+  it("moves threads used in the last three days, including from a sibling Claude home", () => {
     const result = plan([
       thread({ id: "recent" }),
       thread({ id: "thursday", instanceId: "claudeAgent_claude_2" }),
@@ -70,10 +69,8 @@ describe("planUpdateThreadModel", () => {
     expect(result.skipped).toEqual([]);
   });
 
-  it("counts a thread on the other account of the group, same model, as already there", () => {
-    const result = plan([
-      thread({ id: "same", instanceId: "claudeAgent_claude_2", model: "claude-opus-5-5" }),
-    ]);
+  it("counts a thread already on the target model as already there", () => {
+    const result = plan([thread({ id: "same", model: "claude-opus-5-5" })]);
     expect(ids(result.unchanged)).toEqual(["same"]);
     expect(result.update).toEqual([]);
   });

@@ -695,9 +695,6 @@ export type CodexSettings = typeof CodexSettings.Type;
 
 const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
 
-// Empty, or 1-100. Empty means the built-in switch threshold.
-const CLAUDE_SWITCH_AT_PERCENT_PATTERN = /^(?:|100|[1-9]\d?)$/;
-
 export const IDLE_COMPACTION_MODES = [
   { value: "onReturn", label: "When you return" },
   { value: "beforeCacheExpires", label: "Before the cache expires (beta)" },
@@ -740,18 +737,6 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "~/.claude", clearWhenEmpty: "omit" },
       }),
     ),
-    shadowHomePath: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Shadow home path",
-        description:
-          "Account-specific Claude home. Keeps .claude.json and the login separate while sharing skills, plugins, plans and transcripts from CLAUDE_CONFIG_DIR path.",
-        providerSettingsForm: {
-          placeholder: "~/.claude-t3/personal",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -779,24 +764,6 @@ export const ClaudeSettings = makeProviderSettingsSchema(
           placeholder: "e.g. 300000",
           clearWhenEmpty: "omit",
         },
-      }),
-    ),
-    accountGroup: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Account group",
-        description:
-          "Instances sharing a group are interchangeable accounts. When one nears its session limit, new turns route to the freshest sibling. Leave empty to keep this instance out of rotation.",
-        providerSettingsForm: { placeholder: "e.g. max-accounts", clearWhenEmpty: "omit" },
-      }),
-    ),
-    switchAtPercent: TrimmedString.check(Schema.isPattern(CLAUDE_SWITCH_AT_PERCENT_PATTERN)).pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Switch at",
-        description:
-          "Session-window percentage that hands the next turn to a sibling in the same account group. Empty uses the default of 85.",
-        providerSettingsForm: { placeholder: "85", clearWhenEmpty: "omit" },
       }),
     ),
     // Anthropic-compatible endpoints may accept Claude names while running another vendor's model.
@@ -827,9 +794,6 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     order: [
       "binaryPath",
       "homePath",
-      "shadowHomePath",
-      "accountGroup",
-      "switchAtPercent",
       "autoCompactWindow",
       "idleCompaction",
       "launchArgs",

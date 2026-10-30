@@ -150,7 +150,6 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
-import { ClaudeAccountRouter } from "../provider/ClaudeAccountRouter.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
@@ -1005,7 +1004,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-  const accountRouter = yield* Effect.serviceOption(ClaudeAccountRouter);
 
   /** The driver when this provider runs `/goal` natively, else undefined. */
   const goalDriverFor = Effect.fn("Orchestrator.goalDriverFor")(function* (
@@ -5245,8 +5243,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
-    let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-
+    const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -5493,55 +5490,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         forceRestart: dispatchMode.type === "restart_active",
       });
       return;
-    }
-
-    // Grouped accounts share a continuation key, so switching to a fresher
-    // sibling resumes the same provider thread without a transcript handoff.
-    // Only a new turn rotates: a steer joins the running turn on its account.
-    if (Option.isSome(accountRouter)) {
-      const route = yield* accountRouter.value.resolve(
-        modelSelection.instanceId,
-        modelSelection.model,
-        projection.thread.projectId,
-      );
-      // Every outcome is logged: a rotation that silently stays put is
-      // indistinguishable from one that is broken.
-      if (route._tag === "Switch") {
-        yield* Effect.logInfo("orchestrator rotating provider account", {
-          threadId: command.threadId,
-          model: modelSelection.model,
-          reason: route.reason,
-          from: route.from,
-          to: route.to,
-          fromPressure: route.fromStanding.pressurePercent,
-          fromBlockedBy: route.fromStanding.blockedBy,
-          fromResetsAt: route.fromStanding.resetsAt,
-          toPressure: route.toStanding.pressurePercent,
-          toResetsAt: route.toStanding.resetsAt,
-        });
-        modelSelection = { ...modelSelection, instanceId: route.to };
-      } else if (route._tag === "Exhausted") {
-        // Every account in the group is spent for this model. Let the turn
-        // run and fail on the provider's own limit error, which carries the
-        // real reset time.
-        yield* Effect.logInfo("orchestrator found no fresh account", {
-          threadId: command.threadId,
-          model: modelSelection.model,
-          instanceId: route.instanceId,
-          pressure: route.standing.pressurePercent,
-          blockedBy: route.standing.blockedBy,
-          retryAt: route.retryAt,
-        });
-      } else if (route.reason !== "ungrouped") {
-        yield* Effect.logInfo("orchestrator keeping provider account", {
-          threadId: command.threadId,
-          model: modelSelection.model,
-          instanceId: route.instanceId,
-          reason: route.reason,
-          pressure: route.standing?.pressurePercent,
-          resetsAt: route.standing?.resetsAt,
-        });
-      }
     }
 
     const activeProviderThread = projection.providerThreads.find(
@@ -13155,80 +13103,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : threadDispatch.withLock(parentThreadId, dispatch);
   });
 
-  const failOverLimitedRun = Effect.fn("Orchestrator.failOverLimitedRun")(
-    function* (threadId: ThreadId, runId: RunId) {
-      if (Option.isNone(accountRouter)) return false;
-      const projection = yield* readCommandProjection(threadId);
-      const run = latestExecutedRun(projection.runs);
-      if (run?.id !== runId || run.status !== "failed") return false;
-      const failure = latestRootProviderFailure(run, projection.turnItems);
-      if (failure?.class !== "usage_limit") return false;
-      const model = run.modelSelection.model;
-      yield* accountRouter.value.noteLimited(run.providerInstanceId, model, failure.resetAt);
-      if (
-        projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null ||
-        projection.thread.settledOverride === "settled" ||
-        projection.runtimeRequests.some((request) => request.status === "pending")
-      ) {
-        return false;
-      }
-      const route = yield* accountRouter.value.resolve(
-        run.providerInstanceId,
-        model,
-        projection.thread.projectId,
-      );
-      if (route._tag !== "Switch") {
-        yield* Effect.logInfo("orchestrator found no account to fail over to", {
-          threadId,
-          runId,
-          model,
-          instanceId: run.providerInstanceId,
-          decision: route._tag,
-        });
-        return false;
-      }
-      yield* Effect.logInfo("orchestrator failing over limited run", {
-        threadId,
-        runId,
-        model,
-        from: route.from,
-        to: route.to,
-        failure: failure.message,
-        resetAt: failure.resetAt,
-        toPressure: route.toStanding.pressurePercent,
-      });
-      yield* dispatchWithReceipt({
-        type: "message.dispatch",
-        commandId: CommandId.make(`limit-failover:${run.id}`),
-        messageId: MessageId.make(`limit-failover:${run.id}`),
-        threadId,
-        manualContinuationOfRunId: run.id,
-        modelSelection: { ...run.modelSelection, instanceId: route.to },
-        text: "Continue where you left off.",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "user",
-        creationSource: "server",
-      });
-      return true;
-    },
-    (effect, threadId, runId) =>
-      effect.pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Failed to fail over limited run", { threadId, runId, cause }).pipe(
-            Effect.as(false),
-          ),
-        ),
-      ),
-  );
-
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
     function* (stored: OrchestrationV2StoredEvent) {
       if (stored.event.type !== "run.updated") return;
       const threadId = stored.event.threadId;
       const run = stored.event.payload;
-      if (run.status === "failed" && (yield* failOverLimitedRun(threadId, run.id))) return;
       // Take parent and child locks sequentially, never nested: delegation holds the parent
       // while writing child events, so nesting parent inside child would invert the order.
       // The keyed semaphores are neither reentrant nor deadlock-aware.
