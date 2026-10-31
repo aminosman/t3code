@@ -324,7 +324,7 @@ function WorkspaceColumns(
         if (workspace.some((route) => route.name !== "Home" && route.name !== "Settings")) return;
         const tab = workspace.some((route) => route.name === "Settings")
           ? "settings"
-          : (["threads", "pullRequests", "usage"] as const).find((candidate) =>
+          : (["home", "threads", "meetings", "usage", "pullRequests"] as const).find((candidate) =>
               workspaceTabs?.isTabActive(candidate),
             );
         openWorkspaceTab(tab ?? "threads", { columns: true });
@@ -515,7 +515,6 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     render: () => (
       <WorkspaceNativeTabs
         hidden={
-          !workspacePage &&
           projection.detail.length > 0 &&
           !primaryVisible &&
           !layout.usesSplitView &&

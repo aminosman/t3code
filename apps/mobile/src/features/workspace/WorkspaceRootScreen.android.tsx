@@ -10,7 +10,7 @@ import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { HomeRouteScreen } from "../home/HomeRouteScreen";
+import { ChatsRouteScreen } from "../home/ChatsRouteScreen";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -19,6 +19,7 @@ import { FLOATING_TABS, floatingTabsMetrics } from "./floating-workspace-tabs";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
 import type { WorkspaceTab } from "./workspace-tabs-state";
+import { usePhoneMeetingSync } from "../meetings/phone-meeting-sync";
 
 const TABS: readonly WorkspaceTab[] = NAVIGATION_TAB_ORDER;
 
@@ -46,6 +47,8 @@ export function WorkspaceRootScreen() {
         : 16,
   };
   const tab = workspace.state.selectedTab;
+  // Phone recordings go to the Mac by themselves whenever it is reachable.
+  usePhoneMeetingSync();
 
   if (layout.usesSplitView) {
     if (enabled.length === 0) return <View className="flex-1 bg-screen" />;
@@ -55,7 +58,7 @@ export function WorkspaceRootScreen() {
         selected={tab}
         renderTab={(tab) =>
           tab === "threads" ? (
-            <HomeRouteScreen />
+            <ChatsRouteScreen />
           ) : tab !== "pullRequests" ? (
             <WorkspaceExtraTab tab={tab} />
           ) : (
@@ -97,7 +100,7 @@ export function WorkspaceRootScreen() {
               selected={tab}
               renderTab={(tab) =>
                 tab === "threads" ? (
-                  <HomeRouteScreen />
+                  <ChatsRouteScreen />
                 ) : tab !== "pullRequests" ? (
                   <WorkspaceExtraTab tab={tab} />
                 ) : (

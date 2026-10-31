@@ -5,11 +5,13 @@ import { useControlTheme } from "../../components/ui/useControlTheme";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
+import { useHomeData } from "../home/ShelvesHomeScreen";
 
 const NativeSidebarTabBar = requireNativeView<
   ViewProps & {
     tabs: readonly string[];
     selectedTab: string;
+    badges: Readonly<Record<string, "live" | "attention">>;
     selectedColor: string;
     appearance: string;
     showsCompose: boolean;
@@ -30,6 +32,7 @@ export function WorkspaceSidebarTabs(props: {
   const tabs = [...visibleNavigationTabs(order, hidden), "settings" as const];
   const selectTab = useSelectWorkspaceTab();
   const { colors, colorScheme } = useControlTheme();
+  const { liveMeeting, needsYou } = useHomeData();
   // UIKit loses accessible names when updating nil-titled items in place.
   const tabBarKey = tabs.join(":");
   return (
@@ -42,6 +45,11 @@ export function WorkspaceSidebarTabs(props: {
         workspace.settingsOpen,
         hidden,
       )}
+      // A dot on Meetings while one is recorded, on Chats while a thread needs the user.
+      badges={{
+        ...(liveMeeting ? { meetings: "live" as const } : {}),
+        ...(needsYou ? { threads: "attention" as const } : {}),
+      }}
       selectedColor={colors["--color-primary"]}
       appearance={colorScheme}
       showsCompose={Boolean(props.onNewTask)}

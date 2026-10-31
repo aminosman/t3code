@@ -9,6 +9,11 @@ import {
   workspaceUsesColumns,
 } from "./workspace-tabs-state";
 
+/** The app opens on Home; the search cases start on Chats. */
+function chatsState() {
+  return workspaceTabsReducer(initialWorkspaceTabsState(), { type: "select", tab: "threads" });
+}
+
 describe("compact list clearance", () => {
   it.each([
     { bottomInset: 34, keyboardHeight: 300, clearance: 380 },
@@ -57,14 +62,14 @@ describe("workspace root navigation", () => {
   });
 
   it("keeps the registered defaults while customization is unavailable", () => {
-    expect(resolveWorkspaceTabOrder(undefined)).toEqual(["threads", "pullRequests", "usage"]);
+    expect(resolveWorkspaceTabOrder(undefined)).toEqual(["home", "threads", "meetings", "usage"]);
     expect(resolveWorkspaceTabOrder(["home", "usage", "issues", "threads"])).toEqual(
       resolveWorkspaceTabOrder(undefined),
     );
   });
 
   it("retains separate queries and positions across tabs, and cancels only the current search", () => {
-    let state = initialWorkspaceTabsState();
+    let state = chatsState();
     state = workspaceTabsReducer(state, { type: "scroll", tab: "threads", offset: 640 });
     state = workspaceTabsReducer(state, { type: "search" });
     state = workspaceTabsReducer(state, { type: "query", query: "keyboard" });
@@ -95,7 +100,7 @@ describe("workspace root navigation", () => {
   });
 
   it("clear keeps search active without losing the position cancel restores", () => {
-    let state = initialWorkspaceTabsState();
+    let state = chatsState();
     state = workspaceTabsReducer(state, { type: "scroll", tab: "threads", offset: 500 });
     state = workspaceTabsReducer(state, { type: "search" });
     state = workspaceTabsReducer(state, { type: "query", query: "diff" });
@@ -125,13 +130,13 @@ describe("workspace root navigation", () => {
   });
 
   it("a late native blur cannot reopen a cancelled search", () => {
-    let state = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
+    let state = workspaceTabsReducer(chatsState(), { type: "search" });
     state = workspaceTabsReducer(state, { type: "cancel" });
     expect(workspaceTabsReducer(state, { type: "expand" })).toBe(state);
   });
 
   it("a blur from the previous native tab cannot open search in the selected tab", () => {
-    let state = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
+    let state = workspaceTabsReducer(chatsState(), { type: "search" });
     state = workspaceTabsReducer(state, { type: "query", query: "keyboard" });
     state = workspaceTabsReducer(state, { type: "select", tab: "pullRequests" });
     state = workspaceTabsReducer(state, { type: "expand", tab: "threads" });
@@ -139,13 +144,13 @@ describe("workspace root navigation", () => {
     expect(state.tabs.pullRequests.searchMode).toBe("resting");
     expect(workspaceTabsReducer(state, { type: "select", tab: "pullRequests" })).toBe(state);
   });
-  it("returns from Usage without losing list state", () => {
+  it("returns from the one-page tabs without losing list state", () => {
     let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
       type: "query",
       query: "retained",
       tab: "threads",
     });
-    for (const tab of ["usage"] as const) {
+    for (const tab of ["home", "meetings", "usage"] as const) {
       state = workspaceTabsReducer(state, { type: "select", tab });
       expect(state.selectedTab).toBe(tab);
       expect(workspaceTabsReducer(state, { type: "search" })).toBe(state);

@@ -19,7 +19,9 @@ export const WORKSPACE_TAB_LABELS = {
 };
 
 export const NAVIGATION_TAB_ICONS = {
+  home: "sparkles",
   threads: "text.bubble",
+  meetings: "waveform",
   pullRequests: PullRequestGlyph.pullRequest,
   usage: "chart.bar.xaxis",
 } as const satisfies Readonly<Record<NavigationTab, AppSymbolName>>;

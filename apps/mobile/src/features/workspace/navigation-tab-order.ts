@@ -1,5 +1,9 @@
-export const NAVIGATION_TAB_ORDER = ["threads", "pullRequests", "usage"] as const;
-export type NavigationTab = (typeof NAVIGATION_TAB_ORDER)[number];
+export const NAVIGATION_TAB_ORDER = ["home", "threads", "meetings", "usage"] as const;
+/**
+ * Pull requests keep their screens, but Roost shows no tab for them (Amin, Oct 30 2026:
+ * "hide the PR tab"); a saved order that names them is completed without them.
+ */
+export type NavigationTab = (typeof NAVIGATION_TAB_ORDER)[number] | "pullRequests";
 
 export function navigationCustomizationAvailable(
   registeredSections: number = NAVIGATION_TAB_ORDER.length,
@@ -8,12 +12,14 @@ export function navigationCustomizationAvailable(
 }
 
 export const NAVIGATION_TAB_LABELS: Readonly<Record<NavigationTab, string>> = {
+  home: "Home",
   threads: "Threads",
+  meetings: "Meetings",
   pullRequests: "Pulls",
   usage: "Usage",
 };
 
-function isNavigationTab(value: unknown): value is NavigationTab {
+function isNavigationTab(value: unknown): value is (typeof NAVIGATION_TAB_ORDER)[number] {
   return NAVIGATION_TAB_ORDER.some((tab) => tab === value);
 }
 

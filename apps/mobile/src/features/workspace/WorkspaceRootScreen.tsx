@@ -4,7 +4,7 @@ import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { SettingsRouteScreen } from "../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { use } from "react";
+import { use, useEffect, useEffectEvent } from "react";
 import { Platform, View, useWindowDimensions } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,7 +22,7 @@ import {
   useNativeColumnLayoutMetrics,
   useNativeLayoutMetrics,
 } from "../../native/native-layout-metrics";
-import { HomeRouteScreen } from "../home/HomeRouteScreen";
+import { ChatsRouteScreen } from "../home/ChatsRouteScreen";
 import { dispatchHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -46,8 +46,7 @@ import {
 } from "./useSystemWorkspaceTabBar";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
-
-import { HomePager } from "../home/HomePager";
+import { usePhoneMeetingSync } from "../meetings/phone-meeting-sync";
 
 const TAB_TITLES = WORKSPACE_TAB_LABELS;
 
@@ -74,14 +73,26 @@ function WorkspaceRootTitle(props: {
   );
 }
 
+/** A link that names a page (t3code://?page=chats) opens its tab. */
+const PAGE_TABS = { home: "home", chats: "threads", meetings: "meetings" } as const;
+
 function WorkspaceRootContent() {
   const navigation = useNavigation();
   const requestedPage = (useRoute().params as { page?: string } | undefined)?.page;
-  const homePage =
-    requestedPage === "home" || requestedPage === "chats" || requestedPage === "meetings"
-      ? requestedPage
+  const pageTab =
+    requestedPage && Object.hasOwn(PAGE_TABS, requestedPage)
+      ? PAGE_TABS[requestedPage as keyof typeof PAGE_TABS]
       : undefined;
   const selectTab = useSelectWorkspaceTab();
+  const openPageTab = useEffectEvent((tab: typeof pageTab) => {
+    if (tab) selectTab(tab);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Follow a link that names a page to its tab.
+  useEffect(() => {
+    openPageTab(pageTab);
+  }, [pageTab]);
+  // Phone recordings go to the Mac by themselves whenever it is reachable.
+  usePhoneMeetingSync();
   const { width: windowWidth } = useWindowDimensions();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const primaryColumn = use(NativePrimaryColumnContext);
@@ -133,8 +144,13 @@ function WorkspaceRootContent() {
               : Math.max(insets.bottom, 12) + workspaceToolbarHeight(tab.searchMode) + 16;
   const context = { ...workspace, bottomClearance };
 
-  if (!layout.usesSplitView && !settingsOpen && state.selectedTab === "threads") {
-    return <HomePager page={homePage} />;
+  // Home and Meetings draw their own page header.
+  if (!settingsOpen && (state.selectedTab === "home" || state.selectedTab === "meetings")) {
+    return (
+      <WorkspaceTabsContext value={context}>
+        <WorkspaceExtraTab tab={state.selectedTab} />
+      </WorkspaceTabsContext>
+    );
   }
   return (
     <WorkspaceTabsContext value={context}>
@@ -204,7 +220,7 @@ function WorkspaceRootContent() {
           ) : enabled.length === 0 ? (
             <WorkspaceNoTabs />
           ) : state.selectedTab === "threads" ? (
-            <HomeRouteScreen />
+            <ChatsRouteScreen />
           ) : state.selectedTab === "pullRequests" ? (
             <PullRequestsScreen />
           ) : (
@@ -233,7 +249,7 @@ export function WorkspaceRootScreen() {
   const { layout } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs();
   return Platform.OS === "android" && layout.usesSplitView ? (
-    <HomeRouteScreen />
+    <ChatsRouteScreen />
   ) : workspace ? (
     <WorkspaceRootContent />
   ) : (

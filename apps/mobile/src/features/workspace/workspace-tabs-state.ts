@@ -16,7 +16,7 @@ export type WorkspaceTab = NavigationTab;
 export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
-/** Settings, Chats and pull requests pair a list with a detail column; Usage is one page. */
+/** Settings, Chats and pull requests pair a list with a detail column; Home, Meetings and Usage are one page. */
 export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
   return settingsOpen || tab === "threads" || tab === "pullRequests";
 }
@@ -40,10 +40,12 @@ function emptyTab(): WorkspaceTabState {
 
 export function initialWorkspaceTabsState(): WorkspaceTabsState {
   return {
-    selectedTab: "threads",
+    selectedTab: "home",
     selectionRevision: 0,
     tabs: {
+      home: emptyTab(),
       threads: emptyTab(),
+      meetings: emptyTab(),
       pullRequests: emptyTab(),
       usage: emptyTab(),
       settings: emptyTab(),
@@ -115,6 +117,11 @@ export function workspaceDockBottomClearance(input: {
   readonly keyboardHeight: number;
 }) {
   return 64 + Math.max(input.bottomInset, input.keyboardHeight) + 16;
+}
+
+/** Room a one-page tab leaves under its own bottom bar (Home's composer, Meetings' question) for the tabs. */
+export function workspaceTabsFootprint(bottomInset: number) {
+  return workspaceDockBottomClearance({ bottomInset, keyboardHeight: 0 }) - 16;
 }
 
 export function workspaceSearchBottomClearance(input: {

@@ -37,6 +37,8 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     didSet { if tabs != oldValue { updateItems() } }
   }
   var selectedTab = "threads" { didSet { updateSelection() } }
+  /// A dot on a tab with something waiting: "live" (a meeting recording) or "attention".
+  var badges: [String: String] = [:] { didSet { if badges != oldValue { updateBadges() } } }
   var selectedColor: UIColor = .systemBlue { didSet { tabBar.tintColor = selectedColor } }
   var compact = false {
     didSet {
@@ -99,8 +101,14 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   private func prepareItems() {
     let iconBundle = Bundle(for: Self.self).url(forResource: "T3NativeControlIcons", withExtension: "bundle").flatMap(Bundle.init(url:))
     let pullRequestIcon = UIImage(named: "pull-request", in: iconBundle, compatibleWith: nil)?.withRenderingMode(.alwaysTemplate)
-    let labels = ["threads": "Chats", "pullRequests": "PRs", "usage": "Usage", "settings": "Settings"]
-    let symbols = ["threads": "text.bubble", "usage": "chart.bar.xaxis", "settings": "gearshape"]
+    let labels = [
+      "home": "Home", "threads": "Chats", "meetings": "Meetings", "pullRequests": "PRs",
+      "usage": "Usage", "settings": "Settings",
+    ]
+    let symbols = [
+      "home": "sparkles", "threads": "text.bubble", "meetings": "waveform",
+      "usage": "chart.bar.xaxis", "settings": "gearshape",
+    ]
     for (tab, label) in labels {
       let icon = tab == "pullRequests" ? pullRequestIcon : UIImage(systemName: symbols[tab] ?? "circle")
       let item = UITabBarItem(title: nil, image: tabIcon(icon), tag: 0)
@@ -118,6 +126,15 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
       return item
     }
     updateSelection()
+  }
+
+  private func updateBadges() {
+    for (tab, item) in itemsByTab {
+      let badge = badges[tab]
+      // An empty badge value draws a plain dot.
+      item.badgeValue = badge == nil ? nil : ""
+      item.badgeColor = badge == "live" ? .systemRed : .systemOrange
+    }
   }
 
   private func layoutCompose(alongside frame: CGRect) {

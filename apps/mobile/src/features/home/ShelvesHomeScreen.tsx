@@ -36,7 +36,6 @@ import { serverEnvironment } from "../../state/server";
 import { useMeetingsEnvironment } from "../meetings/use-meetings-environment";
 import { useHomeThreadSelection } from "./home-thread-navigation";
 import { HomeDock } from "./HomeDock";
-import { tabsFootprint, type HomeTab } from "./HomeTabs";
 import {
   buildShelves,
   SHELF_ORDER,
@@ -50,6 +49,8 @@ import {
   type ShelfKind,
 } from "./shelves";
 import { useTuiEnvironment } from "./use-tui-environment";
+import { useSelectWorkspaceTab } from "../workspace/useSelectWorkspaceTab";
+import { workspaceTabsFootprint } from "../workspace/workspace-tabs-state";
 
 const CARD_WIDTH = 232;
 const CARD_HEIGHT = 136;
@@ -350,18 +351,12 @@ export function useHomeData() {
   };
 }
 
-export type HomeData = ReturnType<typeof useHomeData>;
-
 /**
  * Home: a row per status — needs you, working, done, failed, stopped — under
- * a header that stays put, with a composer that sends to tui. It is the
- * middle page of the pager, between Meetings and Chats.
+ * a header that stays put, with a composer that sends to tui. It is the first
+ * tab, before Chats, Meetings and Usage.
  */
-export function ShelvesHomeScreen(props: {
-  readonly data: HomeData;
-  readonly onShowPage: (tab: HomeTab) => void;
-  readonly onComposingChange: (composing: boolean) => void;
-}) {
+export function ShelvesHomeScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const projects = useProjects();
@@ -374,7 +369,7 @@ export function ShelvesHomeScreen(props: {
     connected,
     meetingsEnvironmentId,
     liveMeeting,
-  } = props.data;
+  } = useHomeData();
   // Project pills: one project's threads on every row, or all of them.
   const threads = useThreadShells();
   const [projectKey, setProjectKey] = useState<string | null>(null);
@@ -398,7 +393,7 @@ export function ShelvesHomeScreen(props: {
     [projectTitles, threads],
   );
 
-  const go = props.onShowPage;
+  const selectTab = useSelectWorkspaceTab();
   const openMeeting = (meeting: HistoryMeetingSummary) => {
     if (meetingsEnvironmentId)
       navigation.navigate("Meeting", {
@@ -473,7 +468,7 @@ export function ShelvesHomeScreen(props: {
     <GrPage header={header}>
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{ paddingBottom: tabsFootprint(insets.bottom) + 120 }}
+        contentContainerStyle={{ paddingBottom: workspaceTabsFootprint(insets.bottom) + 120 }}
         keyboardDismissMode="interactive"
       >
         {visibleShelves.length === 0 ? (
@@ -493,7 +488,7 @@ export function ShelvesHomeScreen(props: {
               shelves[kind].length +
               (kind === "working" && liveMeeting && projectKey === null ? 1 : 0)
             }
-            onSeeAll={() => go("chats")}
+            onSeeAll={() => selectTab("threads")}
           >
             {kind === "working" && liveMeeting && projectKey === null ? (
               <LiveMeetingCard meeting={liveMeeting} onPress={() => openMeeting(liveMeeting)} />
@@ -514,16 +509,13 @@ export function ShelvesHomeScreen(props: {
           pointerEvents="box-none"
           style={{
             paddingTop: SPACE.sm,
-            paddingBottom: composing ? SPACE.sm : tabsFootprint(insets.bottom),
+            paddingBottom: composing ? SPACE.sm : workspaceTabsFootprint(insets.bottom),
           }}
         >
           <HomeDock
             liveMeeting={liveMeeting}
             onOpenMeeting={openMeeting}
-            onFocusChange={(focused) => {
-              setComposing(focused);
-              props.onComposingChange(focused);
-            }}
+            onFocusChange={setComposing}
           />
         </View>
       </KeyboardStickyView>

@@ -13,7 +13,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { tabsFootprint } from "../home/HomeTabs";
+import { workspaceTabsFootprint } from "../workspace/workspace-tabs-state";
 import { meetingDayLabel, meetingTime } from "./meeting-notes";
 import { MeetingDayLabel, MeetingRowView } from "./meeting-rows";
 import { PhoneMeetingsHeader } from "./PhoneMeetingParts";
@@ -81,7 +81,7 @@ export function MeetingsScreen(props: { readonly embedded?: boolean } = {}) {
     );
   };
 
-  const footer = embedded ? tabsFootprint(insets.bottom) : insets.bottom + SPACE.sm;
+  const footer = embedded ? workspaceTabsFootprint(insets.bottom) : insets.bottom + SPACE.sm;
   const canAsk = question.trim().length > 0 && !asking;
 
   const body = (

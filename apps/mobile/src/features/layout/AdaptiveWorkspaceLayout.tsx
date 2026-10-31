@@ -68,6 +68,7 @@ import {
   type WorkspaceDetailSheet,
 } from "../workspace/workspace-detail-selection";
 import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
+import { workspaceUsesColumns } from "../workspace/workspace-tabs-state";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
@@ -186,11 +187,13 @@ function AdaptiveWorkspaceLayoutContent(
   const { width: viewportWidth, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const workspace = useWorkspaceTabs();
-  // Settings and Usage occupy the workspace rather than a list/detail pair.
+  // Settings and the one-page tabs occupy the workspace rather than a list/detail pair.
   const androidSettingsOpen = useAndroidWorkspaceRoot()?.settingsOpen ?? false;
   const safeAreaInsets = useSafeAreaInsets();
   const workspacePage =
-    Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
+    Platform.OS === "android" &&
+    (androidSettingsOpen ||
+      (workspace !== null && !workspaceUsesColumns(workspace.state.selectedTab)));
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
@@ -535,10 +538,12 @@ function AdaptiveWorkspaceLayoutContent(
       if (Platform.OS === "android") Keyboard.dismiss();
       setFileInspectorPreferredVisible(false);
       if (layout.primarySidebarOverlaysContent) setPrimarySidebarVisible(false);
-      workspace?.dispatch({
-        type: "select",
-        tab: detail.name === "Thread" ? "threads" : "pullRequests",
-      });
+      // A one-page tab (Home, Meetings) opens a chat over itself and stays selected.
+      if (workspace && workspaceUsesColumns(workspace.state.selectedTab))
+        workspace.dispatch({
+          type: "select",
+          tab: detail.name === "Thread" ? "threads" : "pullRequests",
+        });
       startOpeningDetail(detail);
       navigation.dispatch(selectWorkspaceDetail(detail, sheet));
     });
