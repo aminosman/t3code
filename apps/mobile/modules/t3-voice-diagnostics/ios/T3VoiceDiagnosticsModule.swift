@@ -1,6 +1,7 @@
 import AVFoundation
 import CryptoKit
 import ExpoModulesCore
+import WebRTC
 
 /// Native half of the on-device diagnostics report. The store owns persistence
 /// even when JavaScript is not listening; route events are also forwarded so
@@ -32,6 +33,33 @@ public final class T3VoiceDiagnosticsModule: Module {
       )
       try session.setActive(true)
       return self.store.audioSessionState()
+    }
+
+    /// The whole voice route policy, in one place. iOS picks the output:
+    /// Bluetooth (car, AirPods) and wired headphones always win, and
+    /// `.defaultToSpeaker` only decides between the speaker and the earpiece
+    /// when nothing is connected. It is written into WebRTC's own
+    /// configuration because WebRTC re-applies that configuration when its
+    /// audio unit starts; an option set only on AVAudioSession is lost there.
+    /// No output-port override is ever applied, since a speaker override
+    /// outranks Bluetooth.
+    Function("configureVoiceRoute") { (speaker: Bool) -> [String: Any] in
+      var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
+      if speaker { options.insert(.defaultToSpeaker) }
+      let config = RTCAudioSessionConfiguration.webRTC()
+      config.category = AVAudioSession.Category.playAndRecord.rawValue
+      config.mode = AVAudioSession.Mode.voiceChat.rawValue
+      config.categoryOptions = options
+      RTCAudioSessionConfiguration.setWebRTC(config)
+      let session = RTCAudioSession.sharedInstance()
+      session.lockForConfiguration()
+      defer { session.unlockForConfiguration() }
+      try session.setConfiguration(config, active: true)
+      try session.overrideOutputAudioPort(.none)
+      var state = self.store.audioSessionState()
+      state["speakerPreferred"] = speaker
+      self.store.log("audio.route_configured", state)
+      return state
     }
 
     AsyncFunction("getDiagnosticsSummary") { () -> [String: Any] in

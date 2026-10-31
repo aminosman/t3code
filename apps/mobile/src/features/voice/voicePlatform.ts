@@ -1,9 +1,8 @@
 /**
  * React Native platform adapter for the shared realtime voice driver.
- *
- * react-native-webrtc plays remote audio tracks automatically. InCallManager
- * owns the call session, while the actual AVAudioSession route—not a wired-
- * headset guess—decides when the speaker override is safe to apply.
+ * On iOS the OS picks the route (`configureVoiceRoute`): Bluetooth and
+ * headphones win, speaker only when nothing is connected. Never override the
+ * output port there: a speaker override outranks Bluetooth.
  */
 import type {
   MediaStreamLike,
@@ -16,6 +15,7 @@ import { mediaDevices, RTCPeerConnection } from "react-native-webrtc";
 
 import { recordLocalDiagnostic, recordLocalDiagnosticError } from "../diagnostics/localDiagnostics";
 import {
+  configureVoiceRoute,
   currentVoiceAudioSession,
   prepareVoiceAudioSession,
   subscribeToVoiceAudioSession,
@@ -33,6 +33,8 @@ let audioSessionActive = false;
 let audioSessionGeneration = 0;
 let audioSessionStart: Promise<number> | null = null;
 let speakerForced = false;
+/** iOS chooses the route itself; set when `configureVoiceRoute` exists. */
+let osRouting = false;
 let unsubscribeFromRoutes: (() => void) | null = null;
 let routeSettleTimer: ReturnType<typeof setTimeout> | null = null;
 const speakerphoneListeners = new Set<(enabled: boolean, externalDevice: boolean) => void>();
@@ -60,6 +62,12 @@ export function setVoiceSpeakerphone(enabled: boolean): void {
     routeSettleTimer = null;
   }
   speakerForced = enabled;
+  if (osRouting) {
+    const route = configureVoiceRoute(enabled);
+    recordLocalDiagnostic("audio.speaker_preference", { enabled, route });
+    notifySpeakerphoneListeners();
+    return;
+  }
   InCallManager.setForceSpeakerphoneOn(enabled);
   const route = currentVoiceAudioSession();
   recordLocalDiagnostic("audio.speaker_override", {
@@ -73,7 +81,18 @@ export function setVoiceSpeakerphone(enabled: boolean): void {
   }
 }
 
+/** What the call is actually using: a connected device beats the preference. */
+function notifySpeakerphoneListeners(): void {
+  const externalDevice = currentVoiceAudioSession()?.hasExternalAudioDevice ?? false;
+  for (const listener of speakerphoneListeners) {
+    listener(speakerForced && !externalDevice, externalDevice);
+  }
+}
+
 export function isVoiceSpeakerphoneOn(): boolean {
+  if (osRouting) {
+    return speakerForced && !(currentVoiceAudioSession()?.hasExternalAudioDevice ?? false);
+  }
   return speakerForced;
 }
 
@@ -111,6 +130,17 @@ function startAudioSession(): Promise<number> {
     if (!isCurrentAudioSession(generation)) return generation;
 
     if (Platform.OS === "ios") {
+      const policy = configureVoiceRoute(true);
+      if (policy) {
+        osRouting = true;
+        speakerForced = true;
+        // Route changes only refresh the call screen's icon; iOS has already
+        // moved the audio.
+        unsubscribeFromRoutes = subscribeToVoiceAudioSession(() => notifySpeakerphoneListeners());
+        notifySpeakerphoneListeners();
+        recordLocalDiagnostic("audio.session_started", { route: policy, osRouting });
+        return generation;
+      }
       const route = prepareVoiceAudioSession() ?? currentVoiceAudioSession();
       if (route) {
         setVoiceSpeakerphone(!route.hasExternalAudioDevice);
@@ -160,7 +190,8 @@ export function stopVoiceAudioSession(expectedGeneration?: number): void {
   unsubscribeFromRoutes = null;
   speakerForced = false;
   InCallManager.setKeepScreenOn(false);
-  InCallManager.setForceSpeakerphoneOn(false);
+  if (!osRouting) InCallManager.setForceSpeakerphoneOn(false);
+  osRouting = false;
   InCallManager.stop();
 }
 
@@ -189,8 +220,10 @@ export const reactNativeVoicePlatform: VoicePlatform = {
         throw new MicrophoneAccessError("The voice session was closed.");
       }
       // Re-read after mic acquisition rather than trusting a pre-mic route or
-      // a transitional A2DP/HFP event.
-      reevaluateVoiceRoute();
+      // a transitional A2DP/HFP event. Under OS routing there is nothing to
+      // decide; WebRTC re-applies the same policy when its audio unit starts.
+      if (osRouting) notifySpeakerphoneListeners();
+      else reevaluateVoiceRoute();
       recordLocalDiagnostic("audio.microphone_acquired", {
         tracks: stream.getAudioTracks().length,
         route: currentVoiceAudioSession(),

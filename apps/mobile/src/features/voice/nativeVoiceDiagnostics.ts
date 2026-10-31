@@ -42,6 +42,8 @@ export interface NativeDiagnosticsSummary {
 interface NativeVoiceDiagnostics {
   startDiagnostics(): void;
   prepareVoiceAudioSession(): VoiceAudioSessionState;
+  /** Absent on native clients built before Bluetooth routing moved native. */
+  configureVoiceRoute?(speaker: boolean): VoiceAudioSessionState;
   getAudioSessionState(): VoiceAudioSessionState;
   getDiagnosticsSummary(): Promise<NativeDiagnosticsSummary>;
   exportDiagnostics(): Promise<{
@@ -78,6 +80,21 @@ export function nativeVoiceDiagnostics(): NativeVoiceDiagnostics | null {
 export function prepareVoiceAudioSession(): VoiceAudioSessionState | null {
   try {
     return nativeVoiceDiagnostics()?.prepareVoiceAudioSession() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lets iOS route the call: Bluetooth and headphones always win; `speaker`
+ * picks the speaker over the earpiece only when nothing is connected. Null on
+ * Android and on native clients without the function.
+ */
+export function configureVoiceRoute(speaker: boolean): VoiceAudioSessionState | null {
+  const native = nativeVoiceDiagnostics();
+  if (!native?.configureVoiceRoute) return null;
+  try {
+    return native.configureVoiceRoute(speaker);
   } catch {
     return null;
   }
