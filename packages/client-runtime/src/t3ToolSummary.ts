@@ -246,6 +246,9 @@ export function summarizeT3ToolCalls(
     case "history-feedback":
       label = phrase("Rated", "rate", `history searches ${times}`);
       break;
+    case "card-move":
+      label = phrase("Moved", "move", `cards ${times}`);
+      break;
     case "meeting-list":
       label = phrase("Listed", "list", `meetings ${times}`);
       break;

@@ -358,6 +358,13 @@ import {
   HistoryThreadMessagesOutput,
 } from "./history.ts";
 import {
+  BoardApiError,
+  BoardListInput,
+  BoardListOutput,
+  BoardMoveInput,
+  BoardMoveOutput,
+} from "./board.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -568,6 +575,10 @@ export const WS_METHODS = {
   historyMeetingNotesWrite: "history.meetingNotesWrite",
   historyPhoneMeetingUploadUrl: "history.phoneMeetingUploadUrl",
   historyPhoneMeetingImport: "history.phoneMeetingImport",
+
+  // board (Roost): the card wall, a stage per thread
+  boardList: "board.list",
+  boardMove: "board.move",
   historyMeetingsProject: "history.meetingsProject",
   historyAskMeetings: "history.askMeetings",
 
@@ -1832,6 +1843,18 @@ const WsHistoryPhoneMeetingUploadUrlRpc = Rpc.make(WS_METHODS.historyPhoneMeetin
   error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
 });
 
+const WsBoardListRpc = Rpc.make(WS_METHODS.boardList, {
+  payload: BoardListInput,
+  success: BoardListOutput,
+  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
+});
+
+const WsBoardMoveRpc = Rpc.make(WS_METHODS.boardMove, {
+  payload: BoardMoveInput,
+  success: BoardMoveOutput,
+  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
+});
+
 const WsHistoryPhoneMeetingImportRpc = Rpc.make(WS_METHODS.historyPhoneMeetingImport, {
   payload: HistoryPhoneMeetingImportInput,
   success: HistoryPhoneMeetingImportOutput,
@@ -2429,6 +2452,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsHistoryMeetingNotesWriteRpc,
   WsHistoryPhoneMeetingUploadUrlRpc,
   WsHistoryPhoneMeetingImportRpc,
+  WsBoardListRpc,
+  WsBoardMoveRpc,
   WsHistoryMeetingsProjectRpc,
   WsHistoryAskMeetingsRpc,
   WsSubscribePreviewEventsRpc,

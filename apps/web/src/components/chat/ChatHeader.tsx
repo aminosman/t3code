@@ -44,6 +44,7 @@ import { Button } from "../ui/button";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { ThreadBoardButton } from "../board/BoardEntryPoints";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -443,6 +444,7 @@ export const ChatHeader = memo(function ChatHeader({
         </TooltipTrigger>
         <TooltipPopup side="top">Voice oracle</TooltipPopup>
       </Tooltip>
+      {isServerThread ? <ThreadBoardButton threadId={activeThreadId} /> : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );

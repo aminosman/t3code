@@ -214,6 +214,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pushRemoveDevice]: AuthOrchestrationOperateScope,
   [WS_METHODS.pushTestDevice]: AuthOrchestrationOperateScope,
   [WS_METHODS.historySearch]: AuthOrchestrationReadScope,
+  [WS_METHODS.boardList]: AuthOrchestrationReadScope,
+  [WS_METHODS.boardMove]: AuthOrchestrationOperateScope,
   [WS_METHODS.historyMeetingList]: AuthOrchestrationReadScope,
   [WS_METHODS.historyMeetingRead]: AuthOrchestrationReadScope,
   [WS_METHODS.historyThreadMessages]: AuthOrchestrationReadScope,

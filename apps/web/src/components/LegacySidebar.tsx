@@ -230,6 +230,7 @@ import {
   SidebarChromeHeader,
   SidebarMeetingsEntry,
 } from "./sidebar/SidebarChrome";
+import { SidebarBoardEntry } from "./board/BoardEntryPoints";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
@@ -3118,6 +3119,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             </SidebarMenuItem>
           </SidebarMenu>
           <SidebarMeetingsEntry />
+          <SidebarBoardEntry />
         </SidebarGroup>
       }
     >

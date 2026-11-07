@@ -27,6 +27,7 @@ import {
 import { ProjectService } from "../../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { HistorySearch, type HistorySearchInput } from "../../../historySearch/HistorySearch.ts";
+import { BoardService } from "../../../board/BoardService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { SENDS_PER_HOUR } from "./handlers.ts";
@@ -211,6 +212,7 @@ const makeHarness = Effect.gen(function* () {
   const sent = yield* Ref.make<ReadonlyArray<ThreadManagementSendInput>>([]);
   const searched = yield* Ref.make<ReadonlyArray<HistorySearchInput>>([]);
   const usage = yield* Ref.make<ReadonlyArray<string>>([]);
+  const moved = yield* Ref.make<ReadonlyArray<string>>([]);
   const findShell = (threadId: ThreadId) =>
     activeThreads.find((t) => t.id === threadId) ??
     archivedThreads.find((t) => t.id === threadId) ??
@@ -424,9 +426,18 @@ const makeHarness = Effect.gen(function* () {
           ),
       }),
     ),
+    Layer.provide(
+      Layer.mock(BoardService)({
+        move: (input) =>
+          Ref.update(moved, (seen) => [
+            ...seen,
+            `${input.threadIds.join(",")} ${input.stage} ${input.movedBy}`,
+          ]).pipe(Effect.as([])),
+      }),
+    ),
     Layer.provide(NodeServices.layer),
   );
-  return { dispatched, sent, searched, usage, layer };
+  return { dispatched, sent, searched, usage, moved, layer };
 });
 
 const call = (
@@ -564,6 +575,25 @@ it.effect("records what was opened after a search, and what the agent said of it
       "feedback true 3 ",
     ]);
   }),
+);
+
+it.effect(
+  "moves the caller's own card by default, another thread's by id, and no unknown one",
+  () =>
+    Effect.gen(function* () {
+      const { moved, layer } = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const own = yield* call("t3_card_move", { stage: "fix" });
+        expect(own.structuredContent).toEqual({ threadId: callerThreadId, stage: "fix" });
+        yield* call("t3_card_move", { stage: "pushed", threadId: workThreadId });
+        const missing = yield* call("t3_card_move", { stage: "review", threadId: "thread-nope" });
+        expect(missing.isError).toBe(true);
+      }).pipe(Effect.provide(layer));
+      expect(yield* Ref.get(moved)).toEqual([
+        `${callerThreadId} fix agent`,
+        `${workThreadId} pushed agent`,
+      ]);
+    }),
 );
 
 it.effect("lists meetings and reads one by its notes or around a moment", () =>

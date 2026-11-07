@@ -67,6 +67,7 @@ export * from "./scheduledTask.ts";
 export * from "./tuiInbox.ts";
 export * from "./tuiScreen.ts";
 export * from "./history.ts";
+export * from "./board.ts";
 export * from "./worktreeMcp.ts";
 export * from "./mcpConnections.ts";
 export * from "./resourceTelemetry.ts";

@@ -1,5 +1,8 @@
 import {
   type EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2OlderSettledCursor,
+  type OrchestrationV2ThreadShell,
   type ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -12,6 +15,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Deferred from "effect/Deferred";
@@ -741,6 +745,10 @@ export function recordFetchedWorkspaceSnapshot(
   );
 }
 
+const BOARD_OLDER_SETTLED_PAGE_SIZE = 50;
+/** At most 2,000 older settled threads on the board. */
+const BOARD_OLDER_SETTLED_PAGES = 40;
+
 export function createServerEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<
     EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
@@ -1327,6 +1335,37 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.historyMeetingRead,
       staleTimeMs: 10_000,
     }),
+    /**
+     * The card wall's older settled threads, which shells leave out: all of
+     * them below `before` (the shell's cut), read in pages while the board is
+     * open. Those are the threads a cleanup is for.
+     */
+    boardOlderSettled: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:server:board:older-settled",
+      idleTtlMs: 0,
+      staleTimeMs: 30_000,
+      execute: Effect.fn("Board.readOlderSettled")(function* (input: { readonly before: string }) {
+        const threads: OrchestrationV2ThreadShell[] = [];
+        let cursor: OrchestrationV2OlderSettledCursor = { settledAt: input.before };
+        for (let page = 0; page < BOARD_OLDER_SETTLED_PAGES; page += 1) {
+          const read = yield* request(ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads, {
+            before: cursor,
+            limit: BOARD_OLDER_SETTLED_PAGE_SIZE,
+          });
+          threads.push(...read.threads);
+          const last = read.threads.at(-1);
+          if (read.threads.length < BOARD_OLDER_SETTLED_PAGE_SIZE || last?.settledAt == null) break;
+          cursor = { settledAt: DateTime.formatIso(last.settledAt), threadId: last.id };
+        }
+        return threads;
+      }),
+    }),
+    /** Roost's card wall: the stage of every placed thread. */
+    boardList: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:board:list",
+      tag: WS_METHODS.boardList,
+      staleTimeMs: 10_000,
+    }),
     historySearch: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:history:search",
       tag: WS_METHODS.historySearch,
@@ -1619,6 +1658,10 @@ export function createServerEnvironmentAtoms<R, E>(
     phoneMeetingImport: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:history:phone-meeting-import",
       tag: WS_METHODS.historyPhoneMeetingImport,
+    }),
+    boardMove: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:board:move",
+      tag: WS_METHODS.boardMove,
     }),
     askMeetings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:history:ask-meetings",

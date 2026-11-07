@@ -19,6 +19,7 @@ import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagem
 import { ProjectService } from "../../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { HistorySearch, type ThreadMessagesOutput } from "../../../historySearch/HistorySearch.ts";
+import { BoardService } from "../../../board/BoardService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { type ThreadSummary, ThreadsToolkit, ThreadToolError } from "./tools.ts";
@@ -115,6 +116,7 @@ const makeHandlers = Effect.gen(function* () {
   const threads = yield* ThreadManagementService;
   const projects = yield* ProjectService;
   const history = yield* HistorySearch;
+  const board = yield* BoardService;
   const providerRegistry = yield* ProviderRegistry;
   const sendsByCaller = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<number>>>(new Map());
   const crypto = yield* Crypto.Crypto;
@@ -212,6 +214,26 @@ const makeHandlers = Effect.gen(function* () {
           caller: { threadId: scope.thread.threadId, provider: scope.thread.providerInstanceId },
         })
         .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+    }),
+
+    t3_card_move: Effect.fn("ThreadsToolkit.t3_card_move")(function* (input: {
+      readonly stage: "research" | "fix" | "review" | "pushed" | "deployed";
+      readonly threadId?: ThreadId | undefined;
+    }) {
+      const scope = yield* requireScope;
+      const threadId = input.threadId ?? scope.thread.threadId;
+      if (input.threadId !== undefined) {
+        const target = yield* threads
+          .getThreadShell(input.threadId)
+          .pipe(Effect.mapError(failWith("could not read the thread")));
+        if (target === null || target.deletedAt !== null) {
+          return yield* new ThreadToolError({ reason: `no thread ${input.threadId}` });
+        }
+      }
+      yield* board
+        .move({ threadIds: [threadId], stage: input.stage, movedBy: "agent" })
+        .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
+      return { threadId, stage: input.stage };
     }),
 
     t3_history_feedback: Effect.fn("ThreadsToolkit.t3_history_feedback")(function* (input: {
@@ -537,6 +559,10 @@ const makeHandlers = Effect.gen(function* () {
   return {
     t3_history_search: McpToolAccess.readsAsCaller(handlers.t3_history_search),
     t3_history_feedback: McpToolAccess.actsAsCaller(handlers.t3_history_feedback),
+    t3_card_move: McpToolAccess.writesThreads(
+      (input: { readonly threadId?: ThreadId | undefined }) => [input.threadId],
+      handlers.t3_card_move,
+    ),
     t3_meeting_list: McpToolAccess.readsAsCaller(handlers.t3_meeting_list),
     t3_meeting_read: McpToolAccess.readsAsCaller(handlers.t3_meeting_read),
     t3_any_thread_list: McpToolAccess.readsAsCaller(handlers.t3_any_thread_list),

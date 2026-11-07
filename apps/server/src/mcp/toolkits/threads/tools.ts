@@ -166,6 +166,22 @@ export const HistoryFeedbackInput = Schema.Struct({
   }),
 });
 
+export const CardMoveInput = Schema.Struct({
+  stage: Schema.Literals(["research", "fix", "review", "pushed", "deployed"]).annotate({
+    description:
+      "research: finding out. fix: changing code. review: waiting on review or the user. " +
+      "pushed: committed and pushed. deployed: released and done.",
+  }),
+  threadId: Schema.optional(ThreadId).annotate({
+    description: "Omit for your own thread's card.",
+  }),
+});
+
+export const CardMoveOutput = Schema.Struct({
+  threadId: ThreadId,
+  stage: Schema.String,
+});
+
 export const HistoryFeedbackOutput = Schema.Struct({
   recorded: Schema.Boolean,
   searchId: Schema.NullOr(Schema.Int),
@@ -466,6 +482,22 @@ const HistoryFeedbackTool = Tool.make("t3_history_feedback", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
+const CardMoveTool = Tool.make("t3_card_move", {
+  description:
+    "Move a thread's card on the user's card wall (Research, Fix, Review, Pushed, Deployed). " +
+    "Move your own card when your work changes stage: to fix when you start changing code, " +
+    "review when it waits on review or the user, pushed once committed and pushed, deployed " +
+    "once released. The user archives deployed cards.",
+  parameters: CardMoveInput,
+  success: CardMoveOutput,
+  failure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Move a card")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 const MeetingListTool = Tool.make("t3_meeting_list", {
   description:
     "List the meetings recorded on this Mac, newest first: when, how long, who was named, and " +
@@ -603,6 +635,7 @@ const ThreadArchiveTool = Tool.make("t3_thread_archive", {
 export const ThreadsToolkit = Toolkit.make(
   HistorySearchTool,
   HistoryFeedbackTool,
+  CardMoveTool,
   MeetingListTool,
   MeetingReadTool,
   ThreadListTool,

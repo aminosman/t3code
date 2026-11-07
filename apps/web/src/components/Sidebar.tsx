@@ -245,6 +245,7 @@ import {
   SidebarChromeHeader,
   SidebarMeetingsEntry,
 } from "./sidebar/SidebarChrome";
+import { SidebarBoardEntry } from "./board/BoardEntryPoints";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -3089,6 +3090,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               onClearSearch={clearThreadSearch}
             />
             <SidebarMeetingsEntry />
+            <SidebarBoardEntry />
           </SidebarGroup>
         }
       >

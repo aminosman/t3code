@@ -216,6 +216,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pushRemoveDevice]: "push",
   [WS_METHODS.pushTestDevice]: "push",
   [WS_METHODS.historySearch]: "history",
+  [WS_METHODS.boardList]: "board",
+  [WS_METHODS.boardMove]: "board",
   [WS_METHODS.historyMeetingList]: "history",
   [WS_METHODS.historyMeetingRead]: "history",
   [WS_METHODS.historyThreadMessages]: "history",
