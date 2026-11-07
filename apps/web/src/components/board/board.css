@@ -615,6 +615,71 @@
   border: 1px dashed var(--bd-ink-3);
 }
 
+/* --- the chat's own card, and the board beside the chat --------------- */
+
+.board-card-slot[data-focused] .board-card {
+  box-shadow:
+    0 0 0 2px var(--bd-focus),
+    var(--bd-lift);
+}
+
+.board-bar-button {
+  color: inherit;
+}
+
+.board-bar-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.board-surface[data-variant="panel"] .board-bar {
+  flex-wrap: wrap;
+  min-height: 0;
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.board-surface[data-variant="panel"] .board-crumbs {
+  flex-basis: 100%;
+  font-size: 13px;
+}
+
+.board-surface[data-variant="panel"] .board-picker {
+  max-width: 11rem;
+  flex: 1;
+  height: 28px;
+  font-size: 13px;
+}
+
+.board-surface[data-variant="panel"] .board-search {
+  width: auto;
+  flex: 1;
+  height: 28px;
+}
+
+.board-surface[data-variant="panel"] .board-filters {
+  padding: 6px 8px 0;
+}
+
+.board-surface[data-variant="panel"] .board-filter {
+  height: 24px;
+  font-size: 12px;
+}
+
+.board-surface[data-variant="panel"] .board-lists {
+  gap: 8px;
+  padding: 8px;
+}
+
+.board-surface[data-variant="panel"] .board-list {
+  width: 248px;
+  flex-basis: 248px;
+}
+
+.board-surface[data-variant="panel"] .board-owner {
+  flex-wrap: wrap;
+  padding: 6px 8px;
+}
+
 /* On a phone one list fills the screen and you swipe between them. */
 @media (max-width: 640px) {
   .board-lists {

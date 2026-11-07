@@ -444,7 +444,7 @@ export const ChatHeader = memo(function ChatHeader({
         </TooltipTrigger>
         <TooltipPopup side="top">Voice oracle</TooltipPopup>
       </Tooltip>
-      {isServerThread ? <ThreadBoardButton threadId={activeThreadId} /> : null}
+      {isServerThread ? <ThreadBoardButton threadRef={activeThreadRef} /> : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );

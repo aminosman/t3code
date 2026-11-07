@@ -255,3 +255,28 @@ export const STALE_DAYS = 14;
 export function summaryIsStale(thread: BoardThread, summarizedAt: string | undefined): boolean {
   return summarizedAt === undefined || summarizedAt < activityAt(thread);
 }
+
+/** The thread that owns this one (a subagent's parent, a delegated task's sender), if any. */
+export function ownerOf(thread: BoardThread | undefined): string | null {
+  if (thread === undefined) return null;
+  if (thread.lineage.relationshipToParent === "subagent") return thread.lineage.parentThreadId;
+  if (thread.lineage.relationshipToParent === null && thread.delegatedFrom != null) {
+    return thread.delegatedFrom.threadId;
+  }
+  return null;
+}
+
+/** The card a board marks for a chat: its own, or its nearest owner's on this board. */
+export function focusedCardId(
+  threads: ReadonlyArray<BoardThread>,
+  shownIds: ReadonlySet<string>,
+  threadId: string | null,
+): string | null {
+  const byId = new Map(threads.map((thread) => [thread.id, thread] as const));
+  let id = threadId;
+  for (let hops = 0; id !== null && hops < 8; hops += 1) {
+    if (shownIds.has(id)) return id;
+    id = ownerOf(byId.get(id));
+  }
+  return null;
+}

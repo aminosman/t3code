@@ -27,6 +27,7 @@ import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dn
 import { CSS } from "@dnd-kit/utilities";
 import {
   Smartphone,
+  KanbanSquare,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -129,6 +130,8 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  /** Roost: the card wall beside the chat. */
+  onAddBoard?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -303,6 +306,8 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  /** Roost: the card wall beside the chat. */
+  onAddBoard?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -346,6 +351,18 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
       onClick: props.onAddDiff,
     },
+    ...(props.onAddBoard
+      ? [
+          {
+            label: "Board",
+            icon: KanbanSquare,
+            shortcut: "K",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddBoard,
+          },
+        ]
+      : []),
     {
       label: "Pull request",
       icon: PullRequestGlyph.pullRequest,
@@ -554,6 +571,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "board":
+      return "Board";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -644,6 +663,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "board":
+      return <KanbanSquare className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1041,6 +1062,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
     },
+    ...(props.onAddBoard
+      ? [
+          {
+            label: "Board",
+            icon: KanbanSquare,
+            shortcut: "K",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddBoard,
+          },
+        ]
+      : []),
     {
       label: "Pull request",
       icon: PullRequestGlyph.pullRequest,
@@ -1431,6 +1464,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}
+            {...(props.onAddBoard ? { onAddBoard: props.onAddBoard } : {})}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}
             onAddTerminal={props.onAddTerminal}

@@ -5,6 +5,7 @@ import {
   type BoardThread,
   buildBoard,
   columnOf,
+  focusedCardId,
   idleCards,
   passesFilter,
   summaryIsStale,
@@ -150,5 +151,21 @@ describe("passesFilter and summaryIsStale", () => {
     expect(summaryIsStale(t, undefined)).toBe(true);
     expect(summaryIsStale(t, "2026-11-01T00:00:00.000Z")).toBe(true);
     expect(summaryIsStale(t, "2026-11-03T00:00:00.000Z")).toBe(false);
+  });
+});
+
+describe("focusedCardId", () => {
+  it("marks the chat's own card, else its nearest owner's on the board", () => {
+    const threads = [
+      thread("top"),
+      thread("child", { lineage: { parentThreadId: "top", relationshipToParent: "subagent" } }),
+      thread("grandchild", {
+        lineage: { parentThreadId: "child", relationshipToParent: "subagent" },
+      }),
+    ];
+    const shown = new Set(["top"]);
+    expect(focusedCardId(threads, shown, "top")).toBe("top");
+    expect(focusedCardId(threads, shown, "grandchild")).toBe("top");
+    expect(focusedCardId(threads, shown, "elsewhere")).toBe(null);
   });
 });
