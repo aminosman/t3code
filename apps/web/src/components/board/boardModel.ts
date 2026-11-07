@@ -1,37 +1,7 @@
 // Roost's card wall, as data: which column each thread's card sits in, which
 // cards a board shows, and in what order. No React here, so it is tested alone.
-import {
-  BOARD_STAGES,
-  type BoardCard,
-  type BoardStage,
-  type BoardSubCards,
-} from "@t3tools/contracts";
+import type { BoardCard, BoardColumn, BoardStage, BoardSubCards } from "@t3tools/contracts";
 import { groupOwnedThreads, isLiveThread } from "@t3tools/client-runtime/state/ownedThreads";
-
-export interface BoardColumnSpec {
-  readonly stage: BoardStage;
-  readonly title: string;
-  readonly hint: string;
-  /** Archived threads: Deployed holds the shipped ones, Archive the rest. */
-  readonly archives: boolean;
-}
-
-export const BOARD_COLUMNS: ReadonlyArray<BoardColumnSpec> = BOARD_STAGES.map((stage) => {
-  switch (stage) {
-    case "research":
-      return { stage, title: "Research", hint: "Finding out", archives: false };
-    case "fix":
-      return { stage, title: "Fix", hint: "Changing code", archives: false };
-    case "review":
-      return { stage, title: "Waiting · In review", hint: "On review or you", archives: false };
-    case "pushed":
-      return { stage, title: "Committed & pushed", hint: "In the repo", archives: false };
-    case "deployed":
-      return { stage, title: "Deployed", hint: "Complete; archived", archives: true };
-    case "archived":
-      return { stage, title: "Archive", hint: "Put away", archives: true };
-  }
-});
 
 /** What the board needs of a thread; EnvironmentThreadShell has all of it. */
 export interface BoardThread {
@@ -63,13 +33,22 @@ export type BoardScope =
   | { readonly kind: "thread"; readonly threadId: string };
 
 /**
- * The column a card sits in. Archiving is T3's, so an archived thread is in
- * Deployed when it shipped and in Archive otherwise, whatever it was before;
- * a thread never placed starts in Research.
+ * The column a card sits in. Archiving is T3's, so an archived thread sits in
+ * the archiving column it was dropped on, else the last archiving column; an
+ * open thread never placed, or placed in a column since removed, starts in
+ * the first open column.
  */
-export function columnOf(stage: BoardStage | undefined, archived: boolean): BoardStage {
-  if (archived) return stage === "deployed" ? "deployed" : "archived";
-  return stage ?? "research";
+export function columnOf(
+  stage: BoardStage | undefined,
+  archived: boolean,
+  columns: ReadonlyArray<BoardColumn>,
+): BoardStage {
+  const placed = columns.find((column) => column.id === stage);
+  if (archived) {
+    if (placed?.archives) return placed.id;
+    return columns.findLast((column) => column.archives)?.id ?? "";
+  }
+  return placed?.id ?? columns.find((column) => !column.archives)?.id ?? "";
 }
 
 export interface BoardCardView<T extends BoardThread> {
@@ -112,9 +91,13 @@ export function buildBoard<T extends BoardThread>(
   threads: ReadonlyArray<T>,
   cards: ReadonlyArray<BoardCard>,
   scope: BoardScope,
+  boardColumns: ReadonlyArray<BoardColumn>,
   /** The server's counts, which see the idle sub-threads shells leave out. */
   subCounts: ReadonlyArray<BoardSubCards> = [],
 ): BoardView<T> {
+  const archiving = new Set(
+    boardColumns.filter((column) => column.archives).map((column) => column.id),
+  );
   const countedById = new Map(subCounts.map((count) => [count.threadId as string, count] as const));
   const stageById = new Map(cards.map((card) => [card.threadId as string, card] as const));
   const { topLevel, childrenByOwner } = groupOwnedThreads(threads);
@@ -123,12 +106,12 @@ export function buildBoard<T extends BoardThread>(
     const children = childrenByOwner.get(thread.id) ?? [];
     const counted = countedById.get(thread.id);
     const done = children.filter(
-      (child) => child.archivedAt !== null || stageById.get(child.id)?.stage === "deployed",
+      (child) => child.archivedAt !== null || archiving.has(stageById.get(child.id)?.stage ?? ""),
     ).length;
     const useCounted = counted !== undefined && counted.total > children.length;
     return {
       thread,
-      column: columnOf(card?.stage, thread.archivedAt !== null),
+      column: columnOf(card?.stage, thread.archivedAt !== null, boardColumns),
       card,
       subCards: useCounted ? counted.total : children.length,
       subCardsDone: useCounted ? counted.done : done,
@@ -143,7 +126,7 @@ export function buildBoard<T extends BoardThread>(
         : topLevel;
 
   const columns = new Map<BoardStage, BoardCardView<T>[]>(
-    BOARD_STAGES.map((stage) => [stage, []] as const),
+    boardColumns.map((column) => [column.id, []] as const),
   );
   for (const thread of shown) {
     const card = view(thread);

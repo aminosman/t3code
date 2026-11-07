@@ -1,7 +1,15 @@
 // Roost's card wall: a stage per thread, kept in its own table beside T3's
 // state. Not a numbered migration — those are upstream's — so the table is
 // created here, idempotently, when the service starts.
-import type { BoardCard, BoardStage, BoardSubCards, BoardSummary } from "@t3tools/contracts";
+import {
+  type BoardCard,
+  type BoardColumn,
+  type BoardStage,
+  type BoardSubCards,
+  type BoardSummary,
+  boardColumnsProblem,
+  DEFAULT_BOARD_COLUMNS,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -29,6 +37,11 @@ export interface BoardServiceShape {
   readonly card: (threadId: string) => Effect.Effect<BoardCard | null, BoardError>;
   readonly summaries: Effect.Effect<ReadonlyArray<BoardSummary>, BoardError>;
   readonly saveSummary: (summary: BoardSummary) => Effect.Effect<void, BoardError>;
+  /** The user's columns, in order; the defaults until they are edited. */
+  readonly columns: Effect.Effect<ReadonlyArray<BoardColumn>, BoardError>;
+  readonly setColumns: (
+    columns: ReadonlyArray<BoardColumn>,
+  ) => Effect.Effect<ReadonlyArray<BoardColumn>, BoardError>;
 }
 
 export class BoardService extends Context.Service<BoardService, BoardServiceShape>()(
@@ -75,6 +88,61 @@ const make = Effect.gen(function* () {
       summarized_at TEXT NOT NULL
     )
   `.pipe(Effect.mapError(failed));
+
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS roost_board_columns (
+      position INTEGER NOT NULL,
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      archives INTEGER NOT NULL
+    )
+  `.pipe(Effect.mapError(failed));
+
+  const columns = sql<{
+    readonly id: string;
+    readonly title: string;
+    readonly description: string;
+    readonly archives: number;
+  }>`SELECT id, title, description, archives FROM roost_board_columns ORDER BY position`.pipe(
+    Effect.map((rows) =>
+      rows.length === 0
+        ? DEFAULT_BOARD_COLUMNS
+        : rows.map(
+            (row) =>
+              ({
+                id: row.id,
+                title: row.title,
+                description: row.description,
+                archives: row.archives === 1,
+              }) as BoardColumn,
+          ),
+    ),
+    Effect.mapError(failed),
+  );
+
+  const setColumns: BoardServiceShape["setColumns"] = Effect.fn("BoardService.setColumns")(
+    function* (next) {
+      const problem = boardColumnsProblem(next);
+      if (problem !== null) return yield* new BoardError({ reason: problem });
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`DELETE FROM roost_board_columns`;
+          yield* Effect.forEach(
+            next,
+            (column, position) => sql`
+              INSERT INTO roost_board_columns (position, id, title, description, archives)
+              VALUES (${position}, ${column.id}, ${column.title}, ${column.description},
+                ${column.archives ? 1 : 0})
+            `,
+            { discard: true },
+          );
+        }),
+      );
+      return next;
+    },
+    Effect.mapError(failed),
+  );
 
   const summaries = sql<{
     readonly thread_id: string;
@@ -159,18 +227,22 @@ const make = Effect.gen(function* () {
     );
   }, Effect.mapError(failed));
 
-  const subCards = sql<{ thread_id: string; total: number; done: number }>`
+  // Done: archived, or placed in an archiving column while still open.
+  const subCards = Effect.gen(function* () {
+    const done = (yield* columns).filter((column) => column.archives).map((column) => column.id);
+    return yield* sql<{ thread_id: string; total: number; done: number }>`
     SELECT
       json_extract(t.payload_json, '$.lineage.parentThreadId') AS thread_id,
       COUNT(*) AS total,
-      SUM(CASE WHEN t.archived_at IS NOT NULL OR c.stage = 'deployed' THEN 1 ELSE 0 END) AS done
+      SUM(CASE WHEN t.archived_at IS NOT NULL OR ${sql.in("c.stage", done)} THEN 1 ELSE 0 END) AS done
     FROM orchestration_v2_projection_threads t
     LEFT JOIN roost_board_cards c ON c.thread_id = t.thread_id
     WHERE t.deleted_at IS NULL
       AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
       AND json_extract(t.payload_json, '$.lineage.parentThreadId') IS NOT NULL
     GROUP BY 1
-  `.pipe(
+  `;
+  }).pipe(
     Effect.map((rows) =>
       rows.map(
         (row) => ({ threadId: row.thread_id, total: row.total, done: row.done }) as BoardSubCards,
@@ -180,7 +252,16 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed((): ReadonlyArray<BoardSubCards> => []),
   );
 
-  return BoardService.of({ list, subCards, move, card, summaries, saveSummary });
+  return BoardService.of({
+    list,
+    subCards,
+    move,
+    card,
+    summaries,
+    saveSummary,
+    columns,
+    setColumns,
+  });
 });
 
 export const layer = Layer.effect(BoardService, make);

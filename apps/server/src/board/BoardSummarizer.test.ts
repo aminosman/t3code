@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { shouldAutoMove, summaryPrompt } from "./BoardSummarizer.ts";
+import { DEFAULT_BOARD_COLUMNS } from "@t3tools/contracts";
+
+import { shouldAutoMove, summaryPrompt, summarySystemPrompt } from "./BoardSummarizer.ts";
 
 describe("shouldAutoMove", () => {
   const base = {
-    suggested: "review" as const,
+    suggested: "review",
+    suggestedPutsAway: false,
     confidence: 0.8,
-    current: "fix" as const,
+    current: "fix",
     placedByUserAt: null,
     turnStartedAt: "2026-11-07T10:00:00.000Z",
     archived: false,
@@ -20,7 +23,7 @@ describe("shouldAutoMove", () => {
     expect(shouldAutoMove({ ...base, confidence: 0.4 })).toBe(false);
     expect(shouldAutoMove({ ...base, suggested: "fix" })).toBe(false);
     expect(shouldAutoMove({ ...base, archived: true })).toBe(false);
-    expect(shouldAutoMove({ ...base, suggested: "archived" })).toBe(false);
+    expect(shouldAutoMove({ ...base, suggested: "archived", suggestedPutsAway: true })).toBe(false);
   });
 
   it("respects a card the user placed during the turn, not one placed before it", () => {
@@ -47,5 +50,22 @@ describe("summaryPrompt", () => {
     expect(prompt).toContain("message 39");
     expect(prompt).not.toContain("message 0 ");
     expect(prompt.length).toBeLessThan(26_000);
+  });
+});
+
+describe("summarySystemPrompt", () => {
+  it("tells Claude the user's own columns and what each is for", () => {
+    const prompt = summarySystemPrompt([
+      ...DEFAULT_BOARD_COLUMNS.slice(0, 2),
+      {
+        id: "qa",
+        title: "QA on staging",
+        description: "Deployed to staging, waiting for QA.",
+        archives: false,
+      },
+    ]);
+    expect(prompt).toContain('- qa ("QA on staging"): Deployed to staging, waiting for QA.');
+    expect(prompt).toContain('- fix ("Fix")');
+    expect(prompt).not.toContain("deployed");
   });
 });

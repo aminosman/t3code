@@ -1,4 +1,4 @@
-import type { BoardCard, BoardStage } from "@t3tools/contracts";
+import { type BoardCard, type BoardStage, DEFAULT_BOARD_COLUMNS } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -33,11 +33,14 @@ const ids = (board: ReturnType<typeof buildBoard>, stage: BoardStage) =>
 
 describe("columnOf", () => {
   it("starts unplaced threads in Research and sorts archived ones by whether they shipped", () => {
-    expect(columnOf(undefined, false)).toBe("research");
-    expect(columnOf("review", false)).toBe("review");
-    expect(columnOf(undefined, true)).toBe("archived");
-    expect(columnOf("fix", true)).toBe("archived");
-    expect(columnOf("deployed", true)).toBe("deployed");
+    const columns = DEFAULT_BOARD_COLUMNS;
+    expect(columnOf(undefined, false, columns)).toBe("research");
+    expect(columnOf("review", false, columns)).toBe("review");
+    expect(columnOf(undefined, true, columns)).toBe("archived");
+    expect(columnOf("fix", true, columns)).toBe("archived");
+    expect(columnOf("deployed", true, columns)).toBe("deployed");
+    // A column since removed: open cards go to the first open column.
+    expect(columnOf("qa", false, columns)).toBe("research");
   });
 });
 
@@ -58,14 +61,14 @@ describe("buildBoard", () => {
   const cards = [card("a", "fix"), card("a1", "deployed"), card("old", "deployed")];
 
   it("shows top-level threads on the whole board, with their sub-card progress", () => {
-    const board = buildBoard(threads, cards, { kind: "all" });
+    const board = buildBoard(threads, cards, { kind: "all" }, DEFAULT_BOARD_COLUMNS);
     expect(ids(board, "research")).toEqual(["b"]);
     expect(ids(board, "fix")).toEqual(["a"]);
     expect(ids(board, "deployed")).toEqual(["old"]);
     const a = board.columns.get("fix")?.[0];
     expect([a?.subCards, a?.subCardsDone]).toEqual([2, 2]);
     // The server also counts the idle sub-threads the shell left out.
-    const counted = buildBoard(threads, cards, { kind: "all" }, [
+    const counted = buildBoard(threads, cards, { kind: "all" }, DEFAULT_BOARD_COLUMNS, [
       { threadId: "a", total: 5, done: 3 },
     ] as never);
     const b = counted.columns.get("fix")?.[0];
@@ -74,16 +77,27 @@ describe("buildBoard", () => {
 
   it("narrows to one project, and to one thread's own sub-threads", () => {
     expect(
-      ids(buildBoard(threads, cards, { kind: "project", projectId: "p2" }), "research"),
+      ids(
+        buildBoard(threads, cards, { kind: "project", projectId: "p2" }, DEFAULT_BOARD_COLUMNS),
+        "research",
+      ),
     ).toEqual(["b"]);
-    const own = buildBoard(threads, cards, { kind: "thread", threadId: "a" });
+    const own = buildBoard(
+      threads,
+      cards,
+      { kind: "thread", threadId: "a" },
+      DEFAULT_BOARD_COLUMNS,
+    );
     expect(own.owner?.thread.id).toBe("a");
     // a1 was marked deployed but is still open; a2 was archived without a stage.
     expect(ids(own, "deployed")).toEqual(["a1"]);
     expect(ids(own, "archived")).toEqual(["a2"]);
     // An archived owner keeps its children under it.
     expect(
-      ids(buildBoard(threads, cards, { kind: "thread", threadId: "old" }), "research"),
+      ids(
+        buildBoard(threads, cards, { kind: "thread", threadId: "old" }, DEFAULT_BOARD_COLUMNS),
+        "research",
+      ),
     ).toEqual(["old1"]);
   });
 
@@ -96,6 +110,7 @@ describe("buildBoard", () => {
       ],
       [],
       { kind: "all" },
+      DEFAULT_BOARD_COLUMNS,
     );
     expect(ids(board, "research")).toEqual(["asks", "working", "quiet"]);
   });
@@ -112,6 +127,7 @@ describe("idleCards", () => {
       ],
       [],
       { kind: "all" },
+      DEFAULT_BOARD_COLUMNS,
     );
     expect(idleCards(board.columns.get("research") ?? [], now, 14).map((v) => v.thread.id)).toEqual(
       ["stale"],
@@ -136,7 +152,7 @@ describe("turnStatus", () => {
 describe("passesFilter and summaryIsStale", () => {
   const now = Date.parse("2026-11-20T00:00:00.000Z");
   const view = (t: BoardThread) =>
-    buildBoard([t], [], { kind: "all" }).columns.get("research")![0]!;
+    buildBoard([t], [], { kind: "all" }, DEFAULT_BOARD_COLUMNS).columns.get("research")![0]!;
 
   it("filters by who acts and by staleness", () => {
     const asks = view(thread("asks", { hasPendingUserInput: true }));

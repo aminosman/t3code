@@ -15,7 +15,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
-import type { BoardStage, BoardSummary, ThreadId } from "@t3tools/contracts";
+import type { BoardColumn, BoardStage, BoardSummary, ThreadId } from "@t3tools/contracts";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   ArrowRightIcon,
@@ -26,6 +26,7 @@ import {
   MoreHorizontalIcon,
   SearchIcon,
   SparklesIcon,
+  SlidersHorizontalIcon,
   SquareCheckIcon,
 } from "lucide-react";
 
@@ -34,9 +35,7 @@ import { SidebarTrigger } from "~/components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 import {
-  BOARD_COLUMNS,
   type BoardCardView,
-  type BoardColumnSpec,
   type BoardFilter,
   type BoardScope,
   STALE_DAYS,
@@ -51,6 +50,7 @@ import {
   summaryIsStale,
   turnStatus,
 } from "./boardModel";
+import { ColumnEditor } from "./ColumnEditor";
 import { useBoard } from "./useBoard";
 
 type Thread = ReturnType<typeof useBoard>["threads"][number];
@@ -85,8 +85,8 @@ const FILTERS: ReadonlyArray<{ readonly id: BoardFilter; readonly label: string 
   { id: "unsummarized", label: "No summary" },
 ];
 
-const columnTitle = (stage: BoardStage) =>
-  BOARD_COLUMNS.find((column) => column.stage === stage)?.title ?? stage;
+const columnTitle = (columns: ReadonlyArray<BoardColumn>, stage: BoardStage) =>
+  columns.find((column) => column.id === stage)?.title ?? stage;
 
 /** How long ago, Trello-short: "now", "40m", "5h", "3d". */
 function age(at: string, now: number): string {
@@ -119,6 +119,7 @@ export interface BoardViewProps {
 
 /** What every card and list needs from the page. */
 interface BoardContext {
+  readonly columns: ReadonlyArray<BoardColumn>;
   readonly showProject: boolean;
   readonly projectsById: ReadonlyMap<string, EnvironmentProject>;
   readonly summaries: ReadonlyMap<string, BoardSummary>;
@@ -129,7 +130,8 @@ interface BoardContext {
   readonly openBoard: (card: CardView) => void;
   readonly move: (card: CardView, stage: BoardStage) => void;
   readonly summarize: (cards: ReadonlyArray<CardView>) => void;
-  readonly archive: (cards: ReadonlyArray<CardView>) => void;
+  /** Archives them into `into`, or the last archiving column. */
+  readonly archive: (cards: ReadonlyArray<CardView>, into?: BoardStage) => void;
 }
 
 export function BoardView(props: BoardViewProps) {
@@ -154,7 +156,8 @@ export function BoardView(props: BoardViewProps) {
       : search.project !== undefined
         ? { kind: "project", projectId: search.project }
         : { kind: "all" };
-  const view = buildBoard(board.threads, board.cards, scope, board.subCounts);
+  const view = buildBoard(board.threads, board.cards, scope, board.columns, board.subCounts);
+  const [editingColumns, setEditingColumns] = useState(false);
   const projectsById = new Map(board.projects.map((project) => [project.id as string, project]));
   const ownerProject =
     view.owner === null ? undefined : projectsById.get(view.owner.thread.projectId);
@@ -185,6 +188,7 @@ export function BoardView(props: BoardViewProps) {
     node?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
   }, [focusedId, listsRef]);
   const context: BoardContext = {
+    columns: board.columns,
     showProject: scope.kind === "all",
     projectsById,
     summaries: board.summaries,
@@ -195,7 +199,11 @@ export function BoardView(props: BoardViewProps) {
     openBoard: (card) => goTo({ thread: card.thread.id }),
     move: (card, stage) => void board.move(card.thread.id as ThreadId, stage),
     summarize: (cards) => void board.summarize(cards.map((card) => card.thread.id as ThreadId)),
-    archive: (cards) => void board.archiveMany(cards.map((card) => card.thread.id as ThreadId)),
+    archive: (cards, into) =>
+      void board.archiveMany(
+        cards.map((card) => card.thread.id as ThreadId),
+        into,
+      ),
   };
 
   const onDragStart = (event: DragStartEvent) => setDraggingId(String(event.active.id));
@@ -250,8 +258,31 @@ export function BoardView(props: BoardViewProps) {
           {board.loading ? "Loading…" : `${openCards.length} open`}
           {board.summarizing.size > 0 ? ` · summarizing ${board.summarizing.size}` : ""}
         </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="board-icon-button board-bar-button"
+                aria-label="Edit columns"
+                onClick={() => setEditingColumns(true)}
+              />
+            }
+          >
+            <SlidersHorizontalIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Edit columns</TooltipPopup>
+        </Tooltip>
         {props.controls}
       </header>
+      {editingColumns ? (
+        <ColumnEditor
+          open
+          columns={board.columns}
+          onOpenChange={setEditingColumns}
+          onSave={board.saveColumns}
+        />
+      ) : null}
 
       <div className="board-filters" role="toolbar" aria-label="Quick filters">
         {FILTERS.map((filter) => {
@@ -277,6 +308,7 @@ export function BoardView(props: BoardViewProps) {
 
       {view.owner !== null ? (
         <OwnerStrip
+          columns={board.columns}
           owner={view.owner}
           summary={board.summaries.get(view.owner.thread.id)}
           onOpen={() => context.open(view.owner!)}
@@ -293,21 +325,23 @@ export function BoardView(props: BoardViewProps) {
         onDragCancel={() => setDraggingId(null)}
       >
         <div className="board-lists" ref={listsRef}>
-          {BOARD_COLUMNS.map((column) => {
-            const cards = (view.columns.get(column.stage) ?? []).filter(
+          {board.columns.map((column, index) => {
+            const cards = (view.columns.get(column.id) ?? []).filter(
               (card) => matchesText(card) && passes(card, quick),
             );
-            const showAll = showAllIn.has(column.stage) || !column.archives;
+            const showAll = showAllIn.has(column.id) || !column.archives;
+            const putAway = board.columns.findLast((entry) => entry.archives)?.id === column.id;
             return (
               <BoardList
-                key={column.stage}
+                key={column.id}
                 column={column}
+                tint={putAway ? "put-away" : String(index % 5)}
                 cards={showAll ? cards : cards.slice(0, ARCHIVE_SHOWN)}
                 allCards={cards}
                 hidden={showAll ? 0 : Math.max(0, cards.length - ARCHIVE_SHOWN)}
                 context={context}
                 draggingId={draggingId}
-                onShowAll={() => setShowAllIn((current) => new Set([...current, column.stage]))}
+                onShowAll={() => setShowAllIn((current) => new Set([...current, column.id]))}
               />
             );
           })}
@@ -397,11 +431,13 @@ function ProjectPicker({
 
 /** A thread's own board shows the thread itself above its sub-cards. */
 function OwnerStrip({
+  columns,
   owner,
   summary,
   onOpen,
   onMove,
 }: {
+  columns: ReadonlyArray<BoardColumn>;
   owner: CardView;
   summary: BoardSummary | undefined;
   onOpen: () => void;
@@ -413,7 +449,7 @@ function OwnerStrip({
         <span className="board-owner-title">{owner.thread.title}</span>
         {summary !== undefined ? <p className="board-owner-summary">{summary.summary}</p> : null}
       </div>
-      <StagePicker current={owner.column} onPick={onMove} />
+      <StagePicker columns={columns} current={owner.column} onPick={onMove} />
       <button type="button" className="board-button" onClick={onOpen}>
         Open thread
       </button>
@@ -427,9 +463,11 @@ function OwnerStrip({
 }
 
 function StagePicker({
+  columns,
   current,
   onPick,
 }: {
+  columns: ReadonlyArray<BoardColumn>;
   current: BoardStage;
   onPick: (stage: BoardStage) => void;
 }) {
@@ -440,8 +478,8 @@ function StagePicker({
       onChange={(event) => onPick(event.target.value as BoardStage)}
       aria-label="Stage"
     >
-      {BOARD_COLUMNS.map((column) => (
-        <option key={column.stage} value={column.stage}>
+      {columns.map((column) => (
+        <option key={column.id} value={column.id}>
           {column.title}
         </option>
       ))}
@@ -451,6 +489,7 @@ function StagePicker({
 
 function BoardList({
   column,
+  tint,
   cards,
   allCards,
   hidden,
@@ -458,7 +497,9 @@ function BoardList({
   draggingId,
   onShowAll,
 }: {
-  column: BoardColumnSpec;
+  column: BoardColumn;
+  /** The list's pastel: an index, or the grey of the last archiving column. */
+  tint: string;
   cards: ReadonlyArray<CardView>;
   /** Every card the filters leave in this list, shown or not. */
   allCards: ReadonlyArray<CardView>;
@@ -467,16 +508,16 @@ function BoardList({
   draggingId: string | null;
   onShowAll: () => void;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: column.stage });
+  const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const open = allCards.filter((card) => card.thread.archivedAt === null);
   const idle = column.archives ? [] : idleCards(allCards, context.now, STALE_DAYS);
   const outdated = open.filter((card) =>
     summaryIsStale(card.thread, context.summaries.get(card.thread.id)?.summarizedAt),
   );
-  const archivable = column.stage === "deployed" ? open : [];
-  const confirmArchive = (list: ReadonlyArray<CardView>, what: string) => {
+  const archivable = column.archives ? open : [];
+  const confirmArchive = (list: ReadonlyArray<CardView>, what: string, into?: BoardStage) => {
     if (window.confirm(`Archive ${list.length} thread${list.length === 1 ? "" : "s"} ${what}?`)) {
-      context.archive(list);
+      context.archive(list, into);
     }
   };
   const hasActions = idle.length > 0 || outdated.length > 0 || archivable.length > 0;
@@ -484,7 +525,8 @@ function BoardList({
     <section
       ref={setNodeRef}
       className="board-list"
-      data-stage={column.stage}
+      data-stage={column.id}
+      data-tint={tint}
       data-over={isOver ? "" : undefined}
       aria-label={column.title}
     >
@@ -507,8 +549,12 @@ function BoardList({
                 </MenuItem>
               ) : null}
               {archivable.length > 0 ? (
-                <MenuItem onClick={() => confirmArchive(archivable, "marked deployed")}>
-                  Archive {archivable.length} deployed
+                <MenuItem
+                  onClick={() =>
+                    confirmArchive(archivable, `still open in ${column.title}`, column.id)
+                  }
+                >
+                  Archive {archivable.length} still open
                 </MenuItem>
               ) : null}
               {idle.length > 0 ? (
@@ -524,7 +570,7 @@ function BoardList({
           </Menu>
         ) : null}
       </header>
-      <p className="board-list-hint">{column.hint}</p>
+      {column.description ? <p className="board-list-hint">{column.description}</p> : null}
       <ol className="board-cards">
         {cards.map((card) => (
           <li key={card.thread.id}>
@@ -685,7 +731,7 @@ function CardFace({
                 />
               }
             >
-              → {columnTitle(suggestion)}?
+              → {columnTitle(context.columns, suggestion)}?
             </TooltipTrigger>
             <TooltipPopup side="top">{summary?.reason}</TooltipPopup>
           </Tooltip>
@@ -710,11 +756,13 @@ function CardFace({
                   {summary === undefined ? "Summarize" : "Refresh summary"}
                 </MenuItem>
                 <MenuSeparator />
-                {BOARD_COLUMNS.filter((column) => column.stage !== card.column).map((column) => (
-                  <MenuItem key={column.stage} onClick={() => context.move(card, column.stage)}>
-                    Move to {column.title}
-                  </MenuItem>
-                ))}
+                {context.columns
+                  .filter((column) => column.id !== card.column)
+                  .map((column) => (
+                    <MenuItem key={column.id} onClick={() => context.move(card, column.id)}>
+                      Move to {column.title}
+                    </MenuItem>
+                  ))}
               </MenuPopup>
             </Menu>
           </span>

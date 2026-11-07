@@ -1,7 +1,7 @@
 // When a turn ends, a one-off Claude run (Haiku, no tools, no saved session)
 // summarizes the thread and picks its column; a confident answer moves the
 // card unless the user placed it during that turn. It never archives.
-import { BOARD_STAGES, type BoardStage, type BoardSummary } from "@t3tools/contracts";
+import type { BoardColumn, BoardStage, BoardSummary } from "@t3tools/contracts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -56,16 +56,20 @@ const AUTO_MOVE_CONFIDENCE = 0.6;
 const TRANSCRIPT_CHARS = 24_000;
 const MESSAGE_CHARS = 1_500;
 
-const SUMMARY_SYSTEM_PROMPT = `You keep a Trello-style card wall of coding-agent threads current.
-Read the thread and answer in the JSON schema. Columns, in order:
-- research: finding out. Investigating, reading code, exploring options, planning, answering questions. No code changed yet.
-- fix: changing things. Editing code or config, building, running tests, iterating on a change.
-- review: waiting on someone. The agent stopped for the user's answer, approval or decision, or a PR or review is open and pending.
-- pushed: committed and pushed (or merged), not yet released or deployed.
-- deployed: done. Released, deployed or published; or, for work with nothing to ship, finished with nothing left to do.
-- archived: dead end. Abandoned, superseded, duplicated, or failed with no way forward.
-Judge by what actually happened, not by what was planned. A thread that ended asking the user something is review.
-summary: one or two plain sentences, at most 240 characters: what the work is and where it stands now.
+/** The instructions, with the user's own columns and what each is for. */
+export function summarySystemPrompt(columns: ReadonlyArray<BoardColumn>): string {
+  const lines = columns.map(
+    (column) =>
+      `- ${column.id} ("${column.title}")${column.description.trim() ? `: ${column.description.trim()}` : ""}`,
+  );
+  return `You keep a Trello-style card wall of coding-agent threads current.
+Read the thread and answer in the JSON schema. The user's columns, in board order, with what belongs in each:
+${lines.join("\n")}
+Pick the column whose description fits what actually happened, not what was planned. stage is the column id.
+${SUMMARY_FIELDS}`;
+}
+
+const SUMMARY_FIELDS = `summary: one or two plain sentences, at most 240 characters: what the work is and where it stands now.
 next: who acts next and on what, at most 120 characters ("You: approve the migration", "Agent: rerun tests"); empty if nothing is pending.
 reason: why that column, at most 80 characters.
 confidence: 0 to 1, how sure you are of the column.`;
@@ -73,7 +77,7 @@ confidence: 0 to 1, how sure you are of the column.`;
 const SummaryOutput = Schema.Struct({
   summary: Schema.String,
   next: Schema.String,
-  stage: Schema.Literals(BOARD_STAGES),
+  stage: Schema.String,
   reason: Schema.String,
   confidence: Schema.Number,
 });
@@ -93,18 +97,19 @@ const decodeClaudeResult = Schema.decodeEffect(ClaudeResult);
 const decodeSummary = Schema.decodeUnknownEffect(SummaryOutput);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const SUMMARY_JSON_SCHEMA = encodeJson({
-  type: "object",
-  additionalProperties: false,
-  required: ["summary", "next", "stage", "reason", "confidence"],
-  properties: {
-    summary: { type: "string" },
-    next: { type: "string" },
-    stage: { type: "string", enum: [...BOARD_STAGES] },
-    reason: { type: "string" },
-    confidence: { type: "number" },
-  },
-});
+const summaryJsonSchema = (columns: ReadonlyArray<BoardColumn>) =>
+  encodeJson({
+    type: "object",
+    additionalProperties: false,
+    required: ["summary", "next", "stage", "reason", "confidence"],
+    properties: {
+      summary: { type: "string" },
+      next: { type: "string" },
+      stage: { type: "string", enum: columns.map((column) => column.id) },
+      reason: { type: "string" },
+      confidence: { type: "number" },
+    },
+  });
 
 export interface SummaryPromptInput {
   readonly title: string;
@@ -130,7 +135,7 @@ export function summaryPrompt(input: SummaryPromptInput): string {
   }
   return [
     `Thread: ${input.title}`,
-    `Column now: ${input.stage ?? "not placed (research)"}`,
+    `Column now: ${input.stage ?? "not placed yet"}`,
     `Last turn: ${input.turn}${input.waitingOnUser ? ", waiting on the user" : ""}`,
     input.previous === null ? "" : `Previous summary: ${input.previous}`,
     "",
@@ -141,18 +146,19 @@ export function summaryPrompt(input: SummaryPromptInput): string {
 
 /**
  * Whether the summary moves the card: a confident, different column, never
- * into Archive (archiving is the user's), and never over a placement the
- * user made after the turn began.
+ * into the last archiving column (putting work away is the user's), and
+ * never over a placement the user made after the turn began.
  */
 export function shouldAutoMove(input: {
   readonly suggested: BoardStage;
+  readonly suggestedPutsAway: boolean;
   readonly confidence: number;
   readonly current: BoardStage;
   readonly placedByUserAt: string | null;
   readonly turnStartedAt: string | null;
   readonly archived: boolean;
 }): boolean {
-  if (input.archived || input.suggested === "archived") return false;
+  if (input.archived || input.suggestedPutsAway) return false;
   if (input.suggested === input.current || input.confidence < AUTO_MOVE_CONFIDENCE) return false;
   if (input.placedByUserAt !== null && input.turnStartedAt !== null) {
     return input.placedByUserAt < input.turnStartedAt;
@@ -195,7 +201,10 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const runClaude = Effect.fn("BoardSummarizer.runClaude")(function* (prompt: string) {
+  const runClaude = Effect.fn("BoardSummarizer.runClaude")(function* (
+    prompt: string,
+    columns: ReadonlyArray<BoardColumn>,
+  ) {
     const found = yield* claudeInstance;
     if (found === undefined) {
       return yield* new SummaryError({ reason: "no Claude account to summarize with" });
@@ -214,11 +223,11 @@ const make = Effect.gen(function* () {
           "--output-format",
           "json",
           "--json-schema",
-          SUMMARY_JSON_SCHEMA,
+          summaryJsonSchema(columns),
           "--model",
           "haiku",
           "--system-prompt",
-          SUMMARY_SYSTEM_PROMPT,
+          summarySystemPrompt(columns),
           "--tools",
           "",
           "--disable-slash-commands",
@@ -269,19 +278,27 @@ const make = Effect.gen(function* () {
     if (shell === null || shell.deletedAt !== null) return;
     const read = yield* history.readMessages({ threadId, before: 40 });
     if (read === null || read.messages.length === 0) return;
+    const columns = yield* board.columns;
     const card = yield* board.card(threadId);
+    const firstOpen = columns.find((column) => !column.archives)!;
+    const current = columns.find((column) => column.id === card?.stage) ?? firstOpen;
     const previous = (yield* board.summaries).find((entry) => entry.threadId === threadId);
     const waitingOnUser = shell.pendingRuntimeRequest !== null;
     const output = yield* runClaude(
       summaryPrompt({
         title: shell.title,
-        stage: card?.stage ?? null,
+        stage: card === null ? null : current.id,
         previous: previous?.summary ?? null,
         turn: shell.activityRunStatus ?? (shell.latestRunCompletedAt == null ? "none" : "ended"),
         waitingOnUser,
         messages: read.messages.filter((message) => !message.streaming),
       }),
+      columns,
     ).pipe(Effect.scoped, Effect.timeout(CLAUDE_TIMEOUT), Effect.mapError(summaryFailed));
+    const suggested = columns.find((column) => column.id === output.stage);
+    if (suggested === undefined) {
+      return yield* new SummaryError({ reason: `no column "${output.stage}"` });
+    }
     const summarizedAt = DateTime.formatIso(yield* DateTime.now);
     const summary: BoardSummary = {
       threadId: shell.id,
@@ -298,8 +315,10 @@ const make = Effect.gen(function* () {
     if (
       shouldAutoMove({
         suggested: summary.suggestedStage,
+        // The last archiving column is "put away": suggested, never moved to.
+        suggestedPutsAway: suggested.id === columns.findLast((column) => column.archives)?.id,
         confidence: summary.confidence,
-        current: card?.stage ?? "research",
+        current: current.id,
         placedByUserAt: card?.movedBy === "user" ? card.movedAt : null,
         turnStartedAt,
         archived: shell.archivedAt !== null,

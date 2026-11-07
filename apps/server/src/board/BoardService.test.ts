@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { DEFAULT_BOARD_COLUMNS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -53,5 +54,26 @@ layer("BoardService", (it) => {
         [["owner", 3, 2]],
       );
     }),
+  );
+
+  it.effect(
+    "starts with the default columns, saves edits in order, and refuses an unusable board",
+    () =>
+      Effect.gen(function* () {
+        const board = yield* BoardService.BoardService;
+        assert.deepStrictEqual(yield* board.columns, DEFAULT_BOARD_COLUMNS);
+        const edited = [
+          { id: "todo", title: "To do", description: "Not started.", archives: false },
+          { id: "qa", title: "QA", description: "On staging, waiting for QA.", archives: false },
+          { id: "done", title: "Done", description: "Shipped.", archives: true },
+        ];
+        yield* board.setColumns(edited);
+        assert.deepStrictEqual(yield* board.columns, edited);
+        const refused = yield* board
+          .setColumns(edited.filter((column) => !column.archives))
+          .pipe(Effect.flip);
+        assert.strictEqual(refused.reason, "Keep at least one archiving column.");
+        assert.deepStrictEqual(yield* board.columns, edited);
+      }),
   );
 });

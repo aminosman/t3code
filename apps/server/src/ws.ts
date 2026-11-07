@@ -3105,6 +3105,7 @@ export const layerWsRpc = (
         [WS_METHODS.boardList]: (_input) =>
           Effect.all({
             cards: board.list,
+            columns: board.columns,
             subCards: board.subCards,
             summaries: board.summaries,
             summarizing: summarizer.pending.pipe(
@@ -3114,6 +3115,11 @@ export const layerWsRpc = (
         [WS_METHODS.boardMove]: (input) =>
           board.move({ threadIds: input.threadIds, stage: input.stage, movedBy: "user" }).pipe(
             Effect.map((cards) => ({ cards })),
+            Effect.mapError(boardFailed),
+          ),
+        [WS_METHODS.boardSetColumns]: (input) =>
+          board.setColumns(input.columns).pipe(
+            Effect.map((columns) => ({ columns })),
             Effect.mapError(boardFailed),
           ),
         [WS_METHODS.boardSummarize]: (input) =>

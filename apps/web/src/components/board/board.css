@@ -199,22 +199,22 @@
 }
 
 /* Pastel per stage, cool to warm as the work moves right. */
-.board-list[data-stage="research"] {
+.board-list[data-tint="0"] {
   --bd-list-tint: #8fb8f6;
 }
-.board-list[data-stage="fix"] {
+.board-list[data-tint="1"] {
   --bd-list-tint: #b8acf6;
 }
-.board-list[data-stage="review"] {
+.board-list[data-tint="2"] {
   --bd-list-tint: #f8e6a0;
 }
-.board-list[data-stage="pushed"] {
+.board-list[data-tint="3"] {
   --bd-list-tint: #9dd9ee;
 }
-.board-list[data-stage="deployed"] {
+.board-list[data-tint="4"] {
   --bd-list-tint: #baf3db;
 }
-.board-list[data-stage="archived"] {
+.board-list[data-tint="put-away"] {
   --bd-list-tint: #dcdfe4;
 }
 
@@ -224,6 +224,7 @@
 }
 
 .board-list-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -247,7 +248,12 @@
 }
 
 .board-list-hint {
-  padding: 0 14px 6px;
+  flex-shrink: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  margin: 0 14px 6px;
   color: var(--bd-ink-3);
   font-size: 12px;
 }

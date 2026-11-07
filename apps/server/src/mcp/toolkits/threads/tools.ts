@@ -167,10 +167,11 @@ export const HistoryFeedbackInput = Schema.Struct({
 });
 
 export const CardMoveInput = Schema.Struct({
-  stage: Schema.Literals(["research", "fix", "review", "pushed", "deployed"]).annotate({
+  stage: Schema.String.annotate({
     description:
-      "research: finding out. fix: changing code. review: waiting on review or the user. " +
-      "pushed: committed and pushed. deployed: released and done.",
+      "A column of the user's board, by id or title. The defaults are research, fix, " +
+      "review (waiting on review or the user), pushed and deployed; an unknown one fails " +
+      "with the board's columns and what each is for.",
   }),
   threadId: Schema.optional(ThreadId).annotate({
     description: "Omit for your own thread's card.",
@@ -484,10 +485,9 @@ const HistoryFeedbackTool = Tool.make("t3_history_feedback", {
 
 const CardMoveTool = Tool.make("t3_card_move", {
   description:
-    "Move a thread's card on the user's card wall (Research, Fix, Review, Pushed, Deployed). " +
-    "Move your own card when your work changes stage: to fix when you start changing code, " +
-    "review when it waits on review or the user, pushed once committed and pushed, deployed " +
-    "once released. The user archives deployed cards.",
+    "Move a thread's card on the user's card wall. Move your own card when your work changes " +
+    "stage: to fix when you start changing code, review when it waits on review or the user, " +
+    "pushed once committed and pushed, deployed once released. Never archives the thread.",
   parameters: CardMoveInput,
   success: CardMoveOutput,
   failure,

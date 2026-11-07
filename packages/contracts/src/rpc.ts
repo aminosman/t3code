@@ -365,6 +365,8 @@ import {
   BoardMoveOutput,
   BoardSummarizeInput,
   BoardSummarizeOutput,
+  BoardSetColumnsInput,
+  BoardSetColumnsOutput,
 } from "./board.ts";
 import {
   ServerConfigStreamEvent,
@@ -582,6 +584,7 @@ export const WS_METHODS = {
   boardList: "board.list",
   boardMove: "board.move",
   boardSummarize: "board.summarize",
+  boardSetColumns: "board.setColumns",
   historyMeetingsProject: "history.meetingsProject",
   historyAskMeetings: "history.askMeetings",
 
@@ -1864,6 +1867,12 @@ const WsBoardSummarizeRpc = Rpc.make(WS_METHODS.boardSummarize, {
   error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
 });
 
+const WsBoardSetColumnsRpc = Rpc.make(WS_METHODS.boardSetColumns, {
+  payload: BoardSetColumnsInput,
+  success: BoardSetColumnsOutput,
+  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
+});
+
 const WsHistoryPhoneMeetingImportRpc = Rpc.make(WS_METHODS.historyPhoneMeetingImport, {
   payload: HistoryPhoneMeetingImportInput,
   success: HistoryPhoneMeetingImportOutput,
@@ -2464,6 +2473,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsBoardListRpc,
   WsBoardMoveRpc,
   WsBoardSummarizeRpc,
+  WsBoardSetColumnsRpc,
   WsHistoryMeetingsProjectRpc,
   WsHistoryAskMeetingsRpc,
   WsSubscribePreviewEventsRpc,

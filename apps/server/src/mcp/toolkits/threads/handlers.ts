@@ -217,10 +217,24 @@ const makeHandlers = Effect.gen(function* () {
     }),
 
     t3_card_move: Effect.fn("ThreadsToolkit.t3_card_move")(function* (input: {
-      readonly stage: "research" | "fix" | "review" | "pushed" | "deployed";
+      readonly stage: string;
       readonly threadId?: ThreadId | undefined;
     }) {
       const scope = yield* requireScope;
+      const columns = yield* board.columns.pipe(
+        Effect.mapError((error) => new ThreadToolError({ reason: error.reason })),
+      );
+      const wanted = input.stage.trim().toLowerCase();
+      const column = columns.find(
+        (entry) => entry.id.toLowerCase() === wanted || entry.title.toLowerCase() === wanted,
+      );
+      if (column === undefined) {
+        return yield* new ThreadToolError({
+          reason: `no column "${input.stage}". The board's columns: ${columns
+            .map((entry) => `${entry.id} ("${entry.title}"): ${entry.description}`)
+            .join("; ")}`,
+        });
+      }
       const threadId = input.threadId ?? scope.thread.threadId;
       if (input.threadId !== undefined) {
         const target = yield* threads
@@ -231,9 +245,9 @@ const makeHandlers = Effect.gen(function* () {
         }
       }
       yield* board
-        .move({ threadIds: [threadId], stage: input.stage, movedBy: "agent" })
+        .move({ threadIds: [threadId], stage: column.id, movedBy: "agent" })
         .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
-      return { threadId, stage: input.stage };
+      return { threadId, stage: column.id };
     }),
 
     t3_history_feedback: Effect.fn("ThreadsToolkit.t3_history_feedback")(function* (input: {

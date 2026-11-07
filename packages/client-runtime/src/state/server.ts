@@ -1663,6 +1663,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:board:move",
       tag: WS_METHODS.boardMove,
     }),
+    boardSetColumns: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:board:set-columns",
+      tag: WS_METHODS.boardSetColumns,
+    }),
     boardSummarize: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:board:summarize",
       tag: WS_METHODS.boardSummarize,

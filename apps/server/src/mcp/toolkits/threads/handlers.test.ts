@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  DEFAULT_BOARD_COLUMNS,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -428,6 +429,7 @@ const makeHarness = Effect.gen(function* () {
     ),
     Layer.provide(
       Layer.mock(BoardService)({
+        columns: Effect.succeed(DEFAULT_BOARD_COLUMNS),
         move: (input) =>
           Ref.update(moved, (seen) => [
             ...seen,
@@ -585,7 +587,9 @@ it.effect(
       yield* Effect.gen(function* () {
         const own = yield* call("t3_card_move", { stage: "fix" });
         expect(own.structuredContent).toEqual({ threadId: callerThreadId, stage: "fix" });
-        yield* call("t3_card_move", { stage: "pushed", threadId: workThreadId });
+        yield* call("t3_card_move", { stage: "Committed & pushed", threadId: workThreadId });
+        const unknown = yield* call("t3_card_move", { stage: "qa" });
+        expect(unknown.isError).toBe(true);
         const missing = yield* call("t3_card_move", { stage: "review", threadId: "thread-nope" });
         expect(missing.isError).toBe(true);
       }).pipe(Effect.provide(layer));
