@@ -84,6 +84,7 @@ import * as Embedder from "./historySearch/Embedder.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
 import * as BoardService from "./board/BoardService.ts";
 import * as BoardSummarizer from "./board/BoardSummarizer.ts";
+import * as BoardFlow from "./board/BoardFlow.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
@@ -816,8 +817,9 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(TuiInbox.layer),
   Layer.provide(TuiScreen.layer),
-  // Roost's card wall: one store for the board RPCs and the agents' t3_card_move.
+  // Roost's card wall: one store for the board RPCs and the agents' t3_card_update.
   Layer.provide(BoardSummarizer.layer),
+  Layer.provide(BoardFlow.layer),
   Layer.provide(BoardService.layer),
   // One history index serves both agents (MCP) and clients (history RPCs).
   Layer.provide(

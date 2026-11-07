@@ -62,6 +62,8 @@ export function useBoard(scopeThreadId: string | null) {
   const setColumnsCommand = useAtomCommand(serverEnvironment.boardSetColumns, {
     reportFailure: false,
   });
+  const decideCommand = useAtomCommand(serverEnvironment.boardDecide, { reportFailure: false });
+  const nudgeCommand = useAtomCommand(serverEnvironment.boardNudge, { reportFailure: false });
   const summarizeCommand = useAtomCommand(serverEnvironment.boardSummarize, {
     reportFailure: false,
   });
@@ -115,6 +117,12 @@ export function useBoard(scopeThreadId: string | null) {
     (listing.data?.summaries ?? []).map((summary) => [summary.threadId as string, summary]),
   );
   const summarizing = new Set<string>(listing.data?.summarizing ?? []);
+  /** Each thread's request waiting on the user, if it has one. */
+  const pendingApprovals = new Map(
+    (listing.data?.approvals ?? [])
+      .filter((approval) => approval.status === "pending")
+      .map((approval) => [approval.threadId as string, approval]),
+  );
 
   // Agents and the summarizer move cards; look again while the board is open,
   // sooner while summaries are being written.
@@ -239,6 +247,44 @@ export function useBoard(scopeThreadId: string | null) {
     return true;
   };
 
+  const reportFailure = (
+    title: string,
+    result: Parameters<typeof isAtomCommandInterrupted>[0] &
+      Parameters<typeof squashAtomCommandFailure>[0],
+  ) => {
+    if (!isAtomCommandInterrupted(result)) {
+      toastManager.add({
+        type: "error",
+        title,
+        description: failureMessage(squashAtomCommandFailure(result)),
+      });
+    }
+  };
+
+  /** Approves or declines an agent's request; the thread hears about it either way. */
+  const decide = async (threadId: ThreadId, stage: BoardStage, approve: boolean, note = "") => {
+    if (environmentId === null) return;
+    const result = await decideCommand({
+      environmentId,
+      input: { threadId, stage, approve, note },
+    });
+    if (result._tag === "Failure") return reportFailure("Could not send the decision", result);
+    listing.refresh();
+  };
+
+  /** Asks threads to check their cards and move the work forward. */
+  const nudge = async (threadIds: ReadonlyArray<ThreadId>) => {
+    if (environmentId === null || threadIds.length === 0) return;
+    const [first, ...rest] = threadIds.slice(0, 100);
+    const result = await nudgeCommand({ environmentId, input: { threadIds: [first!, ...rest] } });
+    if (result._tag === "Failure") return reportFailure("Could not nudge", result);
+    toastManager.add({
+      type: "success",
+      title: `Nudged ${result.value.sent} thread${result.value.sent === 1 ? "" : "s"}`,
+      description: "Each was asked to check its card and move the work forward.",
+    });
+  };
+
   /** Asks the server for fresh summaries of these threads. */
   const summarize = async (threadIds: ReadonlyArray<ThreadId>) => {
     if (environmentId === null || threadIds.length === 0) return;
@@ -267,6 +313,9 @@ export function useBoard(scopeThreadId: string | null) {
     summaries,
     summarizing,
     summarize,
+    pendingApprovals,
+    decide,
+    nudge,
     threads,
     cards,
     subCounts: listing.data?.subCards ?? [],

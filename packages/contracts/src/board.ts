@@ -17,8 +17,31 @@ export const BoardColumn = Schema.Struct({
   description: Schema.String.check(Schema.isMaxLength(600)),
   /** Dropping a card here archives its thread; archived threads sit in these. */
   archives: Schema.Boolean,
+  /**
+   * Projects whose agents need the user's approval to move a card in ("*" for
+   * every project); the user's own moves are never gated.
+   */
+  requireApprovalIn: Schema.optional(Schema.Array(Schema.String)),
 });
 export type BoardColumn = typeof BoardColumn.Type;
+
+/** Whether an agent needs the user's approval to move this project's card into the column. */
+export function columnNeedsApproval(column: BoardColumn, projectId: string): boolean {
+  const projects = column.requireApprovalIn ?? [];
+  return projects.includes("*") || projects.includes(projectId);
+}
+
+/** An agent's request to move its card into a column that needs approval. */
+export const BoardApproval = Schema.Struct({
+  threadId: ThreadId,
+  stage: BoardStage,
+  status: Schema.Literals(["pending", "approved", "declined"]),
+  requestedAt: Schema.String,
+  decidedAt: Schema.NullOr(Schema.String),
+  /** What the agent wants to do there, or the user's reason for declining. */
+  note: Schema.String,
+});
+export type BoardApproval = typeof BoardApproval.Type;
 
 /** The board a new install starts with. */
 export const DEFAULT_BOARD_COLUMNS: ReadonlyArray<BoardColumn> = [
@@ -63,6 +86,9 @@ export const DEFAULT_BOARD_COLUMNS: ReadonlyArray<BoardColumn> = [
     archives: true,
   },
 ];
+
+/** Reviews the board asks for before code ships; fewer shows as missing. */
+export const BOARD_REVIEWS_WANTED = 2;
 
 /**
  * A usable board: unique ids, at least one open column for new threads and
@@ -111,6 +137,13 @@ export const BoardSummary = Schema.Struct({
   reason: Schema.String,
   confidence: Schema.Number,
   summarizedAt: Schema.String,
+  /** Who wrote it: the thread's own agent, or the summarizer after a turn it left unreported. */
+  source: Schema.Literals(["agent", "auto"]),
+  /**
+   * Who has independently reviewed the current code changes; empty when code
+   * changed and nobody has, null when no code changed.
+   */
+  reviewedBy: Schema.NullOr(Schema.Array(Schema.String)),
 });
 export type BoardSummary = typeof BoardSummary.Type;
 
@@ -120,6 +153,8 @@ export const BoardListOutput = Schema.Struct({
   columns: Schema.Array(BoardColumn),
   subCards: Schema.Array(BoardSubCards),
   summaries: Schema.Array(BoardSummary),
+  /** Requests waiting on the user, and approvals not yet used. */
+  approvals: Schema.Array(BoardApproval),
   /** Threads waiting for or being summarized now. */
   summarizing: Schema.Array(ThreadId),
 });
@@ -156,6 +191,25 @@ export const BoardSetColumnsOutput = Schema.Struct({
   columns: Schema.Array(BoardColumn),
 });
 export type BoardSetColumnsOutput = typeof BoardSetColumnsOutput.Type;
+
+export const BoardDecideInput = Schema.Struct({
+  threadId: ThreadId,
+  stage: BoardStage,
+  approve: Schema.Boolean,
+  note: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
+});
+export type BoardDecideInput = typeof BoardDecideInput.Type;
+
+export const BoardDecideOutput = Schema.Struct({ approval: BoardApproval });
+export type BoardDecideOutput = typeof BoardDecideOutput.Type;
+
+export const BoardNudgeInput = Schema.Struct({
+  threadIds: Schema.Array(ThreadId).check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+});
+export type BoardNudgeInput = typeof BoardNudgeInput.Type;
+
+export const BoardNudgeOutput = Schema.Struct({ sent: Schema.Number });
+export type BoardNudgeOutput = typeof BoardNudgeOutput.Type;
 
 export class BoardApiError extends Schema.TaggedError<BoardApiError>()("BoardApiError", {
   message: Schema.String,

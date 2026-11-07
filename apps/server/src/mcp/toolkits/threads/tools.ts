@@ -166,21 +166,45 @@ export const HistoryFeedbackInput = Schema.Struct({
   }),
 });
 
-export const CardMoveInput = Schema.Struct({
-  stage: Schema.String.annotate({
+export const CardUpdateInput = Schema.Struct({
+  stage: Schema.optional(Schema.String).annotate({
+    description: "The column the work now belongs in, by id or title. Omit to keep it.",
+  }),
+  summary: Schema.optional(Schema.String.check(Schema.isMaxLength(400))).annotate({
+    description: "One or two plain sentences: what the work is and where it stands now.",
+  }),
+  next: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
     description:
-      "A column of the user's board, by id or title. The defaults are research, fix, " +
-      "review (waiting on review or the user), pushed and deployed; an unknown one fails " +
-      "with the board's columns and what each is for.",
+      'Who acts next and on what ("You: approve the migration", "Agent: rerun tests"); "" when nothing is pending.',
+  }),
+  reviewedBy: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))).annotate({
+    description:
+      "Who independently reviewed the current code changes (a reviewer's model, a person who approved the PR); [] when code changed and nobody has; null when no code changed.",
   }),
   threadId: Schema.optional(ThreadId).annotate({
     description: "Omit for your own thread's card.",
   }),
 });
 
-export const CardMoveOutput = Schema.Struct({
+const CardColumnInfo = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  description: Schema.String,
+  archives: Schema.Boolean,
+  requiresApproval: Schema.Boolean,
+});
+
+export const CardUpdateOutput = Schema.Struct({
   threadId: ThreadId,
   stage: Schema.String,
+  summary: Schema.String,
+  next: Schema.String,
+  reviewedBy: Schema.NullOr(Schema.Array(Schema.String)),
+  reviewsWanted: Schema.Number,
+  columns: Schema.Array(CardColumnInfo),
+  approval: Schema.NullOr(
+    Schema.Struct({ stage: Schema.String, status: Schema.String, instruction: Schema.String }),
+  ),
 });
 
 export const HistoryFeedbackOutput = Schema.Struct({
@@ -483,17 +507,18 @@ const HistoryFeedbackTool = Tool.make("t3_history_feedback", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
-const CardMoveTool = Tool.make("t3_card_move", {
+const CardUpdateTool = Tool.make("t3_card_update", {
   description:
-    "Move a thread's card on the user's card wall. Move your own card when your work changes " +
-    "stage: to fix when you start changing code, review when it waits on review or the user, " +
-    "pushed once committed and pushed, deployed once released. Never archives the thread.",
-  parameters: CardMoveInput,
-  success: CardMoveOutput,
+    "Keep your thread's card on the user's card wall current: its column, a short summary, " +
+    "who acts next, and who has reviewed the code. Send only what changed. With no arguments " +
+    "it changes nothing and returns the card and the board's columns with what each is for. " +
+    "Never archives the thread.",
+  parameters: CardUpdateInput,
+  success: CardUpdateOutput,
   failure,
   dependencies,
 })
-  .annotate(Tool.Title, "Move a card")
+  .annotate(Tool.Title, "Update your card")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -635,7 +660,7 @@ const ThreadArchiveTool = Tool.make("t3_thread_archive", {
 export const ThreadsToolkit = Toolkit.make(
   HistorySearchTool,
   HistoryFeedbackTool,
-  CardMoveTool,
+  CardUpdateTool,
   MeetingListTool,
   MeetingReadTool,
   ThreadListTool,

@@ -2,7 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_BOARD_COLUMNS } from "@t3tools/contracts";
 
-import { shouldAutoMove, summaryPrompt, summarySystemPrompt } from "./BoardSummarizer.ts";
+import {
+  agentReportedTurn,
+  shouldAutoMove,
+  summaryPrompt,
+  summarySystemPrompt,
+} from "./BoardSummarizer.ts";
 
 describe("shouldAutoMove", () => {
   const base = {
@@ -67,5 +72,21 @@ describe("summarySystemPrompt", () => {
     expect(prompt).toContain('- qa ("QA on staging"): Deployed to staging, waiting for QA.');
     expect(prompt).toContain('- fix ("Fix")');
     expect(prompt).not.toContain("deployed");
+  });
+});
+
+describe("agentReportedTurn", () => {
+  it("leaves a turn the thread's agent reported on, and summarizes the rest", () => {
+    const turn = "2026-11-07T10:00:00.000Z";
+    expect(
+      agentReportedTurn({ source: "agent", summarizedAt: "2026-11-07T10:05:00.000Z" }, turn),
+    ).toBe(true);
+    expect(
+      agentReportedTurn({ source: "agent", summarizedAt: "2026-11-07T09:00:00.000Z" }, turn),
+    ).toBe(false);
+    expect(
+      agentReportedTurn({ source: "auto", summarizedAt: "2026-11-07T10:05:00.000Z" }, turn),
+    ).toBe(false);
+    expect(agentReportedTurn(undefined, turn)).toBe(false);
   });
 });

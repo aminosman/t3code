@@ -63,9 +63,27 @@ layer("BoardService", (it) => {
         const board = yield* BoardService.BoardService;
         assert.deepStrictEqual(yield* board.columns, DEFAULT_BOARD_COLUMNS);
         const edited = [
-          { id: "todo", title: "To do", description: "Not started.", archives: false },
-          { id: "qa", title: "QA", description: "On staging, waiting for QA.", archives: false },
-          { id: "done", title: "Done", description: "Shipped.", archives: true },
+          {
+            id: "todo",
+            title: "To do",
+            description: "Not started.",
+            archives: false,
+            requireApprovalIn: [],
+          },
+          {
+            id: "qa",
+            title: "QA",
+            description: "On staging, waiting for QA.",
+            archives: false,
+            requireApprovalIn: ["project-careday"],
+          },
+          {
+            id: "done",
+            title: "Done",
+            description: "Shipped.",
+            archives: true,
+            requireApprovalIn: ["*"],
+          },
         ];
         yield* board.setColumns(edited);
         assert.deepStrictEqual(yield* board.columns, edited);
@@ -75,5 +93,38 @@ layer("BoardService", (it) => {
         assert.strictEqual(refused.reason, "Keep at least one archiving column.");
         assert.deepStrictEqual(yield* board.columns, edited);
       }),
+  );
+
+  it.effect("files an approval request once, grants it, and spends it", () =>
+    Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      const asked = yield* board.requestApproval({
+        threadId: "t",
+        stage: "merged",
+        note: "merge to main",
+      });
+      assert.strictEqual(asked.status, "pending");
+      const again = yield* board.requestApproval({ threadId: "t", stage: "merged", note: "again" });
+      assert.strictEqual(again.note, "merge to main");
+      const declined = yield* board.decideApproval({
+        threadId: "t",
+        stage: "merged",
+        approve: false,
+        note: "not yet",
+      });
+      assert.strictEqual(declined.status, "declined");
+      // Declined: asking again files a fresh request.
+      assert.strictEqual(
+        (yield* board.requestApproval({ threadId: "t", stage: "merged", note: "retry" })).status,
+        "pending",
+      );
+      yield* board.decideApproval({ threadId: "t", stage: "merged", approve: true, note: "" });
+      assert.strictEqual(
+        (yield* board.requestApproval({ threadId: "t", stage: "merged", note: "" })).status,
+        "approved",
+      );
+      yield* board.useApproval("t", "merged");
+      assert.deepStrictEqual(yield* board.approvals, []);
+    }),
   );
 });

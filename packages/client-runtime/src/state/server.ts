@@ -1667,6 +1667,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:board:set-columns",
       tag: WS_METHODS.boardSetColumns,
     }),
+    boardDecide: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:board:decide",
+      tag: WS_METHODS.boardDecide,
+    }),
+    boardNudge: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:board:nudge",
+      tag: WS_METHODS.boardNudge,
+    }),
     boardSummarize: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:board:summarize",
       tag: WS_METHODS.boardSummarize,

@@ -34,11 +34,13 @@ function columnIdFor(title: string, taken: ReadonlySet<string>): string {
 export function ColumnEditor({
   open,
   columns,
+  projects,
   onOpenChange,
   onSave,
 }: {
   open: boolean;
   columns: ReadonlyArray<BoardColumn>;
+  projects: ReadonlyArray<{ readonly id: string; readonly title: string }>;
   onOpenChange: (open: boolean) => void;
   onSave: (columns: ReadonlyArray<BoardColumn>) => Promise<boolean>;
 }) {
@@ -105,9 +107,10 @@ export function ColumnEditor({
         <DialogHeader>
           <DialogTitle>Board columns</DialogTitle>
           <DialogDescription>
-            The summary that runs after every turn reads these descriptions to decide where a card
-            belongs, so say what work goes in each column and when it should move there. Cards in a
-            removed column go to the first open column.
+            Each thread's agent reads these descriptions as the requirement for each column and
+            moves its own card forward when it meets them, so say what work goes in each column and
+            when it should move there. A column that needs approval stops the agent until you
+            approve on the card. Cards in a removed column go to the first open column.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -155,6 +158,11 @@ export function ColumnEditor({
                   onChange={(event) => update(index, { description: event.target.value })}
                   rows={2}
                 />
+                <ApprovalPicker
+                  value={column.requireApprovalIn ?? []}
+                  projects={projects}
+                  onChange={(requireApprovalIn) => update(index, { requireApprovalIn })}
+                />
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Checkbox
                     checked={column.archives}
@@ -196,5 +204,61 @@ export function ColumnEditor({
         </DialogFooter>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+/** Whose agents need the user's approval to move a card into the column. */
+function ApprovalPicker({
+  value,
+  projects,
+  onChange,
+}: {
+  value: ReadonlyArray<string>;
+  projects: ReadonlyArray<{ readonly id: string; readonly title: string }>;
+  onChange: (value: ReadonlyArray<string>) => void;
+}) {
+  const mode = value.includes("*") ? "all" : value.length > 0 ? "some" : "none";
+  const [choosing, setChoosing] = useState(mode === "some");
+  const shownMode = choosing && mode === "none" ? "some" : mode;
+  return (
+    <div className="grid gap-1.5 text-xs text-muted-foreground">
+      <label className="flex items-center gap-2">
+        <span>Agents need your approval to move a card in:</span>
+        <select
+          className="rounded border border-border bg-background px-1.5 py-0.5 text-foreground"
+          value={shownMode}
+          onChange={(event) => {
+            const next = event.target.value;
+            setChoosing(next === "some");
+            onChange(next === "all" ? ["*"] : []);
+          }}
+        >
+          <option value="none">Never</option>
+          <option value="all">In every project</option>
+          <option value="some">In some projects</option>
+        </select>
+      </label>
+      {shownMode === "some" ? (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 pl-1">
+          {projects
+            .toSorted((a, b) => a.title.localeCompare(b.title))
+            .map((project) => (
+              <label key={project.id} className="flex items-center gap-1.5">
+                <Checkbox
+                  checked={value.includes(project.id)}
+                  onCheckedChange={(checked) =>
+                    onChange(
+                      checked === true
+                        ? [...value, project.id]
+                        : value.filter((id) => id !== project.id),
+                    )
+                  }
+                />
+                {project.title}
+              </label>
+            ))}
+        </div>
+      ) : null}
+    </div>
   );
 }

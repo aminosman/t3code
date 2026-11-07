@@ -156,10 +156,17 @@ describe("passesFilter and summaryIsStale", () => {
 
   it("filters by who acts and by staleness", () => {
     const asks = view(thread("asks", { hasPendingUserInput: true }));
-    expect(passesFilter(asks, "needs-you", now, true)).toBe(true);
-    expect(passesFilter(asks, "working", now, true)).toBe(false);
-    expect(passesFilter(view(thread("old")), "stale", now, true)).toBe(true);
-    expect(passesFilter(view(thread("old")), "unsummarized", now, false)).toBe(true);
+    const plain = { reviewedBy: null };
+    expect(passesFilter(asks, "needs-you", now, plain)).toBe(true);
+    expect(passesFilter(asks, "working", now, plain)).toBe(false);
+    expect(passesFilter(view(thread("old")), "stale", now, plain)).toBe(true);
+    expect(passesFilter(view(thread("old")), "unsummarized", now, undefined)).toBe(true);
+    // Code changed with one review of two: missing; no code changed: not.
+    expect(passesFilter(asks, "needs-review", now, { reviewedBy: ["GPT-6 Sol"] })).toBe(true);
+    expect(passesFilter(asks, "needs-review", now, { reviewedBy: ["GPT-6 Sol", "Amin"] })).toBe(
+      false,
+    );
+    expect(passesFilter(asks, "needs-review", now, plain)).toBe(false);
   });
 
   it("calls a summary stale once the thread moved on after it", () => {

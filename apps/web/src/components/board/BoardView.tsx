@@ -15,7 +15,14 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
-import type { BoardColumn, BoardStage, BoardSummary, ThreadId } from "@t3tools/contracts";
+import {
+  BOARD_REVIEWS_WANTED,
+  type BoardApproval,
+  type BoardColumn,
+  type BoardStage,
+  type BoardSummary,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   ArrowRightIcon,
@@ -26,6 +33,7 @@ import {
   MoreHorizontalIcon,
   SearchIcon,
   SparklesIcon,
+  ShieldCheckIcon,
   SlidersHorizontalIcon,
   SquareCheckIcon,
 } from "lucide-react";
@@ -33,6 +41,9 @@ import {
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { SidebarTrigger } from "~/components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { isElectron } from "~/env";
+import { cn } from "~/lib/utils";
+import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import {
   type BoardCardView,
@@ -46,6 +57,7 @@ import {
   ownerOf,
   idleCards,
   idleDays,
+  missingReviews,
   passesFilter,
   summaryIsStale,
   turnStatus,
@@ -81,6 +93,7 @@ const FILTERS: ReadonlyArray<{ readonly id: BoardFilter; readonly label: string 
   { id: "all", label: "All" },
   { id: "needs-you", label: "Needs you" },
   { id: "working", label: "Working" },
+  { id: "needs-review", label: "Needs review" },
   { id: "stale", label: `Stale ${STALE_DAYS}d+` },
   { id: "unsummarized", label: "No summary" },
 ];
@@ -132,6 +145,9 @@ interface BoardContext {
   readonly summarize: (cards: ReadonlyArray<CardView>) => void;
   /** Archives them into `into`, or the last archiving column. */
   readonly archive: (cards: ReadonlyArray<CardView>, into?: BoardStage) => void;
+  readonly pendingApprovals: ReadonlyMap<string, BoardApproval>;
+  readonly decide: (card: CardView, approve: boolean) => void;
+  readonly nudge: (cards: ReadonlyArray<CardView>) => void;
 }
 
 export function BoardView(props: BoardViewProps) {
@@ -169,7 +185,8 @@ export function BoardView(props: BoardViewProps) {
     (board.summaries.get(card.thread.id)?.summary.toLowerCase().includes(needle) ?? false) ||
     (projectsById.get(card.thread.projectId)?.title.toLowerCase().includes(needle) ?? false);
   const passes = (card: CardView, filter: BoardFilter) =>
-    passesFilter(card, filter, now, board.summaries.has(card.thread.id));
+    (filter === "needs-you" && board.pendingApprovals.has(card.thread.id)) ||
+    passesFilter(card, filter, now, board.summaries.get(card.thread.id));
 
   const allCards = [...view.columns.values()].flat();
   const dragging = allCards.find((card) => card.thread.id === draggingId) ?? null;
@@ -199,6 +216,14 @@ export function BoardView(props: BoardViewProps) {
     openBoard: (card) => goTo({ thread: card.thread.id }),
     move: (card, stage) => void board.move(card.thread.id as ThreadId, stage),
     summarize: (cards) => void board.summarize(cards.map((card) => card.thread.id as ThreadId)),
+    pendingApprovals: board.pendingApprovals,
+    decide: (card, approve) => {
+      const request = board.pendingApprovals.get(card.thread.id);
+      if (request === undefined) return;
+      const note = approve ? "" : (window.prompt("Why not? The agent reads this.") ?? "");
+      void board.decide(card.thread.id as ThreadId, request.stage, approve, note);
+    },
+    nudge: (cards) => void board.nudge(cards.map((card) => card.thread.id as ThreadId)),
     archive: (cards, into) =>
       void board.archiveMany(
         cards.map((card) => card.thread.id as ThreadId),
@@ -217,7 +242,18 @@ export function BoardView(props: BoardViewProps) {
 
   return (
     <div className="board-surface flex h-full min-w-0 flex-1 flex-col" data-variant={variant}>
-      <header className="board-bar">
+      <header
+        className={cn(
+          "board-bar",
+          // The full page is the top of the desktop window: it drags the window and
+          // clears the traffic lights when the sidebar is collapsed. In the right
+          // panel, the panel's tab strip owns the title bar.
+          variant === "page" &&
+            isElectron &&
+            "drag-region wco:pr-(--workspace-native-controls-inset)",
+          variant === "page" && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+        )}
+      >
         {variant === "page" ? <SidebarTrigger className="md:hidden" /> : null}
         <nav className="board-crumbs" aria-label="Board">
           <KanbanSquareIcon className="size-4 shrink-0" />
@@ -279,6 +315,7 @@ export function BoardView(props: BoardViewProps) {
         <ColumnEditor
           open
           columns={board.columns}
+          projects={board.projects}
           onOpenChange={setEditingColumns}
           onSave={board.saveColumns}
         />
@@ -296,7 +333,11 @@ export function BoardView(props: BoardViewProps) {
               type="button"
               className="board-filter"
               data-on={quick === filter.id ? "" : undefined}
-              data-tone={filter.id === "needs-you" && count > 0 ? "alert" : undefined}
+              data-tone={
+                (filter.id === "needs-you" || filter.id === "needs-review") && count > 0
+                  ? "alert"
+                  : undefined
+              }
               onClick={() => setQuick(filter.id)}
             >
               {filter.label}
@@ -515,12 +556,22 @@ function BoardList({
     summaryIsStale(card.thread, context.summaries.get(card.thread.id)?.summarizedAt),
   );
   const archivable = column.archives ? open : [];
+  // Stopped, open cards in a working column: worth asking to move forward.
+  const nudgeable = column.archives
+    ? []
+    : open.filter((card) => {
+        const turn = turnStatus(card.thread);
+        return (
+          turn !== "working" && turn !== "queued" && !context.pendingApprovals.has(card.thread.id)
+        );
+      });
   const confirmArchive = (list: ReadonlyArray<CardView>, what: string, into?: BoardStage) => {
     if (window.confirm(`Archive ${list.length} thread${list.length === 1 ? "" : "s"} ${what}?`)) {
       context.archive(list, into);
     }
   };
-  const hasActions = idle.length > 0 || outdated.length > 0 || archivable.length > 0;
+  const hasActions =
+    idle.length > 0 || outdated.length > 0 || archivable.length > 0 || nudgeable.length > 0;
   return (
     <section
       ref={setNodeRef}
@@ -543,6 +594,21 @@ function BoardList({
               <MoreHorizontalIcon className="size-4" />
             </MenuTrigger>
             <MenuPopup align="end">
+              {nudgeable.length > 0 ? (
+                <MenuItem
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `Ask ${nudgeable.length} thread${nudgeable.length === 1 ? "" : "s"} in ${column.title} to move their work forward? Each starts a turn.`,
+                      )
+                    ) {
+                      context.nudge(nudgeable);
+                    }
+                  }}
+                >
+                  Nudge {nudgeable.length} forward
+                </MenuItem>
+              ) : null}
               {outdated.length > 0 ? (
                 <MenuItem onClick={() => context.summarize(outdated)}>
                   Summarize {outdated.length} out of date
@@ -633,7 +699,9 @@ function CardFace({
   const project = context.projectsById.get(thread.projectId);
   const summary = context.summaries.get(thread.id);
   const summarizing = context.summarizing.has(thread.id);
-  const turn = turnStatus(thread);
+  const request = context.pendingApprovals.get(thread.id);
+  const liveTurn = turnStatus(thread);
+  const turn = request !== undefined && liveTurn !== "working" ? "needs-you" : liveTurn;
   const days = idleDays(thread, context.now);
   const archived = thread.archivedAt !== null;
   const suggestion =
@@ -668,6 +736,33 @@ function CardFace({
           <ArrowRightIcon className="size-3 shrink-0" />
           <span>{summary.next}</span>
         </p>
+      ) : null}
+      {request !== undefined && !archived ? (
+        <div className="board-approval" onPointerDown={stop} onClick={stop}>
+          <p className="board-approval-ask">
+            Asks to move to <strong>{columnTitle(context.columns, request.stage)}</strong>
+          </p>
+          {request.note ? <p className="board-approval-note">{request.note}</p> : null}
+          {!lifted ? (
+            <div className="board-approval-actions">
+              <button
+                type="button"
+                className="board-approval-button"
+                data-tone="approve"
+                onClick={() => context.decide(card, true)}
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                className="board-approval-button"
+                onClick={() => context.decide(card, false)}
+              >
+                Decline
+              </button>
+            </div>
+          ) : null}
+        </div>
       ) : null}
       <div className="board-badges">
         {!archived ? (
@@ -715,6 +810,26 @@ function CardFace({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {summary?.reviewedBy != null ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className="board-badge"
+                  data-tone={missingReviews(summary) ? "stale" : "done"}
+                />
+              }
+            >
+              <ShieldCheckIcon className="size-3" />
+              {summary.reviewedBy.length}/{BOARD_REVIEWS_WANTED}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {summary.reviewedBy.length === 0
+                ? "Code changed; nobody has reviewed it yet"
+                : `Reviewed by ${summary.reviewedBy.join(", ")}`}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {summarizing ? <span className="board-badge board-badge-busy">Summarizing…</span> : null}
         {suggestion !== null ? (
           <Tooltip>
@@ -752,6 +867,9 @@ function CardFace({
               </MenuTrigger>
               <MenuPopup align="end">
                 <MenuItem onClick={() => context.openBoard(card)}>Open its board</MenuItem>
+                {!archived ? (
+                  <MenuItem onClick={() => context.nudge([card])}>Nudge forward</MenuItem>
+                ) : null}
                 <MenuItem onClick={() => context.summarize([card])}>
                   {summary === undefined ? "Summarize" : "Refresh summary"}
                 </MenuItem>

@@ -7,6 +7,8 @@ import {
   type ProjectId,
   type ServerProvider,
   ThreadId,
+  BOARD_REVIEWS_WANTED,
+  columnNeedsApproval,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -216,38 +218,122 @@ const makeHandlers = Effect.gen(function* () {
         .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
     }),
 
-    t3_card_move: Effect.fn("ThreadsToolkit.t3_card_move")(function* (input: {
-      readonly stage: string;
+    t3_card_update: Effect.fn("ThreadsToolkit.t3_card_update")(function* (input: {
+      readonly stage?: string | undefined;
+      readonly summary?: string | undefined;
+      readonly next?: string | undefined;
+      readonly reviewedBy?: ReadonlyArray<string> | null | undefined;
       readonly threadId?: ThreadId | undefined;
     }) {
       const scope = yield* requireScope;
-      const columns = yield* board.columns.pipe(
-        Effect.mapError((error) => new ThreadToolError({ reason: error.reason })),
-      );
-      const wanted = input.stage.trim().toLowerCase();
-      const column = columns.find(
-        (entry) => entry.id.toLowerCase() === wanted || entry.title.toLowerCase() === wanted,
-      );
-      if (column === undefined) {
-        return yield* new ThreadToolError({
-          reason: `no column "${input.stage}". The board's columns: ${columns
-            .map((entry) => `${entry.id} ("${entry.title}"): ${entry.description}`)
-            .join("; ")}`,
-        });
-      }
-      const threadId = input.threadId ?? scope.thread.threadId;
-      if (input.threadId !== undefined) {
-        const target = yield* threads
-          .getThreadShell(input.threadId)
-          .pipe(Effect.mapError(failWith("could not read the thread")));
-        if (target === null || target.deletedAt !== null) {
-          return yield* new ThreadToolError({ reason: `no thread ${input.threadId}` });
+      const boardFailed = (error: { readonly reason: string }) =>
+        new ThreadToolError({ reason: error.reason });
+      const columns = yield* board.columns.pipe(Effect.mapError(boardFailed));
+
+      let column: (typeof columns)[number] | undefined;
+      if (input.stage !== undefined) {
+        const wanted = input.stage.trim().toLowerCase();
+        column = columns.find(
+          (entry) => entry.id.toLowerCase() === wanted || entry.title.toLowerCase() === wanted,
+        );
+        if (column === undefined) {
+          return yield* new ThreadToolError({
+            reason: `no column "${input.stage}". The board's columns: ${columns
+              .map((entry) => `${entry.id} ("${entry.title}"): ${entry.description}`)
+              .join("; ")}`,
+          });
         }
       }
-      yield* board
-        .move({ threadIds: [threadId], stage: column.id, movedBy: "agent" })
-        .pipe(Effect.mapError((error) => new ThreadToolError({ reason: error.reason })));
-      return { threadId, stage: column.id };
+      const threadId = input.threadId ?? scope.thread.threadId;
+      const target = yield* threads
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError(failWith("could not read the thread")));
+      if (target === null || target.deletedAt !== null) {
+        return yield* new ThreadToolError({ reason: `no thread ${threadId}` });
+      }
+      const columnList = columns.map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        description: entry.description,
+        archives: entry.archives,
+        requiresApproval: columnNeedsApproval(entry, target.projectId),
+      }));
+      const currentCard = yield* board.card(threadId).pipe(Effect.mapError(boardFailed));
+      // A column that needs approval is entered only with one granted; asking files a request.
+      let approval: { stage: string; status: string; instruction: string } | null = null;
+      if (
+        column !== undefined &&
+        column.id !== currentCard?.stage &&
+        columnNeedsApproval(column, target.projectId)
+      ) {
+        const filed = yield* board
+          .requestApproval({
+            threadId,
+            stage: column.id,
+            note: (input.next ?? input.summary ?? "").trim(),
+          })
+          .pipe(Effect.mapError(boardFailed));
+        if (filed.status === "approved") {
+          yield* board.useApproval(threadId, column.id).pipe(Effect.mapError(boardFailed));
+          approval = { stage: column.id, status: "used", instruction: "Approved; the card moved." };
+        } else {
+          approval = {
+            stage: column.id,
+            status: "pending",
+            instruction: `"${column.title}" needs the user's approval. A request is on the card and the card has not moved. Stop here, tell the user what you want to do there, and wait: a message arrives when they decide.`,
+          };
+          column = undefined;
+        }
+      }
+      if (column !== undefined) {
+        yield* board
+          .move({ threadIds: [threadId], stage: column.id, movedBy: "agent" })
+          .pipe(Effect.mapError(boardFailed));
+      }
+      const card =
+        column === undefined
+          ? currentCard
+          : yield* board.card(threadId).pipe(Effect.mapError(boardFailed));
+      const stage =
+        columns.find((entry) => entry.id === card?.stage)?.id ??
+        columns.find((entry) => !entry.archives)?.id ??
+        "";
+      const previous = (yield* board.summaries.pipe(Effect.mapError(boardFailed))).find(
+        (entry) => entry.threadId === threadId,
+      );
+      const reports =
+        input.summary !== undefined || input.next !== undefined || input.reviewedBy !== undefined;
+      const summary = {
+        threadId,
+        summary: input.summary?.trim() ?? previous?.summary ?? "",
+        next: input.next?.trim() ?? previous?.next ?? "",
+        suggestedStage: stage,
+        reason: "Set by the thread's agent",
+        confidence: 1,
+        summarizedAt: DateTime.formatIso(yield* DateTime.now),
+        source: "agent" as const,
+        reviewedBy:
+          input.reviewedBy === undefined
+            ? (previous?.reviewedBy ?? null)
+            : input.reviewedBy === null
+              ? null
+              : input.reviewedBy.map((name) => name.trim()).filter((name) => name.length > 0),
+      };
+      // A move alone still counts as the agent's report, so the summarizer leaves the turn be.
+      if (reports || column !== undefined) {
+        yield* board.saveSummary(summary).pipe(Effect.mapError(boardFailed));
+      }
+      const shown = reports || column !== undefined ? summary : previous;
+      return {
+        threadId,
+        stage,
+        summary: shown?.summary ?? "",
+        next: shown?.next ?? "",
+        reviewedBy: shown?.reviewedBy ?? null,
+        reviewsWanted: BOARD_REVIEWS_WANTED,
+        columns: columnList,
+        approval,
+      };
     }),
 
     t3_history_feedback: Effect.fn("ThreadsToolkit.t3_history_feedback")(function* (input: {
@@ -573,9 +659,9 @@ const makeHandlers = Effect.gen(function* () {
   return {
     t3_history_search: McpToolAccess.readsAsCaller(handlers.t3_history_search),
     t3_history_feedback: McpToolAccess.actsAsCaller(handlers.t3_history_feedback),
-    t3_card_move: McpToolAccess.writesThreads(
+    t3_card_update: McpToolAccess.writesThreads(
       (input: { readonly threadId?: ThreadId | undefined }) => [input.threadId],
-      handlers.t3_card_move,
+      handlers.t3_card_update,
     ),
     t3_meeting_list: McpToolAccess.readsAsCaller(handlers.t3_meeting_list),
     t3_meeting_read: McpToolAccess.readsAsCaller(handlers.t3_meeting_read),

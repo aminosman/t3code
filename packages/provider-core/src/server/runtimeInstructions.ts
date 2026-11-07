@@ -16,6 +16,18 @@ This thread is one of many, and the work is also talked about out loud. The same
 - Treat what you find as a record of that moment, not the present state of the code: check a thread's claims against the repository and the git log. Meeting notes are a small local model's summary and transcripts are a recogniser's hearing; names and words can be wrong, so read the transcript around a point before relying on it.
 </history>`;
 
+// Roost's card wall. In every prompt, not only the tool description, because the
+// habit is at the end of a turn, when the agent is not looking for a tool.
+const CARD_WALL_INSTRUCTIONS = `<card_wall>
+This thread is a card on the user's card wall, a Trello-style board the user runs many agents from. The thread's goal is to get its card to done. When the t3-code MCP server exposes t3_card_update:
+- End every turn with one t3_card_update call. On the thread's first turn send stage, summary and next; after that send what changed. Its result lists the columns: each one's description is the requirement for being there.
+- Move the card forward yourself once the current column's work is done and the next one's requirement is met. Do that column's work next unless the user said otherwise.
+- A column marked requiresApproval cannot be entered without the user: asking for it files an approval request on the card. Stop there and say what you want to do; a message arrives when they decide.
+- summary: one or two plain sentences on what the work is and where it stands. next: who acts next and on what ("You: approve the merge", "Agent: rerun tests"), "" when nothing is pending.
+- reviewedBy: who independently reviewed the current code changes (a reviewer agent's model, a person who approved the PR); [] when code changed and nobody has; null when no code changed. Fewer than two shows on the board as missing reviews.
+It never archives the thread; the user does.
+</card_wall>`;
+
 // Ownership picks delegate_task or t3_thread_launch, and the sidebar nests by it.
 // scripts/spawn-routing-eval.py scores this text on real requests; keep that score.
 // Two halves, because Codex truncates a context entry over 4 KB.
@@ -50,6 +62,7 @@ export function buildRuntimeInstructionSections(runtime: RuntimeInfo): ReadonlyA
     runtimeInfo(runtime),
     PULL_REQUEST_LINKING_INSTRUCTIONS,
     THREAD_HISTORY_INSTRUCTIONS,
+    CARD_WALL_INSTRUCTIONS,
     freshThreads(FRESH_THREAD_OWNERSHIP),
     freshThreads(FRESH_THREAD_BRIEF),
   ];
@@ -64,6 +77,7 @@ export function buildRuntimeInstructions(runtime: RuntimeInfo): string {
     runtimeInfo(runtime),
     PULL_REQUEST_LINKING_INSTRUCTIONS,
     THREAD_HISTORY_INSTRUCTIONS,
+    CARD_WALL_INSTRUCTIONS,
     freshThreads(`${FRESH_THREAD_OWNERSHIP}\n${FRESH_THREAD_BRIEF}`),
   ].join("\n\n");
 }

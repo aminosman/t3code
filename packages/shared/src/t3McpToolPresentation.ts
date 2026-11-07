@@ -34,7 +34,7 @@ export type T3McpToolSummaryAction =
   | "thread-archive"
   | "history-search"
   | "history-feedback"
-  | "card-move"
+  | "card-update"
   | "meeting-list"
   | "meeting-read"
   | "model-list"
@@ -376,7 +376,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "history-search",
   ),
   t3_history_feedback: tool(["Rate", "Rating", "Rated", "a history search"], "history-feedback"),
-  t3_card_move: tool(["Move", "Moving", "Moved", "a card"], "card-move"),
+  t3_card_update: tool(["Update", "Updating", "Updated", "the card"], "card-update"),
   t3_meeting_list: tool(["List", "Listing", "Listed", "meetings"], "meeting-list"),
   t3_meeting_read: tool(["Read", "Reading", "Read", "a meeting"], "meeting-read"),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),

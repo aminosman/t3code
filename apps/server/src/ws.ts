@@ -200,6 +200,7 @@ import { listPushDevices, removePushDevice } from "./push/pushDevices.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
 import * as BoardService from "./board/BoardService.ts";
 import * as BoardSummarizer from "./board/BoardSummarizer.ts";
+import * as BoardFlow from "./board/BoardFlow.ts";
 import * as Meetings from "./historySearch/Meetings.ts";
 import * as MeetingsProject from "./historySearch/MeetingsProject.ts";
 import * as PhoneMeetings from "./historySearch/PhoneMeetings.ts";
@@ -1305,6 +1306,7 @@ export const layerWsRpc = (
       const history = yield* HistorySearch.HistorySearch;
       const board = yield* BoardService.BoardService;
       const summarizer = yield* BoardSummarizer.BoardSummarizer;
+      const boardFlow = yield* BoardFlow.BoardFlow;
       const boardFailed = (error: BoardService.BoardError) =>
         new BoardApiError({ message: error.reason });
       const historyFailed = (error: HistorySearch.HistorySearchError) =>
@@ -3108,6 +3110,7 @@ export const layerWsRpc = (
             columns: board.columns,
             subCards: board.subCards,
             summaries: board.summaries,
+            approvals: board.approvals,
             summarizing: summarizer.pending.pipe(
               Effect.map((ids) => ids.map((id) => ThreadId.make(id))),
             ),
@@ -3120,6 +3123,23 @@ export const layerWsRpc = (
         [WS_METHODS.boardSetColumns]: (input) =>
           board.setColumns(input.columns).pipe(
             Effect.map((columns) => ({ columns })),
+            Effect.mapError(boardFailed),
+          ),
+        [WS_METHODS.boardDecide]: (input) =>
+          boardFlow
+            .decide({
+              threadId: input.threadId,
+              stage: input.stage,
+              approve: input.approve,
+              note: input.note ?? "",
+            })
+            .pipe(
+              Effect.map((approval) => ({ approval })),
+              Effect.mapError(boardFailed),
+            ),
+        [WS_METHODS.boardNudge]: (input) =>
+          boardFlow.nudge(input.threadIds).pipe(
+            Effect.map((sent) => ({ sent })),
             Effect.mapError(boardFailed),
           ),
         [WS_METHODS.boardSummarize]: (input) =>
@@ -3402,6 +3422,7 @@ export const layer = Layer.unwrap(
     const historySearch = yield* HistorySearch.HistorySearch;
     const boardService = yield* BoardService.BoardService;
     const boardSummarizer = yield* BoardSummarizer.BoardSummarizer;
+    const boardFlowService = yield* BoardFlow.BoardFlow;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
@@ -3484,6 +3505,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(HistorySearch.HistorySearch, historySearch)),
               Layer.provide(Layer.succeed(BoardService.BoardService, boardService)),
               Layer.provide(Layer.succeed(BoardSummarizer.BoardSummarizer, boardSummarizer)),
+              Layer.provide(Layer.succeed(BoardFlow.BoardFlow, boardFlowService)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(OtlpEndpointCheck.layer),

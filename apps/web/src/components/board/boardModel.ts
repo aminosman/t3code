@@ -1,6 +1,13 @@
 // Roost's card wall, as data: which column each thread's card sits in, which
 // cards a board shows, and in what order. No React here, so it is tested alone.
-import type { BoardCard, BoardColumn, BoardStage, BoardSubCards } from "@t3tools/contracts";
+import {
+  BOARD_REVIEWS_WANTED,
+  type BoardCard,
+  type BoardColumn,
+  type BoardStage,
+  type BoardSubCards,
+  type BoardSummary,
+} from "@t3tools/contracts";
 import { groupOwnedThreads, isLiveThread } from "@t3tools/client-runtime/state/ownedThreads";
 
 /** What the board needs of a thread; EnvironmentThreadShell has all of it. */
@@ -202,15 +209,31 @@ export function turnStatus(thread: BoardThread): TurnStatus {
   }
 }
 
-export type BoardFilter = "all" | "needs-you" | "working" | "stale" | "unsummarized";
+export type BoardFilter =
+  | "all"
+  | "needs-you"
+  | "working"
+  | "needs-review"
+  | "stale"
+  | "unsummarized";
 
-/** Whether a card passes a quick filter; `summarized` says it has a summary. */
+/** Code changed and fewer reviews than the board asks for. */
+export function missingReviews(summary: Pick<BoardSummary, "reviewedBy"> | undefined): boolean {
+  return (
+    summary?.reviewedBy !== null &&
+    summary?.reviewedBy !== undefined &&
+    summary.reviewedBy.length < BOARD_REVIEWS_WANTED
+  );
+}
+
+/** Whether a card passes a quick filter, given its summary if it has one. */
 export function passesFilter(
   view: BoardCardView<BoardThread>,
   filter: BoardFilter,
   now: number,
-  summarized: boolean,
+  summary: Pick<BoardSummary, "reviewedBy"> | undefined,
 ): boolean {
+  const summarized = summary !== undefined;
   switch (filter) {
     case "all":
       return true;
@@ -226,6 +249,8 @@ export function passesFilter(
         !isLiveThread(view.thread) &&
         idleDays(view.thread, now) >= STALE_DAYS
       );
+    case "needs-review":
+      return view.thread.archivedAt === null && missingReviews(summary);
     case "unsummarized":
       return !summarized && view.thread.archivedAt === null;
   }

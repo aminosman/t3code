@@ -1,7 +1,12 @@
 // When a turn ends, a one-off Claude run (Haiku, no tools, no saved session)
 // summarizes the thread and picks its column; a confident answer moves the
 // card unless the user placed it during that turn. It never archives.
-import type { BoardColumn, BoardStage, BoardSummary } from "@t3tools/contracts";
+import {
+  type BoardColumn,
+  type BoardStage,
+  type BoardSummary,
+  columnNeedsApproval,
+} from "@t3tools/contracts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -72,7 +77,9 @@ ${SUMMARY_FIELDS}`;
 const SUMMARY_FIELDS = `summary: one or two plain sentences, at most 240 characters: what the work is and where it stands now.
 next: who acts next and on what, at most 120 characters ("You: approve the migration", "Agent: rerun tests"); empty if nothing is pending.
 reason: why that column, at most 80 characters.
-confidence: 0 to 1, how sure you are of the column.`;
+confidence: 0 to 1, how sure you are of the column.
+codeChanged: whether the thread changed code (edits, commits, a PR).
+reviewedBy: who independently reviewed the current code changes, as named in the thread (a reviewer agent's model, a person who approved a PR); empty if nobody has.`;
 
 const SummaryOutput = Schema.Struct({
   summary: Schema.String,
@@ -80,6 +87,8 @@ const SummaryOutput = Schema.Struct({
   stage: Schema.String,
   reason: Schema.String,
   confidence: Schema.Number,
+  codeChanged: Schema.Boolean,
+  reviewedBy: Schema.Array(Schema.String),
 });
 
 const ClaudeResult = Schema.fromJsonString(
@@ -101,13 +110,15 @@ const summaryJsonSchema = (columns: ReadonlyArray<BoardColumn>) =>
   encodeJson({
     type: "object",
     additionalProperties: false,
-    required: ["summary", "next", "stage", "reason", "confidence"],
+    required: ["summary", "next", "stage", "reason", "confidence", "codeChanged", "reviewedBy"],
     properties: {
       summary: { type: "string" },
       next: { type: "string" },
       stage: { type: "string", enum: columns.map((column) => column.id) },
       reason: { type: "string" },
       confidence: { type: "number" },
+      codeChanged: { type: "boolean" },
+      reviewedBy: { type: "array", items: { type: "string" } },
     },
   });
 
@@ -164,6 +175,16 @@ export function shouldAutoMove(input: {
     return input.placedByUserAt < input.turnStartedAt;
   }
   return input.placedByUserAt === null;
+}
+
+/** Whether the thread's own agent updated its card during the turn that just ended. */
+export function agentReportedTurn(
+  previous: Pick<BoardSummary, "source" | "summarizedAt"> | undefined,
+  turnStartedAt: string | null,
+): boolean {
+  return (
+    previous?.source === "agent" && turnStartedAt !== null && previous.summarizedAt >= turnStartedAt
+  );
 }
 
 const make = Effect.gen(function* () {
@@ -283,6 +304,10 @@ const make = Effect.gen(function* () {
     const firstOpen = columns.find((column) => !column.archives)!;
     const current = columns.find((column) => column.id === card?.stage) ?? firstOpen;
     const previous = (yield* board.summaries).find((entry) => entry.threadId === threadId);
+    const turnStartedAt =
+      shell.latestRunRequestedAt == null ? null : DateTime.formatIso(shell.latestRunRequestedAt);
+    // The thread's agent keeps its own card; summarize only a turn it left unreported.
+    if (agentReportedTurn(previous, turnStartedAt)) return;
     const waitingOnUser = shell.pendingRuntimeRequest !== null;
     const output = yield* runClaude(
       summaryPrompt({
@@ -308,18 +333,22 @@ const make = Effect.gen(function* () {
       reason: output.reason.slice(0, 160),
       confidence: Math.max(0, Math.min(1, output.confidence)),
       summarizedAt,
+      source: "auto",
+      reviewedBy: output.codeChanged ? output.reviewedBy.slice(0, 8) : null,
     };
     yield* board.saveSummary(summary);
-    const turnStartedAt =
-      shell.latestRunRequestedAt == null ? null : DateTime.formatIso(shell.latestRunRequestedAt);
     if (
       shouldAutoMove({
         suggested: summary.suggestedStage,
         // The last archiving column is "put away": suggested, never moved to.
-        suggestedPutsAway: suggested.id === columns.findLast((column) => column.archives)?.id,
+        // The last archiving column, and any column that needs approval: suggested, never moved to.
+        suggestedPutsAway:
+          suggested.id === columns.findLast((column) => column.archives)?.id ||
+          columnNeedsApproval(suggested, shell.projectId),
         confidence: summary.confidence,
         current: current.id,
-        placedByUserAt: card?.movedBy === "user" ? card.movedAt : null,
+        // A placement by the user or the thread's agent during the turn stands.
+        placedByUserAt: card !== null && card.movedBy !== "auto" ? card.movedAt : null,
         turnStartedAt,
         archived: shell.archivedAt !== null,
       })
