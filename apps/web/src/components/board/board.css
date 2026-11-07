@@ -440,6 +440,181 @@
   }
 }
 
+/* --- quick filters ------------------------------------------------------ */
+
+.board-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 16px 0;
+}
+
+.board-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.board-filter:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.board-filter[data-on] {
+  background: #ffffff;
+  color: #172b4d;
+}
+
+.board-filter-count {
+  border-radius: 999px;
+  padding: 0 6px;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.board-filter[data-on] .board-filter-count {
+  background: rgba(9, 30, 66, 0.1);
+}
+
+.board-filter[data-tone="alert"] .board-filter-count {
+  background: #f5cd47;
+  color: #172b4d;
+}
+
+.board-owner-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+/* --- card summary and turn ---------------------------------------------- */
+
+.board-card[data-turn="needs-you"] {
+  box-shadow:
+    inset 3px 0 0 #f5cd47,
+    var(--bd-shadow);
+}
+
+.board-card[data-turn="failed"] {
+  box-shadow:
+    inset 3px 0 0 #f87168,
+    var(--bd-shadow);
+}
+
+.board-card-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  margin-top: 4px;
+  color: var(--bd-ink-2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.board-card-summary[data-stale] {
+  opacity: 0.6;
+}
+
+.board-card-next {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--bd-ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.board-card-next svg {
+  margin-top: 2px;
+}
+
+.board-turn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  background: var(--bd-chip);
+  color: var(--bd-ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  --bd-turn: #8590a2;
+}
+
+.board-turn-dot {
+  height: 6px;
+  width: 6px;
+  border-radius: 999px;
+  background: var(--bd-turn);
+}
+
+.board-turn[data-turn="needs-you"] {
+  --bd-turn: #e2b203;
+  background: #fff7d6;
+  color: #7f5f01;
+}
+.board-turn[data-turn="working"],
+.board-turn[data-turn="queued"] {
+  --bd-turn: #1d7afc;
+  background: #e9f2ff;
+  color: #0055cc;
+}
+.board-turn[data-turn="working"] .board-turn-dot {
+  animation: board-pulse 1.2s ease-in-out infinite;
+}
+.board-turn[data-turn="done"] {
+  --bd-turn: #22a06b;
+  color: var(--bd-done);
+}
+.board-turn[data-turn="failed"] {
+  --bd-turn: #e34935;
+  background: var(--bd-stale-bg);
+  color: var(--bd-stale);
+}
+
+.dark .board-turn[data-turn="needs-you"] {
+  background: #533f04;
+  color: #f8e6a0;
+}
+.dark .board-turn[data-turn="working"],
+.dark .board-turn[data-turn="queued"] {
+  background: #09326c;
+  color: #cce0ff;
+}
+
+@keyframes board-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-turn[data-turn="working"] .board-turn-dot {
+    animation: none;
+  }
+}
+
+.board-badge-busy {
+  font-style: italic;
+}
+
+.board-suggest {
+  border: 1px dashed var(--bd-ink-3);
+}
+
 /* On a phone one list fills the screen and you swipe between them. */
 @media (max-width: 640px) {
   .board-lists {

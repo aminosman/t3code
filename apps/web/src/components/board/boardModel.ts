@@ -54,6 +54,7 @@ export interface BoardThread {
   readonly hasPendingApprovals?: boolean | undefined;
   readonly hasPendingUserInput?: boolean | undefined;
   readonly runtime?: { readonly status: string } | null | undefined;
+  readonly latestRun?: { readonly status: string } | null | undefined;
 }
 
 export type BoardScope =
@@ -180,4 +181,77 @@ export function idleCards<T extends BoardThread>(
       !isLiveThread(view.thread) &&
       idleDays(view.thread, now) >= days,
   );
+}
+
+export type TurnStatus =
+  | "needs-you"
+  | "working"
+  | "queued"
+  | "done"
+  | "failed"
+  | "stopped"
+  | "none";
+
+const QUEUED = new Set(["preparing", "queued", "starting"]);
+const WORKING = new Set(["running", "waiting"]);
+
+/** How the thread's last turn stands, for the chip every card carries. */
+export function turnStatus(thread: BoardThread): TurnStatus {
+  if (thread.hasPendingApprovals === true || thread.hasPendingUserInput === true)
+    return "needs-you";
+  const live = thread.runtime?.status;
+  if (live !== undefined && WORKING.has(live)) return "working";
+  if (live !== undefined && QUEUED.has(live)) return "queued";
+  switch (thread.latestRun?.status) {
+    case undefined:
+      return "none";
+    case "failed":
+      return "failed";
+    case "interrupted":
+    case "cancelled":
+    case "rolled_back":
+      return "stopped";
+    case "running":
+    case "waiting":
+      return "working";
+    default:
+      return "done";
+  }
+}
+
+export type BoardFilter = "all" | "needs-you" | "working" | "stale" | "unsummarized";
+
+/** Whether a card passes a quick filter; `summarized` says it has a summary. */
+export function passesFilter(
+  view: BoardCardView<BoardThread>,
+  filter: BoardFilter,
+  now: number,
+  summarized: boolean,
+): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "needs-you":
+      return turnStatus(view.thread) === "needs-you";
+    case "working": {
+      const status = turnStatus(view.thread);
+      return status === "working" || status === "queued";
+    }
+    case "stale":
+      return (
+        view.thread.archivedAt === null &&
+        !isLiveThread(view.thread) &&
+        idleDays(view.thread, now) >= STALE_DAYS
+      );
+    case "unsummarized":
+      return !summarized && view.thread.archivedAt === null;
+  }
+}
+
+/** A thread untouched this long is stale: red on its card, and the cleanup's target. */
+export const STALE_DAYS = 14;
+
+/** A summary older than the thread's last activity is out of date. */
+export function summaryIsStale(thread: BoardThread, summarizedAt: string | undefined): boolean {
+  return summarizedAt === undefined || summarizedAt < activityAt(thread);
 }

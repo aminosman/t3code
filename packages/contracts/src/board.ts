@@ -24,8 +24,8 @@ export const BoardCard = Schema.Struct({
   stage: BoardStage,
   /** ISO time the card last moved. */
   movedAt: Schema.String,
-  /** Who moved it last: the user on the board, or an agent from its thread. */
-  movedBy: Schema.Literals(["user", "agent"]),
+  /** Who moved it last: the user on the board, the thread's agent, or the summarizer. */
+  movedBy: Schema.Literals(["user", "agent", "auto"]),
 });
 export type BoardCard = typeof BoardCard.Type;
 
@@ -41,10 +41,28 @@ export const BoardSubCards = Schema.Struct({
 });
 export type BoardSubCards = typeof BoardSubCards.Type;
 
+/** What a quick read of the thread's last turns says: where it stands, and its column. */
+export const BoardSummary = Schema.Struct({
+  threadId: ThreadId,
+  /** One or two sentences: what the work is and where it stands. */
+  summary: Schema.String,
+  /** Who acts next and on what; empty when nothing is pending. */
+  next: Schema.String,
+  suggestedStage: BoardStage,
+  /** Why that column, in a few words. */
+  reason: Schema.String,
+  confidence: Schema.Number,
+  summarizedAt: Schema.String,
+});
+export type BoardSummary = typeof BoardSummary.Type;
+
 export const BoardListOutput = Schema.Struct({
   /** Every thread that has been placed; a thread with no card is unplaced. */
   cards: Schema.Array(BoardCard),
   subCards: Schema.Array(BoardSubCards),
+  summaries: Schema.Array(BoardSummary),
+  /** Threads waiting for or being summarized now. */
+  summarizing: Schema.Array(ThreadId),
 });
 export type BoardListOutput = typeof BoardListOutput.Type;
 
@@ -58,6 +76,16 @@ export const BoardMoveOutput = Schema.Struct({
   cards: Schema.Array(BoardCard),
 });
 export type BoardMoveOutput = typeof BoardMoveOutput.Type;
+
+export const BoardSummarizeInput = Schema.Struct({
+  threadIds: Schema.Array(ThreadId).check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+});
+export type BoardSummarizeInput = typeof BoardSummarizeInput.Type;
+
+export const BoardSummarizeOutput = Schema.Struct({
+  queued: Schema.Number,
+});
+export type BoardSummarizeOutput = typeof BoardSummarizeOutput.Type;
 
 export class BoardApiError extends Schema.TaggedError<BoardApiError>()("BoardApiError", {
   message: Schema.String,

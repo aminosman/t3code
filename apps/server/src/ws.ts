@@ -199,6 +199,7 @@ import * as PushNotifier from "./push/PushNotifier.ts";
 import { listPushDevices, removePushDevice } from "./push/pushDevices.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
 import * as BoardService from "./board/BoardService.ts";
+import * as BoardSummarizer from "./board/BoardSummarizer.ts";
 import * as Meetings from "./historySearch/Meetings.ts";
 import * as MeetingsProject from "./historySearch/MeetingsProject.ts";
 import * as PhoneMeetings from "./historySearch/PhoneMeetings.ts";
@@ -1303,6 +1304,7 @@ export const layerWsRpc = (
         );
       const history = yield* HistorySearch.HistorySearch;
       const board = yield* BoardService.BoardService;
+      const summarizer = yield* BoardSummarizer.BoardSummarizer;
       const boardFailed = (error: BoardService.BoardError) =>
         new BoardApiError({ message: error.reason });
       const historyFailed = (error: HistorySearch.HistorySearchError) =>
@@ -3101,14 +3103,21 @@ export const layerWsRpc = (
           withPushServices(removePushDevice(input.installationId)),
         [WS_METHODS.pushTestDevice]: (input) => pushNotifier.sendTest(input.installationId),
         [WS_METHODS.boardList]: (_input) =>
-          Effect.all({ cards: board.list, subCards: board.subCards }).pipe(
-            Effect.mapError(boardFailed),
-          ),
+          Effect.all({
+            cards: board.list,
+            subCards: board.subCards,
+            summaries: board.summaries,
+            summarizing: summarizer.pending.pipe(
+              Effect.map((ids) => ids.map((id) => ThreadId.make(id))),
+            ),
+          }).pipe(Effect.mapError(boardFailed)),
         [WS_METHODS.boardMove]: (input) =>
           board.move({ threadIds: input.threadIds, stage: input.stage, movedBy: "user" }).pipe(
             Effect.map((cards) => ({ cards })),
             Effect.mapError(boardFailed),
           ),
+        [WS_METHODS.boardSummarize]: (input) =>
+          summarizer.enqueue(input.threadIds).pipe(Effect.map((queued) => ({ queued }))),
         [WS_METHODS.historySearch]: (input) =>
           history.search(input).pipe(Effect.mapError(historyFailed)),
         [WS_METHODS.historyMeetingList]: (input) =>
@@ -3386,6 +3395,7 @@ export const layer = Layer.unwrap(
     const tuiScreen = yield* TuiScreen.TuiScreen;
     const historySearch = yield* HistorySearch.HistorySearch;
     const boardService = yield* BoardService.BoardService;
+    const boardSummarizer = yield* BoardSummarizer.BoardSummarizer;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
@@ -3467,6 +3477,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(TuiScreen.TuiScreen, tuiScreen)),
               Layer.provide(Layer.succeed(HistorySearch.HistorySearch, historySearch)),
               Layer.provide(Layer.succeed(BoardService.BoardService, boardService)),
+              Layer.provide(Layer.succeed(BoardSummarizer.BoardSummarizer, boardSummarizer)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(OtlpEndpointCheck.layer),

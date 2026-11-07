@@ -1,7 +1,7 @@
 // Roost's card wall: a stage per thread, kept in its own table beside T3's
 // state. Not a numbered migration — those are upstream's — so the table is
 // created here, idempotently, when the service starts.
-import type { BoardCard, BoardStage, BoardSubCards } from "@t3tools/contracts";
+import type { BoardCard, BoardStage, BoardSubCards, BoardSummary } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -26,6 +26,9 @@ export interface BoardServiceShape {
     readonly stage: BoardStage;
     readonly movedBy: BoardCard["movedBy"];
   }) => Effect.Effect<ReadonlyArray<BoardCard>, BoardError>;
+  readonly card: (threadId: string) => Effect.Effect<BoardCard | null, BoardError>;
+  readonly summaries: Effect.Effect<ReadonlyArray<BoardSummary>, BoardError>;
+  readonly saveSummary: (summary: BoardSummary) => Effect.Effect<void, BoardError>;
 }
 
 export class BoardService extends Context.Service<BoardService, BoardServiceShape>()(
@@ -44,7 +47,7 @@ const toCard = (row: CardRow): BoardCard =>
     threadId: row.thread_id,
     stage: row.stage,
     movedAt: row.moved_at,
-    movedBy: row.moved_by === "agent" ? "agent" : "user",
+    movedBy: row.moved_by === "agent" || row.moved_by === "auto" ? row.moved_by : "user",
   }) as BoardCard;
 
 const failed = (cause: unknown) =>
@@ -60,6 +63,68 @@ const make = Effect.gen(function* () {
       moved_by TEXT NOT NULL
     )
   `.pipe(Effect.mapError(failed));
+
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS roost_board_summaries (
+      thread_id TEXT PRIMARY KEY,
+      summary TEXT NOT NULL,
+      next TEXT NOT NULL,
+      suggested_stage TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      summarized_at TEXT NOT NULL
+    )
+  `.pipe(Effect.mapError(failed));
+
+  const summaries = sql<{
+    readonly thread_id: string;
+    readonly summary: string;
+    readonly next: string;
+    readonly suggested_stage: string;
+    readonly reason: string;
+    readonly confidence: number;
+    readonly summarized_at: string;
+  }>`SELECT * FROM roost_board_summaries`.pipe(
+    Effect.map((rows) =>
+      rows.map(
+        (row) =>
+          ({
+            threadId: row.thread_id,
+            summary: row.summary,
+            next: row.next,
+            suggestedStage: row.suggested_stage,
+            reason: row.reason,
+            confidence: row.confidence,
+            summarizedAt: row.summarized_at,
+          }) as BoardSummary,
+      ),
+    ),
+    Effect.mapError(failed),
+  );
+
+  const saveSummary = (summary: BoardSummary) =>
+    sql`
+      INSERT INTO roost_board_summaries
+        (thread_id, summary, next, suggested_stage, reason, confidence, summarized_at)
+      VALUES (${summary.threadId}, ${summary.summary}, ${summary.next}, ${summary.suggestedStage},
+        ${summary.reason}, ${summary.confidence}, ${summary.summarizedAt})
+      ON CONFLICT (thread_id) DO UPDATE SET
+        summary = excluded.summary,
+        next = excluded.next,
+        suggested_stage = excluded.suggested_stage,
+        reason = excluded.reason,
+        confidence = excluded.confidence,
+        summarized_at = excluded.summarized_at
+    `.pipe(Effect.asVoid, Effect.mapError(failed));
+
+  const card = (threadId: string) =>
+    sql<CardRow>`
+      SELECT thread_id, stage, moved_at, moved_by FROM roost_board_cards
+      WHERE thread_id = ${threadId}
+    `.pipe(
+      Effect.map((rows) => (rows[0] === undefined ? null : toCard(rows[0]))),
+      Effect.mapError(failed),
+    );
 
   const list = sql<CardRow>`
     SELECT thread_id, stage, moved_at, moved_by FROM roost_board_cards
@@ -115,7 +180,7 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed((): ReadonlyArray<BoardSubCards> => []),
   );
 
-  return BoardService.of({ list, subCards, move });
+  return BoardService.of({ list, subCards, move, card, summaries, saveSummary });
 });
 
 export const layer = Layer.effect(BoardService, make);

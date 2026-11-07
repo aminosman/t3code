@@ -57,6 +57,9 @@ export function useBoard(scopeThreadId: string | null) {
     environmentId === null ? null : serverEnvironment.boardList({ environmentId, input: {} }),
   );
   const moveCommand = useAtomCommand(serverEnvironment.boardMove, { reportFailure: false });
+  const summarizeCommand = useAtomCommand(serverEnvironment.boardSummarize, {
+    reportFailure: false,
+  });
   const archiveCommand = useOrchestrationCommand(threadEnvironment.archive, {
     reportFailure: false,
   });
@@ -100,15 +103,25 @@ export function useBoard(scopeThreadId: string | null) {
   }
   const cards = [...latest.values()];
 
-  // Agents move their own cards; look again while the board is open.
+  const summaries = new Map(
+    (listing.data?.summaries ?? []).map((summary) => [summary.threadId as string, summary]),
+  );
+  const summarizing = new Set<string>(listing.data?.summarizing ?? []);
+
+  // Agents and the summarizer move cards; look again while the board is open,
+  // sooner while summaries are being written.
   const refreshListing = listing.refresh;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer keeping the listing in step with agents' moves on the server
+  const busy = summarizing.size > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer keeping the listing in step with moves and summaries made on the server
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") refreshListing();
-    }, 15_000);
+    const timer = window.setInterval(
+      () => {
+        if (document.visibilityState === "visible") refreshListing();
+      },
+      busy ? 4_000 : 15_000,
+    );
     return () => window.clearInterval(timer);
-  }, [refreshListing]);
+  }, [refreshListing, busy]);
 
   const record = async (threadIds: ReadonlyArray<ThreadId>, stage: BoardStage) => {
     if (environmentId === null || threadIds.length === 0) return false;
@@ -196,8 +209,32 @@ export function useBoard(scopeThreadId: string | null) {
     });
   };
 
+  /** Asks the server for fresh summaries of these threads. */
+  const summarize = async (threadIds: ReadonlyArray<ThreadId>) => {
+    if (environmentId === null || threadIds.length === 0) return;
+    const [first, ...rest] = threadIds.slice(0, 500);
+    const result = await summarizeCommand({
+      environmentId,
+      input: { threadIds: [first!, ...rest] },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add({
+          type: "error",
+          title: "Could not summarize",
+          description: failureMessage(squashAtomCommandFailure(result)),
+        });
+      }
+      return;
+    }
+    listing.refresh();
+  };
+
   return {
     environmentId,
+    summaries,
+    summarizing,
+    summarize,
     threads,
     cards,
     subCounts: listing.data?.subCards ?? [],

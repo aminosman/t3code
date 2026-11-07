@@ -218,6 +218,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.historySearch]: "history",
   [WS_METHODS.boardList]: "board",
   [WS_METHODS.boardMove]: "board",
+  [WS_METHODS.boardSummarize]: "board",
   [WS_METHODS.historyMeetingList]: "history",
   [WS_METHODS.historyMeetingRead]: "history",
   [WS_METHODS.historyThreadMessages]: "history",

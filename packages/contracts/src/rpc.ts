@@ -363,6 +363,8 @@ import {
   BoardListOutput,
   BoardMoveInput,
   BoardMoveOutput,
+  BoardSummarizeInput,
+  BoardSummarizeOutput,
 } from "./board.ts";
 import {
   ServerConfigStreamEvent,
@@ -579,6 +581,7 @@ export const WS_METHODS = {
   // board (Roost): the card wall, a stage per thread
   boardList: "board.list",
   boardMove: "board.move",
+  boardSummarize: "board.summarize",
   historyMeetingsProject: "history.meetingsProject",
   historyAskMeetings: "history.askMeetings",
 
@@ -1855,6 +1858,12 @@ const WsBoardMoveRpc = Rpc.make(WS_METHODS.boardMove, {
   error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
 });
 
+const WsBoardSummarizeRpc = Rpc.make(WS_METHODS.boardSummarize, {
+  payload: BoardSummarizeInput,
+  success: BoardSummarizeOutput,
+  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
+});
+
 const WsHistoryPhoneMeetingImportRpc = Rpc.make(WS_METHODS.historyPhoneMeetingImport, {
   payload: HistoryPhoneMeetingImportInput,
   success: HistoryPhoneMeetingImportOutput,
@@ -2454,6 +2463,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsHistoryPhoneMeetingImportRpc,
   WsBoardListRpc,
   WsBoardMoveRpc,
+  WsBoardSummarizeRpc,
   WsHistoryMeetingsProjectRpc,
   WsHistoryAskMeetingsRpc,
   WsSubscribePreviewEventsRpc,

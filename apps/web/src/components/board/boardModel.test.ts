@@ -1,7 +1,15 @@
 import type { BoardCard, BoardStage } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { type BoardThread, buildBoard, columnOf, idleCards } from "./boardModel";
+import {
+  type BoardThread,
+  buildBoard,
+  columnOf,
+  idleCards,
+  passesFilter,
+  summaryIsStale,
+  turnStatus,
+} from "./boardModel";
 
 const thread = (id: string, overrides: Partial<BoardThread> = {}): BoardThread => ({
   id,
@@ -107,5 +115,40 @@ describe("idleCards", () => {
     expect(idleCards(board.columns.get("research") ?? [], now, 14).map((v) => v.thread.id)).toEqual(
       ["stale"],
     );
+  });
+});
+
+describe("turnStatus", () => {
+  it("reads waiting on you first, then live work, then how the last turn ended", () => {
+    expect(
+      turnStatus(thread("a", { hasPendingApprovals: true, runtime: { status: "running" } })),
+    ).toBe("needs-you");
+    expect(turnStatus(thread("a", { runtime: { status: "running" } }))).toBe("working");
+    expect(turnStatus(thread("a", { runtime: { status: "queued" } }))).toBe("queued");
+    expect(turnStatus(thread("a", { latestRun: { status: "completed" } }))).toBe("done");
+    expect(turnStatus(thread("a", { latestRun: { status: "failed" } }))).toBe("failed");
+    expect(turnStatus(thread("a", { latestRun: { status: "interrupted" } }))).toBe("stopped");
+    expect(turnStatus(thread("a"))).toBe("none");
+  });
+});
+
+describe("passesFilter and summaryIsStale", () => {
+  const now = Date.parse("2026-11-20T00:00:00.000Z");
+  const view = (t: BoardThread) =>
+    buildBoard([t], [], { kind: "all" }).columns.get("research")![0]!;
+
+  it("filters by who acts and by staleness", () => {
+    const asks = view(thread("asks", { hasPendingUserInput: true }));
+    expect(passesFilter(asks, "needs-you", now, true)).toBe(true);
+    expect(passesFilter(asks, "working", now, true)).toBe(false);
+    expect(passesFilter(view(thread("old")), "stale", now, true)).toBe(true);
+    expect(passesFilter(view(thread("old")), "unsummarized", now, false)).toBe(true);
+  });
+
+  it("calls a summary stale once the thread moved on after it", () => {
+    const t = thread("a", { latestUserMessageAt: "2026-11-02T00:00:00.000Z" });
+    expect(summaryIsStale(t, undefined)).toBe(true);
+    expect(summaryIsStale(t, "2026-11-01T00:00:00.000Z")).toBe(true);
+    expect(summaryIsStale(t, "2026-11-03T00:00:00.000Z")).toBe(false);
   });
 });
