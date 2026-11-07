@@ -1,4 +1,5 @@
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import { CARD_WALL_FIRST_TURN_NOTE } from "../../board/firstTurnNote.ts";
 import {
   makeProviderTextDeltaCoalescer,
   type ProviderTextDeltaUpdate,
@@ -1904,7 +1905,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const nativeTurnId = "context-turn";
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
-          codexInput: [{ type: "text", text: "work" }],
+          // With T3's tools, a thread's first message also carries the card wall note.
+          codexInput: [
+            { type: "text", text: "work" },
+            { type: "text", text: CARD_WALL_FIRST_TURN_NOTE },
+          ],
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           hasT3Mcp: true,
