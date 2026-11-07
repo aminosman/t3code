@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Textarea } from "../ui/textarea";
+import { BranchChanges } from "./BranchChanges";
 
 const when = (at: string) => {
   const date = new Date(at);
@@ -48,8 +49,10 @@ export function CardBack({
   summary,
   approval,
   approvalColumnTitle,
+  pullRequests,
   onClose,
   onOpenThread,
+  onViewDiff,
   onDecide,
   onUpdate,
 }: {
@@ -62,8 +65,10 @@ export function CardBack({
   approval: BoardApproval | undefined;
   /** The title of the column the approval request is for. */
   approvalColumnTitle: string | undefined;
+  pullRequests: ReadonlyArray<{ readonly url: string; readonly number: number }>;
   onClose: () => void;
   onOpenThread: () => void;
+  onViewDiff: () => void;
   onDecide: (approve: boolean) => void;
   onUpdate: (change: {
     readonly comment?: string;
@@ -169,6 +174,16 @@ export function CardBack({
                   {summary.reviewedBy.length > 0 ? `: ${summary.reviewedBy.join(", ")}` : ""}
                 </p>
               ) : null}
+            </section>
+
+            <section className="grid gap-1.5">
+              <h3 className="text-xs font-medium text-muted-foreground">Changes</h3>
+              <BranchChanges
+                environmentId={environmentId}
+                threadId={thread.id}
+                pullRequests={pullRequests}
+                onViewDiff={onViewDiff}
+              />
             </section>
 
             <section className="grid gap-2">

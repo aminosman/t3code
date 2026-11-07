@@ -399,6 +399,16 @@
     line-height: 20px;
   }
 
+  .board-card-branch {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+    color: var(--bd-ink-3);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+  }
+
   .board-badges {
     display: flex;
     min-height: 24px;

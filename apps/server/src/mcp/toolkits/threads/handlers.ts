@@ -225,6 +225,7 @@ const makeHandlers = Effect.gen(function* () {
       readonly reviewedBy?: ReadonlyArray<string> | null | undefined;
       readonly assignee?: "agent" | "user" | undefined;
       readonly comment?: string | undefined;
+      readonly branch?: string | null | undefined;
       readonly threadId?: ThreadId | undefined;
     }) {
       const scope = yield* requireScope;
@@ -332,6 +333,12 @@ const makeHandlers = Effect.gen(function* () {
       }
       if (input.assignee !== undefined) {
         yield* board.assign(threadId, input.assignee).pipe(Effect.mapError(boardFailed));
+      }
+      if (input.branch !== undefined) {
+        const named = input.branch?.trim() ?? "";
+        yield* board
+          .setBranch(threadId, named.length > 0 ? named : null)
+          .pipe(Effect.mapError(boardFailed));
       }
       const assignee =
         input.assignee ??

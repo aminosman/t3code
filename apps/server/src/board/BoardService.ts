@@ -60,6 +60,8 @@ export interface BoardServiceShape {
   }) => Effect.Effect<BoardApproval, BoardError>;
   /** Hands the card to the agent or the user, placing it first if it was never placed. */
   readonly assign: (threadId: string, assignee: BoardAssignee) => Effect.Effect<void, BoardError>;
+  /** The branch the work lives on, as the agent names it; null clears it. */
+  readonly setBranch: (threadId: string, branch: string | null) => Effect.Effect<void, BoardError>;
   readonly comments: (threadId: string) => Effect.Effect<ReadonlyArray<BoardComment>, BoardError>;
   readonly comment: (
     threadId: string,
@@ -85,6 +87,7 @@ interface CardRow {
   readonly moved_at: string;
   readonly moved_by: string;
   readonly assignee: string | null;
+  readonly branch: string | null;
 }
 
 const toCard = (row: CardRow): BoardCard =>
@@ -94,6 +97,7 @@ const toCard = (row: CardRow): BoardCard =>
     movedAt: row.moved_at,
     movedBy: row.moved_by === "agent" || row.moved_by === "auto" ? row.moved_by : "user",
     assignee: row.assignee === "user" ? "user" : "agent",
+    branch: row.branch ?? null,
   }) as BoardCard;
 
 const Reviewers = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -120,6 +124,9 @@ const make = Effect.gen(function* () {
       Effect.mapError(failed),
     )).map((row) => row.name),
   );
+  if (!cardFields.has("branch")) {
+    yield* sql`ALTER TABLE roost_board_cards ADD COLUMN branch TEXT`.pipe(Effect.mapError(failed));
+  }
   if (!cardFields.has("assignee")) {
     yield* sql`ALTER TABLE roost_board_cards ADD COLUMN assignee TEXT NOT NULL DEFAULT 'agent'`.pipe(
       Effect.mapError(failed),
@@ -380,7 +387,7 @@ const make = Effect.gen(function* () {
 
   const card = (threadId: string) =>
     sql<CardRow>`
-      SELECT thread_id, stage, moved_at, moved_by, assignee FROM roost_board_cards
+      SELECT thread_id, stage, moved_at, moved_by, assignee, branch FROM roost_board_cards
       WHERE thread_id = ${threadId}
     `.pipe(
       Effect.map((rows) => (rows[0] === undefined ? null : toCard(rows[0]))),
@@ -388,7 +395,7 @@ const make = Effect.gen(function* () {
     );
 
   const list = sql<CardRow>`
-    SELECT thread_id, stage, moved_at, moved_by, assignee FROM roost_board_cards
+    SELECT thread_id, stage, moved_at, moved_by, assignee, branch FROM roost_board_cards
   `.pipe(
     Effect.map((rows) => rows.map(toCard)),
     Effect.mapError(failed),
@@ -416,7 +423,7 @@ const make = Effect.gen(function* () {
       ),
     );
     const rows = yield* sql<CardRow>`
-      SELECT thread_id, stage, moved_at, moved_by, assignee FROM roost_board_cards
+      SELECT thread_id, stage, moved_at, moved_by, assignee, branch FROM roost_board_cards
       WHERE ${sql.in("thread_id", ids)}
     `;
     return rows.map(toCard);
@@ -433,6 +440,17 @@ const make = Effect.gen(function* () {
       yield* move({ threadIds: [threadId], stage: first?.id ?? "research", movedBy: "user" });
     }
     yield* sql`UPDATE roost_board_cards SET assignee = ${assignee} WHERE thread_id = ${threadId}`;
+  }, Effect.mapError(failed));
+
+  const setBranch: BoardServiceShape["setBranch"] = Effect.fn("BoardService.setBranch")(function* (
+    threadId,
+    branch,
+  ) {
+    if ((yield* card(threadId)) === null) {
+      const first = (yield* columns).find((column) => !column.archives);
+      yield* move({ threadIds: [threadId], stage: first?.id ?? "research", movedBy: "agent" });
+    }
+    yield* sql`UPDATE roost_board_cards SET branch = ${branch} WHERE thread_id = ${threadId}`;
   }, Effect.mapError(failed));
 
   interface CommentRow {
@@ -532,6 +550,7 @@ const make = Effect.gen(function* () {
     decideApproval,
     useApproval,
     assign,
+    setBranch,
     comments,
     comment,
     commentSummaries,

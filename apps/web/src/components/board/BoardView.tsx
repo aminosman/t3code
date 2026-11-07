@@ -22,6 +22,7 @@ import {
   type BoardCommentsSummary,
   type BoardStage,
   type BoardSummary,
+  type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -34,6 +35,7 @@ import {
   MoreHorizontalIcon,
   SearchIcon,
   SparklesIcon,
+  GitBranchIcon,
   MessageSquareIcon,
   ShieldCheckIcon,
   SlidersHorizontalIcon,
@@ -66,6 +68,8 @@ import {
 } from "./boardModel";
 import { CardBack } from "./CardBack";
 import { ColumnEditor } from "./ColumnEditor";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { useBoard } from "./useBoard";
 
 type Thread = ReturnType<typeof useBoard>["threads"][number];
@@ -81,6 +85,8 @@ const labelColour = (projectId: string) => {
   for (const char of projectId) hash = (hash * 31 + char.charCodeAt(0)) | 0;
   return LABEL_COLOURS[Math.abs(hash) % LABEL_COLOURS.length]!;
 };
+
+const DEFAULT_BRANCHES = new Set(["main", "master", "trunk", "develop"]);
 
 const TURN_LABEL: Record<TurnStatus, string> = {
   "needs-you": "Needs you",
@@ -338,9 +344,24 @@ export function BoardView(props: BoardViewProps) {
               (column) => column.id === board.pendingApprovals.get(openCard.thread.id)?.stage,
             )?.title
           }
+          pullRequests={openCard.thread.pullRequests}
           onClose={() => setOpenCardId(null)}
           onOpenThread={() => {
             setOpenCardId(null);
+            context.open(openCard);
+          }}
+          onViewDiff={() => {
+            setOpenCardId(null);
+            // The chat, with its Diff tab beside it: the branch against its base.
+            useRightPanelStore
+              .getState()
+              .open(
+                scopeThreadRef(
+                  openCard.thread.environmentId as EnvironmentId,
+                  openCard.thread.id as ThreadId,
+                ),
+                "diff",
+              );
             context.open(openCard);
           }}
           onDecide={(approve) => context.decide(openCard, approve)}
@@ -738,6 +759,9 @@ function CardFace({
   const request = context.pendingApprovals.get(thread.id);
   const assignedToYou = card.card?.assignee === "user" && thread.archivedAt === null;
   const commentInfo = context.commentSummaries.get(thread.id);
+  // The work's branch, when it is not the default one.
+  const named = card.card?.branch ?? thread.branch ?? null;
+  const branch = named !== null && !DEFAULT_BRANCHES.has(named) ? named : null;
   const liveTurn = turnStatus(thread);
   const turn =
     (request !== undefined || assignedToYou) && liveTurn !== "working" ? "needs-you" : liveTurn;
@@ -762,6 +786,12 @@ function CardFace({
         </div>
       ) : null}
       <h3 className="board-card-title">{thread.title}</h3>
+      {branch !== null ? (
+        <p className="board-card-branch">
+          <GitBranchIcon className="size-3 shrink-0" />
+          <span className="truncate">{branch}</span>
+        </p>
+      ) : null}
       {summary !== undefined ? (
         <p
           className="board-card-summary"

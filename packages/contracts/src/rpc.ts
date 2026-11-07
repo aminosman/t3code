@@ -375,6 +375,8 @@ import {
   BoardCommentsOutput,
   BoardCardInput,
   BoardCardOutput,
+  BoardBranchInput,
+  BoardBranchView,
 } from "./board.ts";
 import {
   ServerConfigStreamEvent,
@@ -597,6 +599,7 @@ export const WS_METHODS = {
   boardNudge: "board.nudge",
   boardComments: "board.comments",
   boardCard: "board.card",
+  boardBranch: "board.branch",
   historyMeetingsProject: "history.meetingsProject",
   historyAskMeetings: "history.askMeetings",
 
@@ -1909,6 +1912,12 @@ const WsBoardCardRpc = Rpc.make(WS_METHODS.boardCard, {
   error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
 });
 
+const WsBoardBranchRpc = Rpc.make(WS_METHODS.boardBranch, {
+  payload: BoardBranchInput,
+  success: BoardBranchView,
+  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
+});
+
 const WsHistoryPhoneMeetingImportRpc = Rpc.make(WS_METHODS.historyPhoneMeetingImport, {
   payload: HistoryPhoneMeetingImportInput,
   success: HistoryPhoneMeetingImportOutput,
@@ -2514,6 +2523,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsBoardNudgeRpc,
   WsBoardCommentsRpc,
   WsBoardCardRpc,
+  WsBoardBranchRpc,
   WsHistoryMeetingsProjectRpc,
   WsHistoryAskMeetingsRpc,
   WsSubscribePreviewEventsRpc,

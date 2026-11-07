@@ -112,6 +112,8 @@ export const BoardCard = Schema.Struct({
   movedBy: Schema.Literals(["user", "agent", "auto"]),
   /** Whose move it is: the thread's agent, or the user it handed the card to. */
   assignee: Schema.optional(Schema.Literals(["agent", "user"])),
+  /** The branch the work lives on, as the agent named it; else the thread's own. */
+  branch: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type BoardCard = typeof BoardCard.Type;
 
@@ -256,6 +258,36 @@ export const BoardCardOutput = Schema.Struct({
   told: Schema.Boolean,
 });
 export type BoardCardOutput = typeof BoardCardOutput.Type;
+
+/** A card's mini pull request: its branch against the default branch. */
+export const BoardBranchView = Schema.Struct({
+  branch: Schema.NullOr(Schema.String),
+  /** The default branch it is compared with, such as origin/main; null outside a repo. */
+  base: Schema.NullOr(Schema.String),
+  ahead: Schema.Number,
+  behind: Schema.Number,
+  insertions: Schema.Number,
+  deletions: Schema.Number,
+  files: Schema.Array(
+    Schema.Struct({ path: Schema.String, insertions: Schema.Number, deletions: Schema.Number }),
+  ),
+  commits: Schema.Array(
+    Schema.Struct({
+      sha: Schema.String,
+      subject: Schema.String,
+      author: Schema.String,
+      at: Schema.String,
+    }),
+  ),
+  /** Changes not yet committed, when the branch is checked out in the thread's folder. */
+  uncommitted: Schema.NullOr(
+    Schema.Struct({ files: Schema.Number, insertions: Schema.Number, deletions: Schema.Number }),
+  ),
+});
+export type BoardBranchView = typeof BoardBranchView.Type;
+
+export const BoardBranchInput = Schema.Struct({ threadId: ThreadId });
+export type BoardBranchInput = typeof BoardBranchInput.Type;
 
 export class BoardApiError extends Schema.TaggedError<BoardApiError>()("BoardApiError", {
   message: Schema.String,

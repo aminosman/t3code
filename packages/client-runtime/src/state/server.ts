@@ -1360,6 +1360,12 @@ export function createServerEnvironmentAtoms<R, E>(
         return threads;
       }),
     }),
+    /** One card's mini pull request: its branch against the default branch. */
+    boardBranch: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:board:branch",
+      tag: WS_METHODS.boardBranch,
+      staleTimeMs: 10_000,
+    }),
     /** One card's comments, for its card back. */
     boardComments: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:board:comments",

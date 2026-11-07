@@ -1,15 +1,28 @@
 // What the user does to a card that the thread's agent has to hear about: an
 // approval decided on the board, or a nudge to move the card forward. Each is
 // a message into the thread, so the agent picks the work back up.
-import type { BoardApproval, BoardAssignee, BoardColumn, BoardComment } from "@t3tools/contracts";
-import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
+import type {
+  BoardApproval,
+  BoardAssignee,
+  BoardBranchView,
+  BoardColumn,
+  BoardComment,
+} from "@t3tools/contracts";
+import { CommandId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { ChildProcessSpawner } from "effect/process";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import { ProjectService } from "../project/ProjectService.ts";
+import { compareBranch } from "./BoardBranch.ts";
 import { BoardError, BoardService } from "./BoardService.ts";
+import { agentReportedTurn } from "./BoardSummarizer.ts";
+import { setBoardStopCheck } from "./stopGuard.ts";
 
 export interface BoardFlowShape {
   readonly decide: (input: {
@@ -21,6 +34,8 @@ export interface BoardFlowShape {
   /** Asks each thread to check its card and move it forward; returns how many were told. */
   readonly nudge: (threadIds: ReadonlyArray<string>) => Effect.Effect<number, BoardError>;
   /** The user comments and/or reassigns; handing the card to the agent sends it the comments. */
+  /** The card's mini pull request: its branch against the default branch. */
+  readonly branch: (threadId: string) => Effect.Effect<BoardBranchView, BoardError>;
   readonly card: (input: {
     readonly threadId: string;
     readonly comment?: string | undefined;
@@ -50,6 +65,9 @@ export function handBackMessage(comments: ReadonlyArray<BoardComment>): string {
   return `[Card wall] The user handed this card back to you.${said ? ` Their comments on it:\n${said}\n` : " "}Carry on with the work and keep the card current with t3_card_update.`;
 }
 
+const STOP_REASON =
+  "Before you end this turn, update your card with one t3_card_update call: the column, a summary, next, and reviewedBy if code changed. If you are waiting on the user, assign the card to them with a comment saying what you need. Then end the turn.";
+
 const NUDGE_MESSAGE =
   "[Card wall] Check your card with t3_card_update and move the work forward: if the current column's work is done and the next column's requirement is met, do it and move the card. If the next column needs approval, ask for it and stop. If something blocks you, say what in the card's next.";
 
@@ -57,6 +75,8 @@ const make = Effect.gen(function* () {
   const board = yield* BoardService;
   const threads = yield* ThreadManagementService;
   const crypto = yield* Crypto.Crypto;
+  const projects = yield* ProjectService;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const failed = (cause: unknown) =>
     new BoardError({ reason: cause instanceof Error ? cause.message : String(cause) });
 
@@ -110,7 +130,47 @@ const make = Effect.gen(function* () {
     return { assignee: placed?.assignee ?? "agent", comments, told };
   }, Effect.mapError(failed));
 
-  return BoardFlow.of({ decide, nudge, card });
+  const branch: BoardFlowShape["branch"] = Effect.fn("BoardFlow.branch")(function* (threadId) {
+    const shell = yield* threads.getThreadShell(ThreadId.make(threadId));
+    if (shell === null) return yield* new BoardError({ reason: `no thread ${threadId}` });
+    const project = yield* projects.getById(ProjectId.make(shell.projectId));
+    const cwd = shell.worktreePath ?? Option.getOrNull(project)?.workspaceRoot ?? null;
+    const placed = yield* board.card(threadId);
+    const named = placed?.branch ?? shell.branch ?? null;
+    if (cwd === null) {
+      return {
+        branch: named,
+        base: null,
+        ahead: 0,
+        behind: 0,
+        insertions: 0,
+        deletions: 0,
+        files: [],
+        commits: [],
+        uncommitted: null,
+      };
+    }
+    return yield* compareBranch({ cwd, branch: named }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+  }, Effect.mapError(failed));
+
+  // A turn ending with the card unreported is sent back once to update it.
+  const stopCheck = Effect.fn("BoardFlow.stopCheck")(function* (threadId: string) {
+    const shell = yield* threads.getThreadShell(ThreadId.make(threadId));
+    if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) return null;
+    const turnStartedAt =
+      shell.latestRunRequestedAt == null ? null : DateTime.formatIso(shell.latestRunRequestedAt);
+    const previous = (yield* board.summaries).find((entry) => entry.threadId === threadId);
+    return agentReportedTurn(previous, turnStartedAt) ? null : STOP_REASON;
+  });
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  setBoardStopCheck((threadId) =>
+    runPromise(stopCheck(threadId).pipe(Effect.orElseSucceed(() => null))),
+  );
+  yield* Effect.addFinalizer(() => Effect.sync(() => setBoardStopCheck(null)));
+
+  return BoardFlow.of({ decide, nudge, card, branch });
 });
 
 export const layer = Layer.effect(BoardFlow, make);

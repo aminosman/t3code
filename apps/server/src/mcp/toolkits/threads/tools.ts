@@ -185,6 +185,10 @@ export const CardUpdateInput = Schema.Struct({
     description:
       '"user" hands the card to the user when you need them to act; say what in comment. "agent" takes it back.',
   }),
+  branch: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(200)))).annotate({
+    description:
+      "The git branch the work lives on, when it is not the thread's own; the card shows it as a pull request into the default branch. null clears it.",
+  }),
   comment: Schema.optional(Schema.String.check(Schema.isMaxLength(4000))).annotate({
     description: "A comment on the card, shown to the user: what you need from them, step by step.",
   }),

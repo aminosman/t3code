@@ -3147,6 +3147,8 @@ export const layerWsRpc = (
           boardFlow
             .card({ threadId: input.threadId, comment: input.comment, assignee: input.assignee })
             .pipe(Effect.mapError(boardFailed)),
+        [WS_METHODS.boardBranch]: (input) =>
+          boardFlow.branch(input.threadId).pipe(Effect.mapError(boardFailed)),
         [WS_METHODS.boardNudge]: (input) =>
           boardFlow.nudge(input.threadIds).pipe(
             Effect.map((sent) => ({ sent })),
