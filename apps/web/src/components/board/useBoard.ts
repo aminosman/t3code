@@ -14,6 +14,7 @@ import {
   type BoardStage,
   DEFAULT_BOARD_COLUMNS,
   type EnvironmentId,
+  type ModelSelection,
   type ThreadId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -65,6 +66,7 @@ export function useBoard(scopeThreadId: string | null) {
   const decideCommand = useAtomCommand(serverEnvironment.boardDecide, { reportFailure: false });
   const nudgeCommand = useAtomCommand(serverEnvironment.boardNudge, { reportFailure: false });
   const cardCommand = useAtomCommand(serverEnvironment.boardCard, { reportFailure: false });
+  const addCardCommand = useAtomCommand(serverEnvironment.boardAddCard, { reportFailure: false });
   const summarizeCommand = useAtomCommand(serverEnvironment.boardSummarize, {
     reportFailure: false,
   });
@@ -299,6 +301,24 @@ export function useBoard(scopeThreadId: string | null) {
     return true;
   };
 
+  /** A new thread from a card added in a column; true when it started. */
+  const addCard = async (input: {
+    readonly projectId: string;
+    readonly title: string;
+    readonly description: string;
+    readonly stage: BoardStage;
+    readonly modelSelection: ModelSelection;
+  }) => {
+    if (environmentId === null) return false;
+    const result = await addCardCommand({ environmentId, input });
+    if (result._tag === "Failure") {
+      reportFailure("Could not add the card", result);
+      return false;
+    }
+    listing.refresh();
+    return true;
+  };
+
   /** Asks threads to check their cards and move the work forward. */
   const nudge = async (threadIds: ReadonlyArray<ThreadId>) => {
     if (environmentId === null || threadIds.length === 0) return;
@@ -345,6 +365,7 @@ export function useBoard(scopeThreadId: string | null) {
     nudge,
     commentSummaries,
     updateCard,
+    addCard,
     threads,
     cards,
     subCounts: listing.data?.subCards ?? [],

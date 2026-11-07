@@ -1366,6 +1366,12 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.boardBranch,
       staleTimeMs: 10_000,
     }),
+    /** One card's checks, column by column. */
+    boardChecks: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:board:checks",
+      tag: WS_METHODS.boardChecks,
+      staleTimeMs: 10_000,
+    }),
     /** One card's comments, for its card back. */
     boardComments: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:board:comments",
@@ -1678,6 +1684,10 @@ export function createServerEnvironmentAtoms<R, E>(
     boardSetColumns: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:board:set-columns",
       tag: WS_METHODS.boardSetColumns,
+    }),
+    boardAddCard: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:board:add-card",
+      tag: WS_METHODS.boardAddCard,
     }),
     boardCard: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:board:card",

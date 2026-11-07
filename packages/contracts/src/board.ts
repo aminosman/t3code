@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ModelSelection } from "./modelSelection.ts";
 
 // Roost's card wall: a thread's stage is its card's column, stored beside T3's
 // state (roost_board_cards) so upstream merges never meet it. The user edits
@@ -9,6 +10,55 @@ import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 /** A column's id; a card's stage names one. */
 export const BoardStage = TrimmedNonEmptyString.check(Schema.isMaxLength(48));
 export type BoardStage = typeof BoardStage.Type;
+
+/**
+ * A fact Roost checks itself before an agent may move a card into a column:
+ * two reviews recorded; on a feature branch; committed and pushed with
+ * nothing uncommitted; merged into a branch (\`into\`); the test matrix all
+ * passing; the regression run passing.
+ */
+export const BoardCheckKind = Schema.Literals([
+  "reviews",
+  "feature-branch",
+  "pushed",
+  "merged",
+  "tests",
+  "regression",
+]);
+export type BoardCheckKind = typeof BoardCheckKind.Type;
+
+export const BoardCheck = Schema.Struct({
+  kind: BoardCheckKind,
+  /** For "merged": the branch it must be merged into, such as staging or main. */
+  into: Schema.optional(Schema.String),
+});
+export type BoardCheck = typeof BoardCheck.Type;
+
+export const BoardCheckResult = Schema.Struct({
+  kind: BoardCheckKind,
+  into: Schema.optional(Schema.String),
+  ok: Schema.Boolean,
+  /** What was found, in a few words. */
+  detail: Schema.String,
+});
+export type BoardCheckResult = typeof BoardCheckResult.Type;
+
+/** One case of a card's end-to-end test matrix, as the agent ran it. */
+export const BoardTestCase = Schema.Struct({
+  case: Schema.String,
+  result: Schema.Literals(["pass", "fail", "skip"]),
+  note: Schema.optional(Schema.String),
+});
+export type BoardTestCase = typeof BoardTestCase.Type;
+
+/** The agent's last regression run: the existing suites, to show nothing else broke. */
+export const BoardRegression = Schema.Struct({
+  passed: Schema.Boolean,
+  command: Schema.String,
+  summary: Schema.String,
+  at: Schema.String,
+});
+export type BoardRegression = typeof BoardRegression.Type;
 
 export const BoardColumn = Schema.Struct({
   id: BoardStage,
@@ -22,6 +72,8 @@ export const BoardColumn = Schema.Struct({
    * every project); the user's own moves are never gated.
    */
   requireApprovalIn: Schema.optional(Schema.Array(Schema.String)),
+  /** Facts Roost checks before an agent may move a card in; the user's moves are not held. */
+  checks: Schema.optional(Schema.Array(BoardCheck)),
 });
 export type BoardColumn = typeof BoardColumn.Type;
 
@@ -43,46 +95,88 @@ export const BoardApproval = Schema.Struct({
 });
 export type BoardApproval = typeof BoardApproval.Type;
 
-/** The board a new install starts with. */
+/** The board a new install starts with: a development workflow, research to production. */
 export const DEFAULT_BOARD_COLUMNS: ReadonlyArray<BoardColumn> = [
   {
     id: "research",
     title: "Research",
     description:
-      "Finding out. Investigating, reading code, exploring options, planning, answering questions. No code changed yet.",
+      "Understanding the problem: reading code, investigating, planning, answering questions. No code changed yet.",
     archives: false,
   },
   {
     id: "fix",
-    title: "Fix",
+    title: "Building",
     description:
-      "Changing things. Editing code or config, building, running tests, iterating on a change.",
+      "Implementing the change on a feature branch: editing code, building, running tests while iterating. Not committed yet.",
     archives: false,
   },
   {
     id: "review",
-    title: "Waiting · In review",
+    title: "Reviewed",
     description:
-      "Waiting on someone. The agent stopped for the user's answer, approval or decision, or a PR or review is open and pending.",
+      "Two independent agents (other models, read-only) reviewed the change and approved it, with what they found fixed. Required before committing.",
     archives: false,
+    checks: [{ kind: "reviews" }],
   },
   {
     id: "pushed",
-    title: "Committed & pushed",
-    description: "Committed and pushed (or merged), not yet released or deployed.",
+    title: "Committed to branch",
+    description:
+      "Committed and pushed to a feature branch, named on the card, with nothing left uncommitted.",
+    archives: false,
+    checks: [{ kind: "reviews" }, { kind: "feature-branch" }, { kind: "pushed" }],
+  },
+  {
+    id: "tested",
+    title: "Tested end to end",
+    description:
+      "A test matrix of every case and permutation that matters for this change, each run end to end and passing, recorded on the card.",
+    archives: false,
+    checks: [{ kind: "tests" }],
+  },
+  {
+    id: "regression",
+    title: "Regression tested",
+    description:
+      "The project's existing suites run and pass, so nothing else broke; the run recorded on the card.",
+    archives: false,
+    checks: [{ kind: "regression" }],
+  },
+  {
+    id: "staging",
+    title: "Merged to staging",
+    description:
+      "The branch merged into staging and deployed there. Skip for projects without a staging branch.",
+    archives: false,
+    checks: [{ kind: "merged", into: "staging" }],
+  },
+  {
+    id: "staging-verified",
+    title: "Verified on staging",
+    description:
+      "The change checked working on staging, as a user would use it. Skip for projects without staging.",
     archives: false,
   },
   {
+    id: "production",
+    title: "Merged to production",
+    description: "Merged into the production branch (main) and released.",
+    archives: false,
+    requireApprovalIn: ["*"],
+    checks: [{ kind: "merged", into: "main" }],
+  },
+  {
     id: "deployed",
-    title: "Deployed",
+    title: "Verified in production",
     description:
-      "Done. Released, deployed or published; or, for work with nothing to ship, finished with nothing left to do.",
+      "Done: the change checked working in production. Work with nothing to ship (questions, research, personal tasks) lands here once finished.",
     archives: true,
   },
   {
     id: "archived",
     title: "Archive",
-    description: "Dead end. Abandoned, superseded, duplicated, or failed with no way forward.",
+    description: "Dead end: abandoned, superseded, duplicated, or failed with no way forward.",
     archives: true,
   },
 ];
@@ -162,6 +256,9 @@ export const BoardSummary = Schema.Struct({
   reason: Schema.String,
   confidence: Schema.Number,
   summarizedAt: Schema.String,
+  /** The end-to-end test matrix as last reported; null before any. */
+  tests: Schema.optional(Schema.NullOr(Schema.Array(BoardTestCase))),
+  regression: Schema.optional(Schema.NullOr(BoardRegression)),
   /** Who wrote it: the thread's own agent, or the summarizer after a turn it left unreported. */
   source: Schema.Literals(["agent", "auto"]),
   /**
@@ -288,6 +385,30 @@ export type BoardBranchView = typeof BoardBranchView.Type;
 
 export const BoardBranchInput = Schema.Struct({ threadId: ThreadId });
 export type BoardBranchInput = typeof BoardBranchInput.Type;
+
+export const BoardChecksInput = Schema.Struct({ threadId: ThreadId });
+export type BoardChecksInput = typeof BoardChecksInput.Type;
+
+/** Each column's checks for a card, in board order, for columns that have any. */
+export const BoardChecksOutput = Schema.Struct({
+  columns: Schema.Array(
+    Schema.Struct({ stage: BoardStage, results: Schema.Array(BoardCheckResult) }),
+  ),
+});
+export type BoardChecksOutput = typeof BoardChecksOutput.Type;
+
+/** A card added on the board: a new thread with this ticket as its first message. */
+export const BoardAddCardInput = Schema.Struct({
+  projectId: Schema.String,
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  description: Schema.String.check(Schema.isMaxLength(20_000)),
+  stage: BoardStage,
+  modelSelection: ModelSelection,
+});
+export type BoardAddCardInput = typeof BoardAddCardInput.Type;
+
+export const BoardAddCardOutput = Schema.Struct({ threadId: ThreadId });
+export type BoardAddCardOutput = typeof BoardAddCardOutput.Type;
 
 export class BoardApiError extends Schema.TaggedError<BoardApiError>()("BoardApiError", {
   message: Schema.String,

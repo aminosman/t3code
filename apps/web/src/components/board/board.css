@@ -460,6 +460,78 @@
     }
   }
 
+  /* --- add a card ------------------------------------------------------- */
+
+  .board-add-card {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 8px 0;
+    border-radius: 8px;
+    padding: 6px 8px;
+    color: var(--bd-ink-2);
+    font-size: 14px;
+    text-align: left;
+  }
+
+  .board-add-card:hover {
+    background: var(--bd-hover);
+    color: var(--bd-ink);
+  }
+
+  .board-add-form {
+    display: grid;
+    gap: 6px;
+    margin: 6px 8px 0;
+  }
+
+  .board-add-title,
+  .board-add-description,
+  .board-add-project {
+    width: 100%;
+    border-radius: 8px;
+    padding: 6px 8px;
+    background: var(--bd-card);
+    box-shadow: var(--bd-shadow);
+    color: var(--bd-ink);
+    font-size: 14px;
+    outline: none;
+    resize: vertical;
+  }
+
+  .board-add-description {
+    font-size: 12px;
+  }
+
+  .board-add-title:focus,
+  .board-add-description:focus {
+    box-shadow: 0 0 0 2px var(--bd-focus);
+  }
+
+  .board-add-hint {
+    color: var(--bd-ink-3);
+    font-size: 12px;
+  }
+
+  .board-add-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .board-add-submit {
+    border-radius: 4px;
+    padding: 5px 12px;
+    background: #0c66e4;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .board-add-submit:disabled {
+    opacity: 0.5;
+  }
+
   /* --- quick filters ------------------------------------------------------ */
 
   .board-filters {

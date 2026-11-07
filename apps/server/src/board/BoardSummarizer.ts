@@ -367,7 +367,9 @@ const make = Effect.gen(function* () {
         // The last archiving column, and any column that needs approval: suggested, never moved to.
         suggestedPutsAway:
           suggested.id === columns.findLast((column) => column.archives)?.id ||
-          columnNeedsApproval(suggested, shell.projectId),
+          columnNeedsApproval(suggested, shell.projectId) ||
+          // A column with checks is entered by the agent, once Roost confirms them.
+          (suggested.checks ?? []).length > 0,
         confidence: summary.confidence,
         current: current.id,
         // A placement by the user or the thread's agent during the turn stands.

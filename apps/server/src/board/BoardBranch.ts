@@ -41,17 +41,14 @@ export function parseLog(text: string): Array<{
     });
 }
 
-export const compareBranch = Effect.fn("BoardBranch.compare")(function* (input: {
-  readonly cwd: string;
-  readonly branch: string | null;
-}) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  /** stdout of a git command, or null when it fails. */
-  const git = (args: ReadonlyArray<string>) =>
+/** A git runner in one folder: a command's stdout, or null when it fails. */
+export const gitIn =
+  (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"], cwd: string) =>
+  (args: ReadonlyArray<string>) =>
     Effect.scoped(
       Effect.gen(function* () {
         const child = yield* spawner.spawn(
-          ChildProcess.make("git", ["-C", input.cwd, ...args], {
+          ChildProcess.make("git", ["-C", cwd, ...args], {
             env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
             forceKillAfter: "1 second",
           }),
@@ -75,6 +72,13 @@ export const compareBranch = Effect.fn("BoardBranch.compare")(function* (input: 
       Effect.timeout("15 seconds"),
       Effect.orElseSucceed(() => null),
     );
+
+export const compareBranch = Effect.fn("BoardBranch.compare")(function* (input: {
+  readonly cwd: string;
+  readonly branch: string | null;
+}) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const git = gitIn(spawner, input.cwd);
 
   const empty: BoardBranchView = {
     branch: input.branch,

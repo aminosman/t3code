@@ -4,6 +4,9 @@
 import {
   type BoardApproval,
   type BoardAssignee,
+  BoardCheck,
+  BoardRegression,
+  BoardTestCase,
   type BoardCard,
   type BoardComment,
   type BoardCommentsSummary,
@@ -106,6 +109,22 @@ const decodeReviewersOption = Schema.decodeUnknownOption(Reviewers);
 const decodeReviewers = (text: string | null): ReadonlyArray<string> | null =>
   text === null ? null : (decodeReviewersOption(text).pipe(Option.getOrNull) ?? null);
 
+const Checks = Schema.fromJsonString(Schema.Array(BoardCheck));
+const encodeChecks = Schema.encodeSync(Checks);
+const decodeChecksOption = Schema.decodeOption(Checks);
+const decodeChecks = (text: string | null) =>
+  text === null ? undefined : Option.getOrUndefined(decodeChecksOption(text));
+const Tests = Schema.fromJsonString(Schema.Array(BoardTestCase));
+const encodeTests = Schema.encodeSync(Tests);
+const decodeTestsOption = Schema.decodeOption(Tests);
+const decodeTests = (text: string | null) =>
+  text === null ? null : Option.getOrNull(decodeTestsOption(text));
+const Regression = Schema.fromJsonString(BoardRegression);
+const encodeRegression = Schema.encodeSync(Regression);
+const decodeRegressionOption = Schema.decodeOption(Regression);
+const decodeRegression = (text: string | null) =>
+  text === null ? null : Option.getOrNull(decodeRegressionOption(text));
+
 const failed = (cause: unknown) =>
   new BoardError({ reason: cause instanceof Error ? cause.message : String(cause) });
 
@@ -168,6 +187,13 @@ const make = Effect.gen(function* () {
       Effect.mapError(failed),
     );
   }
+  for (const column of ["tests_json", "regression_json"]) {
+    if (!summaryColumns.has(column)) {
+      yield* sql
+        .unsafe(`ALTER TABLE roost_board_summaries ADD COLUMN ${column} TEXT`)
+        .pipe(Effect.mapError(failed));
+    }
+  }
   if (!summaryColumns.has("reviewed_by")) {
     yield* sql`ALTER TABLE roost_board_summaries ADD COLUMN reviewed_by TEXT`.pipe(
       Effect.mapError(failed),
@@ -189,6 +215,11 @@ const make = Effect.gen(function* () {
       Effect.mapError(failed),
     )).map((row) => row.name),
   );
+  if (!columnFields.has("checks_json")) {
+    yield* sql`ALTER TABLE roost_board_columns ADD COLUMN checks_json TEXT`.pipe(
+      Effect.mapError(failed),
+    );
+  }
   if (!columnFields.has("require_approval_in")) {
     yield* sql`ALTER TABLE roost_board_columns ADD COLUMN require_approval_in TEXT`.pipe(
       Effect.mapError(failed),
@@ -212,7 +243,8 @@ const make = Effect.gen(function* () {
     readonly description: string;
     readonly archives: number;
     readonly require_approval_in: string | null;
-  }>`SELECT id, title, description, archives, require_approval_in FROM roost_board_columns ORDER BY position`.pipe(
+    readonly checks_json: string | null;
+  }>`SELECT id, title, description, archives, require_approval_in, checks_json FROM roost_board_columns ORDER BY position`.pipe(
     Effect.map((rows) =>
       rows.length === 0
         ? DEFAULT_BOARD_COLUMNS
@@ -224,6 +256,7 @@ const make = Effect.gen(function* () {
                 description: row.description,
                 archives: row.archives === 1,
                 requireApprovalIn: decodeReviewers(row.require_approval_in) ?? [],
+                checks: decodeChecks(row.checks_json) ?? [],
               }) as BoardColumn,
           ),
     ),
@@ -241,9 +274,10 @@ const make = Effect.gen(function* () {
             next,
             (column, position) => sql`
               INSERT INTO roost_board_columns
-                (position, id, title, description, archives, require_approval_in)
+                (position, id, title, description, archives, require_approval_in, checks_json)
               VALUES (${position}, ${column.id}, ${column.title}, ${column.description},
-                ${column.archives ? 1 : 0}, ${encodeReviewers(column.requireApprovalIn ?? [])})
+                ${column.archives ? 1 : 0}, ${encodeReviewers(column.requireApprovalIn ?? [])},
+                ${encodeChecks(column.checks ?? [])})
             `,
             { discard: true },
           );
@@ -346,6 +380,8 @@ const make = Effect.gen(function* () {
     readonly summarized_at: string;
     readonly source: string;
     readonly reviewed_by: string | null;
+    readonly tests_json: string | null;
+    readonly regression_json: string | null;
   }>`SELECT * FROM roost_board_summaries`.pipe(
     Effect.map((rows) =>
       rows.map(
@@ -360,6 +396,8 @@ const make = Effect.gen(function* () {
             summarizedAt: row.summarized_at,
             source: row.source === "agent" ? "agent" : "auto",
             reviewedBy: decodeReviewers(row.reviewed_by),
+            tests: decodeTests(row.tests_json),
+            regression: decodeRegression(row.regression_json),
           }) as BoardSummary,
       ),
     ),
@@ -370,11 +408,16 @@ const make = Effect.gen(function* () {
     sql`
       INSERT INTO roost_board_summaries
         (thread_id, summary, next, suggested_stage, reason, confidence, summarized_at, source,
-         reviewed_by)
+         reviewed_by, tests_json, regression_json)
       VALUES (${summary.threadId}, ${summary.summary}, ${summary.next}, ${summary.suggestedStage},
         ${summary.reason}, ${summary.confidence}, ${summary.summarizedAt}, ${summary.source},
-        ${summary.reviewedBy === null ? null : encodeReviewers(summary.reviewedBy)})
+        ${summary.reviewedBy === null ? null : encodeReviewers(summary.reviewedBy)},
+        ${summary.tests == null ? null : encodeTests(summary.tests)},
+        ${summary.regression == null ? null : encodeRegression(summary.regression)})
       ON CONFLICT (thread_id) DO UPDATE SET
+        -- A summary that says nothing of tests keeps the last reported ones.
+        tests_json = COALESCE(excluded.tests_json, roost_board_summaries.tests_json),
+        regression_json = COALESCE(excluded.regression_json, roost_board_summaries.regression_json),
         source = excluded.source,
         reviewed_by = excluded.reviewed_by,
         summary = excluded.summary,

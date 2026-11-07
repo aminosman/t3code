@@ -5,7 +5,9 @@ import type {
   BoardApproval,
   BoardAssignee,
   BoardBranchView,
+  BoardCheckResult,
   BoardColumn,
+  ModelSelection,
   BoardComment,
 } from "@t3tools/contracts";
 import { CommandId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
@@ -19,7 +21,11 @@ import * as Layer from "effect/Layer";
 
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProjectService } from "../project/ProjectService.ts";
-import { compareBranch } from "./BoardBranch.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { compareBranch, gitIn } from "./BoardBranch.ts";
+import { checkGit, checkRecorded } from "./BoardChecks.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { BoardError, BoardService } from "./BoardService.ts";
 import { agentReportedTurn } from "./BoardSummarizer.ts";
 import { setBoardStopCheck } from "./stopGuard.ts";
@@ -34,6 +40,26 @@ export interface BoardFlowShape {
   /** Asks each thread to check its card and move it forward; returns how many were told. */
   readonly nudge: (threadIds: ReadonlyArray<string>) => Effect.Effect<number, BoardError>;
   /** The user comments and/or reassigns; handing the card to the agent sends it the comments. */
+  /** Each column's checks for this card, in board order, for columns that have any. */
+  readonly checks: (
+    threadId: string,
+  ) => Effect.Effect<
+    ReadonlyArray<{ stage: string; results: ReadonlyArray<BoardCheckResult> }>,
+    BoardError
+  >;
+  /** One column's checks for this card. */
+  readonly checkColumn: (
+    threadId: string,
+    column: BoardColumn,
+  ) => Effect.Effect<ReadonlyArray<BoardCheckResult>, BoardError>;
+  /** A new thread from a card added on the board, placed in its column. */
+  readonly addCard: (input: {
+    readonly projectId: string;
+    readonly title: string;
+    readonly description: string;
+    readonly stage: string;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<string, BoardError>;
   /** The card's mini pull request: its branch against the default branch. */
   readonly branch: (threadId: string) => Effect.Effect<BoardBranchView, BoardError>;
   readonly card: (input: {
@@ -77,6 +103,8 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const projects = yield* ProjectService;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const failed = (cause: unknown) =>
     new BoardError({ reason: cause instanceof Error ? cause.message : String(cause) });
 
@@ -155,6 +183,84 @@ const make = Effect.gen(function* () {
     );
   }, Effect.mapError(failed));
 
+  /** Where the card's work is in git: the folder, its branch, and what is checked out there. */
+  const facts = Effect.fn("BoardFlow.facts")(function* (threadId: string) {
+    const shell = yield* threads.getThreadShell(ThreadId.make(threadId));
+    if (shell === null) return null;
+    const project = yield* projects.getById(ProjectId.make(shell.projectId));
+    const cwd = shell.worktreePath ?? Option.getOrNull(project)?.workspaceRoot ?? null;
+    if (cwd === null) return null;
+    const git = gitIn(spawner, cwd);
+    const head = yield* git(["rev-parse", "--abbrev-ref", "HEAD"]);
+    const current = head === null || head === "HEAD" ? null : head;
+    const placed = yield* board.card(threadId);
+    return { git, current, branch: placed?.branch ?? shell.branch ?? current };
+  });
+
+  const checkColumn: BoardFlowShape["checkColumn"] = Effect.fn("BoardFlow.checkColumn")(function* (
+    threadId,
+    column,
+  ) {
+    const checks = column.checks ?? [];
+    if (checks.length === 0) return [];
+    const summary = (yield* board.summaries).find((entry) => entry.threadId === threadId);
+    const where = checks.some((check) => checkRecorded(check, summary) === null)
+      ? yield* facts(threadId)
+      : null;
+    return yield* Effect.forEach(checks, (check) => {
+      const recorded = checkRecorded(check, summary);
+      if (recorded !== null) return Effect.succeed(recorded);
+      if (where === null) {
+        return Effect.succeed({
+          kind: check.kind,
+          ...(check.into ? { into: check.into } : {}),
+          ok: false,
+          detail: "no git folder for this thread",
+        });
+      }
+      return checkGit(check, where.branch, where.current, where.git);
+    });
+  }, Effect.mapError(failed));
+
+  const checks: BoardFlowShape["checks"] = Effect.fn("BoardFlow.checks")(function* (threadId) {
+    const columns = (yield* board.columns).filter((column) => (column.checks ?? []).length > 0);
+    return yield* Effect.forEach(columns, (column) =>
+      checkColumn(threadId, column).pipe(Effect.map((results) => ({ stage: column.id, results }))),
+    );
+  }, Effect.mapError(failed));
+
+  const addCard: BoardFlowShape["addCard"] = Effect.fn("BoardFlow.addCard")(function* (input) {
+    const column = (yield* board.columns).find((entry) => entry.id === input.stage);
+    if (column === undefined)
+      return yield* new BoardError({ reason: `no column "${input.stage}"` });
+    const project = Option.getOrNull(yield* projects.getById(ProjectId.make(input.projectId)));
+    if (project === null) return yield* new BoardError({ reason: "no such project" });
+    const settings = yield* serverSettings.getSettings;
+    const runtimeMode = resolveProjectSettings(settings, project.id, project).settings
+      .defaultRuntimeMode;
+    const threadId = ThreadId.make(yield* crypto.randomUUIDv4());
+    const description = input.description.trim();
+    yield* launches.launch({
+      commandId: CommandId.make(yield* crypto.randomUUIDv4()),
+      threadId,
+      projectId: project.id,
+      title: input.title,
+      modelSelection: input.modelSelection,
+      runtimeMode,
+      interactionMode: "default",
+      workspaceStrategy: { type: "root" },
+      initialMessage: {
+        messageId: MessageId.make(yield* crypto.randomUUIDv4()),
+        text: `${input.title}${description ? `\n\n${description}` : ""}\n\n[Card wall] This card starts in ${describe(column)}. Take it from there toward done.`,
+        attachments: [],
+      },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* board.move({ threadIds: [threadId], stage: column.id, movedBy: "user" });
+    return threadId;
+  }, Effect.mapError(failed));
+
   // A turn ending with the card unreported is sent back once to update it.
   const stopCheck = Effect.fn("BoardFlow.stopCheck")(function* (threadId: string) {
     const shell = yield* threads.getThreadShell(ThreadId.make(threadId));
@@ -170,7 +276,7 @@ const make = Effect.gen(function* () {
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => setBoardStopCheck(null)));
 
-  return BoardFlow.of({ decide, nudge, card, branch });
+  return BoardFlow.of({ decide, nudge, card, branch, checks, checkColumn, addCard });
 });
 
 export const layer = Layer.effect(BoardFlow, make);

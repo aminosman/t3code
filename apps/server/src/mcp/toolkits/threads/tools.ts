@@ -185,6 +185,24 @@ export const CardUpdateInput = Schema.Struct({
     description:
       '"user" hands the card to the user when you need them to act; say what in comment. "agent" takes it back.',
   }),
+  tests: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        case: Schema.String,
+        result: Schema.Literals(["pass", "fail", "skip"]),
+        note: Schema.optional(Schema.String),
+      }),
+    ),
+  ).annotate({
+    description:
+      "The end-to-end test matrix: every case and permutation that matters for this change, each with its result. Replaces the last one.",
+  }),
+  regression: Schema.optional(
+    Schema.Struct({ passed: Schema.Boolean, command: Schema.String, summary: Schema.String }),
+  ).annotate({
+    description:
+      "The last regression run of the project's existing suites: what ran and whether it passed.",
+  }),
   branch: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(200)))).annotate({
     description:
       "The git branch the work lives on, when it is not the thread's own; the card shows it as a pull request into the default branch. null clears it.",
@@ -203,6 +221,8 @@ const CardColumnInfo = Schema.Struct({
   description: Schema.String,
   archives: Schema.Boolean,
   requiresApproval: Schema.Boolean,
+  /** Facts Roost checks before the card may move in. */
+  checks: Schema.Array(Schema.String),
 });
 
 export const CardUpdateOutput = Schema.Struct({
@@ -213,6 +233,12 @@ export const CardUpdateOutput = Schema.Struct({
   reviewedBy: Schema.NullOr(Schema.Array(Schema.String)),
   reviewsWanted: Schema.Number,
   columns: Schema.Array(CardColumnInfo),
+  /** The checks this call ran for the column asked for, when it has any. */
+  checks: Schema.Array(
+    Schema.Struct({ kind: Schema.String, ok: Schema.Boolean, detail: Schema.String }),
+  ),
+  /** What to do when the card did not move. */
+  instruction: Schema.String,
   approval: Schema.NullOr(
     Schema.Struct({ stage: Schema.String, status: Schema.String, instruction: Schema.String }),
   ),

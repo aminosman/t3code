@@ -27,6 +27,7 @@ import {
 } from "../ui/dialog";
 import { Textarea } from "../ui/textarea";
 import { BranchChanges } from "./BranchChanges";
+import { CardChecks } from "./CardChecks";
 
 const when = (at: string) => {
   const date = new Date(at);
@@ -50,6 +51,7 @@ export function CardBack({
   approval,
   approvalColumnTitle,
   pullRequests,
+  columns,
   onClose,
   onOpenThread,
   onViewDiff,
@@ -66,6 +68,7 @@ export function CardBack({
   /** The title of the column the approval request is for. */
   approvalColumnTitle: string | undefined;
   pullRequests: ReadonlyArray<{ readonly url: string; readonly number: number }>;
+  columns: ReadonlyArray<BoardColumn>;
   onClose: () => void;
   onOpenThread: () => void;
   onViewDiff: () => void;
@@ -174,6 +177,17 @@ export function CardBack({
                   {summary.reviewedBy.length > 0 ? `: ${summary.reviewedBy.join(", ")}` : ""}
                 </p>
               ) : null}
+            </section>
+
+            <section className="grid gap-1.5">
+              <h3 className="text-xs font-medium text-muted-foreground">Checks</h3>
+              <CardChecks
+                environmentId={environmentId}
+                threadId={thread.id}
+                columns={columns}
+                currentStage={column?.id ?? ""}
+                summary={summary}
+              />
             </section>
 
             <section className="grid gap-1.5">

@@ -377,6 +377,10 @@ import {
   BoardCardOutput,
   BoardBranchInput,
   BoardBranchView,
+  BoardChecksInput,
+  BoardChecksOutput,
+  BoardAddCardInput,
+  BoardAddCardOutput,
 } from "./board.ts";
 import {
   ServerConfigStreamEvent,
@@ -600,6 +604,8 @@ export const WS_METHODS = {
   boardComments: "board.comments",
   boardCard: "board.card",
   boardBranch: "board.branch",
+  boardChecks: "board.checks",
+  boardAddCard: "board.addCard",
   historyMeetingsProject: "history.meetingsProject",
   historyAskMeetings: "history.askMeetings",
 
@@ -1918,6 +1924,18 @@ const WsBoardBranchRpc = Rpc.make(WS_METHODS.boardBranch, {
   error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
 });
 
+const WsBoardChecksRpc = Rpc.make(WS_METHODS.boardChecks, {
+  payload: BoardChecksInput,
+  success: BoardChecksOutput,
+  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
+});
+
+const WsBoardAddCardRpc = Rpc.make(WS_METHODS.boardAddCard, {
+  payload: BoardAddCardInput,
+  success: BoardAddCardOutput,
+  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
+});
+
 const WsHistoryPhoneMeetingImportRpc = Rpc.make(WS_METHODS.historyPhoneMeetingImport, {
   payload: HistoryPhoneMeetingImportInput,
   success: HistoryPhoneMeetingImportOutput,
@@ -2524,6 +2542,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsBoardCommentsRpc,
   WsBoardCardRpc,
   WsBoardBranchRpc,
+  WsBoardChecksRpc,
+  WsBoardAddCardRpc,
   WsHistoryMeetingsProjectRpc,
   WsHistoryAskMeetingsRpc,
   WsSubscribePreviewEventsRpc,

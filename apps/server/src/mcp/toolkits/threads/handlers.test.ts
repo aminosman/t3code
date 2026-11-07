@@ -31,6 +31,8 @@ import { ProjectService } from "../../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { HistorySearch, type HistorySearchInput } from "../../../historySearch/HistorySearch.ts";
 import { BoardService } from "../../../board/BoardService.ts";
+import { BoardFlow } from "../../../board/BoardFlow.ts";
+import { checkRecorded } from "../../../board/BoardChecks.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { SENDS_PER_HOUR } from "./handlers.ts";
@@ -435,6 +437,23 @@ const makeHarness = Effect.gen(function* () {
       }),
     ),
     Layer.provide(
+      Layer.mock(BoardFlow)({
+        // Recorded facts as the board reads them; git facts taken as holding.
+        checkColumn: (threadId, column) =>
+          Ref.get(saved).pipe(
+            Effect.map((list) =>
+              (column.checks ?? []).map(
+                (check) =>
+                  checkRecorded(
+                    check,
+                    list.find((entry) => entry.threadId === threadId),
+                  ) ?? { kind: check.kind, ok: true, detail: "holds" },
+              ),
+            ),
+          ),
+      }),
+    ),
+    Layer.provide(
       Layer.mock(BoardService)({
         // Committed & pushed needs approval in every project.
         columns: Effect.succeed(
@@ -688,7 +707,9 @@ it.effect(
         });
         // No arguments: reads the card and the board's columns, changes nothing.
         const read = yield* call("t3_card_update", {});
-        expect((read.structuredContent as { columns: unknown[] }).columns).toHaveLength(6);
+        expect((read.structuredContent as { columns: unknown[] }).columns).toHaveLength(
+          DEFAULT_BOARD_COLUMNS.length,
+        );
         // Handing the card to the user with what they need to do.
         const handed = yield* call("t3_card_update", {
           assignee: "user",
@@ -700,10 +721,28 @@ it.effect(
             { author: "agent", body: "Sign in to Gusto and set the 401(k) to 16.5% pre-tax." },
           ],
         });
-        // A column that needs approval: the first ask files a request and the card stays.
-        const asked = yield* call("t3_card_update", {
-          stage: "Committed & pushed",
+        // A column's checks come first: no reviews recorded, so the card stays.
+        const unchecked = yield* call("t3_card_update", {
+          stage: "Committed to branch",
           threadId: workThreadId,
+        });
+        expect(unchecked.structuredContent).toMatchObject({
+          stage: "research",
+          approval: null,
+          checks: [
+            { kind: "reviews", ok: false },
+            { kind: "feature-branch", ok: true },
+            { kind: "pushed", ok: true },
+          ],
+        });
+        expect((unchecked.structuredContent as { instruction: string }).instruction).toContain(
+          "Not moved",
+        );
+        // Reviews recorded in the same call: the checks pass, and the column needs approval.
+        const asked = yield* call("t3_card_update", {
+          stage: "Committed to branch",
+          threadId: workThreadId,
+          reviewedBy: ["GPT-6.1-Sol", "Claude Opus 5.5"],
           next: "You: approve pushing to main",
         });
         expect(asked.structuredContent).toMatchObject({

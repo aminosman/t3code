@@ -1,6 +1,12 @@
 // Edit the board's columns: titles, order, whether a column archives, and the
 // description the summarizer reads when it places a card.
-import { type BoardColumn, boardColumnsProblem, DEFAULT_BOARD_COLUMNS } from "@t3tools/contracts";
+import {
+  type BoardCheck,
+  type BoardCheckKind,
+  type BoardColumn,
+  boardColumnsProblem,
+  DEFAULT_BOARD_COLUMNS,
+} from "@t3tools/contracts";
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
@@ -158,6 +164,10 @@ export function ColumnEditor({
                   onChange={(event) => update(index, { description: event.target.value })}
                   rows={2}
                 />
+                <ChecksPicker
+                  value={column.checks ?? []}
+                  onChange={(checks) => update(index, { checks })}
+                />
                 <ApprovalPicker
                   value={column.requireApprovalIn ?? []}
                   projects={projects}
@@ -259,6 +269,67 @@ function ApprovalPicker({
             ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+const CHECK_LABELS: ReadonlyArray<{ readonly kind: BoardCheckKind; readonly label: string }> = [
+  { kind: "reviews", label: "Two reviews" },
+  { kind: "feature-branch", label: "On a feature branch" },
+  { kind: "pushed", label: "Committed and pushed" },
+  { kind: "tests", label: "Test matrix passing" },
+  { kind: "regression", label: "Regression passing" },
+  { kind: "merged", label: "Merged into" },
+];
+
+/** The facts Roost checks before an agent may move a card into the column. */
+function ChecksPicker({
+  value,
+  onChange,
+}: {
+  value: ReadonlyArray<BoardCheck>;
+  onChange: (value: ReadonlyArray<BoardCheck>) => void;
+}) {
+  const merged = value.find((check) => check.kind === "merged");
+  return (
+    <div className="grid gap-1.5 text-xs text-muted-foreground">
+      <span>Roost checks before an agent moves a card in:</span>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-1">
+        {CHECK_LABELS.map(({ kind, label }) => {
+          const on = value.some((check) => check.kind === kind);
+          return (
+            <label key={kind} className="flex items-center gap-1.5">
+              <Checkbox
+                checked={on}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    checked === true
+                      ? [...value, kind === "merged" ? { kind, into: "main" } : { kind }]
+                      : value.filter((check) => check.kind !== kind),
+                  )
+                }
+              />
+              {label}
+              {kind === "merged" && merged !== undefined ? (
+                <input
+                  aria-label="Merged into branch"
+                  className="w-24 rounded border border-border bg-background px-1.5 py-0.5 text-foreground"
+                  value={merged.into ?? ""}
+                  onChange={(event) =>
+                    onChange(
+                      value.map((check) =>
+                        check.kind === "merged"
+                          ? { kind: "merged", into: event.target.value }
+                          : check,
+                      ),
+                    )
+                  }
+                />
+              ) : null}
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -69,6 +69,7 @@ layer("BoardService", (it) => {
             description: "Not started.",
             archives: false,
             requireApprovalIn: [],
+            checks: [],
           },
           {
             id: "qa",
@@ -76,6 +77,7 @@ layer("BoardService", (it) => {
             description: "On staging, waiting for QA.",
             archives: false,
             requireApprovalIn: ["project-careday"],
+            checks: [{ kind: "merged" as const, into: "staging" }, { kind: "tests" as const }],
           },
           {
             id: "done",
@@ -83,6 +85,7 @@ layer("BoardService", (it) => {
             description: "Shipped.",
             archives: true,
             requireApprovalIn: ["*"],
+            checks: [],
           },
         ];
         yield* board.setColumns(edited);

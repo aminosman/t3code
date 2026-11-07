@@ -72,7 +72,7 @@ describe("summarySystemPrompt", () => {
       },
     ]);
     expect(prompt).toContain('- qa ("QA on staging"): Deployed to staging, waiting for QA.');
-    expect(prompt).toContain('- fix ("Fix")');
+    expect(prompt).toContain('- fix ("Building")');
     expect(prompt).not.toContain("deployed");
   });
 });

@@ -3149,6 +3149,16 @@ export const layerWsRpc = (
             .pipe(Effect.mapError(boardFailed)),
         [WS_METHODS.boardBranch]: (input) =>
           boardFlow.branch(input.threadId).pipe(Effect.mapError(boardFailed)),
+        [WS_METHODS.boardChecks]: (input) =>
+          boardFlow.checks(input.threadId).pipe(
+            Effect.map((columns) => ({ columns })),
+            Effect.mapError(boardFailed),
+          ),
+        [WS_METHODS.boardAddCard]: (input) =>
+          boardFlow.addCard(input).pipe(
+            Effect.map((threadId) => ({ threadId: ThreadId.make(threadId) })),
+            Effect.mapError(boardFailed),
+          ),
         [WS_METHODS.boardNudge]: (input) =>
           boardFlow.nudge(input.threadIds).pipe(
             Effect.map((sent) => ({ sent })),

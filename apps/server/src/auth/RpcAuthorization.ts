@@ -223,6 +223,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.boardComments]: AuthOrchestrationReadScope,
   [WS_METHODS.boardCard]: AuthOrchestrationOperateScope,
   [WS_METHODS.boardBranch]: AuthOrchestrationReadScope,
+  [WS_METHODS.boardChecks]: AuthOrchestrationReadScope,
+  [WS_METHODS.boardAddCard]: AuthOrchestrationOperateScope,
   [WS_METHODS.historyMeetingList]: AuthOrchestrationReadScope,
   [WS_METHODS.historyMeetingRead]: AuthOrchestrationReadScope,
   [WS_METHODS.historyThreadMessages]: AuthOrchestrationReadScope,

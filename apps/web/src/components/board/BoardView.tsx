@@ -66,6 +66,7 @@ import {
   summaryIsStale,
   turnStatus,
 } from "./boardModel";
+import { AddCard } from "./AddCard";
 import { CardBack } from "./CardBack";
 import { ColumnEditor } from "./ColumnEditor";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -345,6 +346,7 @@ export function BoardView(props: BoardViewProps) {
             )?.title
           }
           pullRequests={openCard.thread.pullRequests}
+          columns={board.columns}
           onClose={() => setOpenCardId(null)}
           onOpenThread={() => {
             setOpenCardId(null);
@@ -440,6 +442,19 @@ export function BoardView(props: BoardViewProps) {
                 context={context}
                 draggingId={draggingId}
                 onShowAll={() => setShowAllIn((current) => new Set([...current, column.id]))}
+                footer={
+                  column.archives ||
+                  scope.kind === "thread" ||
+                  board.environmentId === null ? null : (
+                    <AddCard
+                      environmentId={board.environmentId}
+                      projects={board.projects}
+                      defaultProjectId={scope.kind === "project" ? scope.projectId : null}
+                      columnTitle={column.title}
+                      onAdd={(input) => board.addCard({ ...input, stage: column.id })}
+                    />
+                  )
+                }
               />
             );
           })}
@@ -594,6 +609,7 @@ function BoardList({
   context,
   draggingId,
   onShowAll,
+  footer,
 }: {
   column: BoardColumn;
   /** The list's pastel: an index, or the grey of the last archiving column. */
@@ -605,6 +621,8 @@ function BoardList({
   context: BoardContext;
   draggingId: string | null;
   onShowAll: () => void;
+  /** What sits under the cards: the add-a-card form for working columns. */
+  footer: ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const open = allCards.filter((card) => card.thread.archivedAt === null);
@@ -710,6 +728,7 @@ function BoardList({
           Show {hidden} more
         </button>
       ) : null}
+      {footer}
     </section>
   );
 }
