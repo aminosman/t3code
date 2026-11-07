@@ -127,4 +127,30 @@ layer("BoardService", (it) => {
       assert.deepStrictEqual(yield* board.approvals, []);
     }),
   );
+
+  it.effect(
+    "assigns a card, placing it if it was never placed, and keeps its comments in order",
+    () =>
+      Effect.gen(function* () {
+        const board = yield* BoardService.BoardService;
+        yield* board.assign("fresh", "user");
+        const placed = yield* board.card("fresh");
+        const firstOpen = (yield* board.columns).find((column) => !column.archives)?.id;
+        assert.deepStrictEqual([placed?.stage, placed?.assignee], [firstOpen, "user"]);
+        // Moving keeps the assignee.
+        yield* board.move({ threadIds: ["fresh"], stage: "qa", movedBy: "agent" });
+        assert.strictEqual((yield* board.card("fresh"))?.assignee, "user");
+        yield* board.comment("fresh", "agent", "Please sign in.");
+        yield* board.comment("fresh", "user", "Done.");
+        assert.deepStrictEqual(
+          (yield* board.comments("fresh")).map((entry) => [entry.author, entry.body]),
+          [
+            ["agent", "Please sign in."],
+            ["user", "Done."],
+          ],
+        );
+        const [summary] = yield* board.commentSummaries;
+        assert.deepStrictEqual([summary?.count, summary?.last.body], [2, "Done."]);
+      }),
+  );
 });

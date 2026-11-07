@@ -12,6 +12,7 @@ import {
   ThreadId,
   DEFAULT_BOARD_COLUMNS,
   type BoardSummary,
+  type BoardComment,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -218,6 +219,8 @@ const makeHarness = Effect.gen(function* () {
   const placed = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
   const saved = yield* Ref.make<ReadonlyArray<BoardSummary>>([]);
   const approvals = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+  const notes = yield* Ref.make<ReadonlyArray<BoardComment>>([]);
+  const assigned = yield* Ref.make<ReadonlyMap<string, "agent" | "user">>(new Map());
   const findShell = (threadId: ThreadId) =>
     activeThreads.find((t) => t.id === threadId) ??
     archivedThreads.find((t) => t.id === threadId) ??
@@ -485,10 +488,28 @@ const makeHarness = Effect.gen(function* () {
                     stage,
                     movedAt: "2026-11-07T00:00:00.000Z",
                     movedBy: "agent",
+                    assignee: "agent",
                   } as never);
             }),
           ),
         summaries: Ref.get(saved),
+        comment: (threadId, author, body) =>
+          Ref.modify(notes, (list) => {
+            const entry = {
+              id: list.length + 1,
+              threadId,
+              author,
+              body,
+              createdAt: "",
+            } as BoardComment;
+            return [entry, [...list, entry]];
+          }),
+        comments: (threadId) =>
+          Ref.get(notes).pipe(
+            Effect.map((list) => list.filter((entry) => entry.threadId === threadId)),
+          ),
+        assign: (threadId, assignee) =>
+          Ref.update(assigned, (map) => new Map([...map, [threadId, assignee]])),
         saveSummary: (summary) =>
           Ref.update(saved, (list) => [
             ...list.filter((entry) => entry.threadId !== summary.threadId),
@@ -668,6 +689,17 @@ it.effect(
         // No arguments: reads the card and the board's columns, changes nothing.
         const read = yield* call("t3_card_update", {});
         expect((read.structuredContent as { columns: unknown[] }).columns).toHaveLength(6);
+        // Handing the card to the user with what they need to do.
+        const handed = yield* call("t3_card_update", {
+          assignee: "user",
+          comment: "Sign in to Gusto and set the 401(k) to 16.5% pre-tax.",
+        });
+        expect(handed.structuredContent).toMatchObject({
+          assignee: "user",
+          comments: [
+            { author: "agent", body: "Sign in to Gusto and set the 401(k) to 16.5% pre-tax." },
+          ],
+        });
         // A column that needs approval: the first ask files a request and the card stays.
         const asked = yield* call("t3_card_update", {
           stage: "Committed & pushed",

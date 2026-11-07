@@ -51,6 +51,8 @@ export class BoardSummarizer extends Context.Service<BoardSummarizer, BoardSumma
 
 /** Runs ended this way are worth a fresh summary. */
 const SETTLED_RUN = new Set(["completed", "failed", "interrupted", "cancelled", "waiting"]);
+/** A run beginning; later updates of a running run do not count. */
+const STARTED_RUN = new Set(["preparing", "queued", "starting"]);
 /** Summaries at once: each is a Claude process and a little quota. */
 const WORKERS = 2;
 /** Let a turn's last messages land before reading them. */
@@ -79,6 +81,8 @@ next: who acts next and on what, at most 120 characters ("You: approve the migra
 reason: why that column, at most 80 characters.
 confidence: 0 to 1, how sure you are of the column.
 codeChanged: whether the thread changed code (edits, commits, a PR).
+needsUser: whether the thread ended waiting on the user to answer, decide, approve or do something.
+ask: when needsUser, exactly what the user has to do, as a short instruction to them; else "".
 reviewedBy: who independently reviewed the current code changes, as named in the thread (a reviewer agent's model, a person who approved a PR); empty if nobody has.`;
 
 const SummaryOutput = Schema.Struct({
@@ -88,6 +92,8 @@ const SummaryOutput = Schema.Struct({
   reason: Schema.String,
   confidence: Schema.Number,
   codeChanged: Schema.Boolean,
+  needsUser: Schema.Boolean,
+  ask: Schema.String,
   reviewedBy: Schema.Array(Schema.String),
 });
 
@@ -110,7 +116,17 @@ const summaryJsonSchema = (columns: ReadonlyArray<BoardColumn>) =>
   encodeJson({
     type: "object",
     additionalProperties: false,
-    required: ["summary", "next", "stage", "reason", "confidence", "codeChanged", "reviewedBy"],
+    required: [
+      "summary",
+      "next",
+      "stage",
+      "reason",
+      "confidence",
+      "codeChanged",
+      "reviewedBy",
+      "needsUser",
+      "ask",
+    ],
     properties: {
       summary: { type: "string" },
       next: { type: "string" },
@@ -118,6 +134,8 @@ const summaryJsonSchema = (columns: ReadonlyArray<BoardColumn>) =>
       reason: { type: "string" },
       confidence: { type: "number" },
       codeChanged: { type: "boolean" },
+      needsUser: { type: "boolean" },
+      ask: { type: "string" },
       reviewedBy: { type: "array", items: { type: "string" } },
     },
   });
@@ -337,10 +355,15 @@ const make = Effect.gen(function* () {
       reviewedBy: output.codeChanged ? output.reviewedBy.slice(0, 8) : null,
     };
     yield* board.saveSummary(summary);
+    // A turn that ended on the user hands them the card, with what they have to do.
+    if (output.needsUser && card?.assignee !== "user" && shell.archivedAt === null) {
+      const ask = (output.ask.trim() || output.next.trim()).slice(0, 600);
+      if (ask.length > 0) yield* board.comment(threadId, "agent", ask);
+      yield* board.assign(threadId, "user");
+    }
     if (
       shouldAutoMove({
         suggested: summary.suggestedStage,
-        // The last archiving column is "put away": suggested, never moved to.
         // The last archiving column, and any column that needs approval: suggested, never moved to.
         suggestedPutsAway:
           suggested.id === columns.findLast((column) => column.archives)?.id ||
@@ -378,16 +401,26 @@ const make = Effect.gen(function* () {
   );
   for (let index = 0; index < WORKERS; index += 1) yield* Effect.forkScoped(worker);
 
-  if (process.env.ROOST_BOARD_SUMMARIES !== "0") {
-    yield* threads.streamDomainEvents.pipe(
-      Stream.runForEach((event) =>
-        event.type === "run.updated" && SETTLED_RUN.has(event.payload.status)
-          ? enqueue([event.payload.threadId])
-          : Effect.void,
+  const summariesOn = process.env.ROOST_BOARD_SUMMARIES !== "0";
+  // A turn starting means the user answered (in the chat or on the card): the agent has the card again.
+  const takeBack = (threadId: string) =>
+    board.card(threadId).pipe(
+      Effect.flatMap((placed) =>
+        placed?.assignee === "user" ? board.assign(threadId, "agent") : Effect.void,
       ),
-      Effect.forkScoped,
+      Effect.ignore,
     );
-  }
+  yield* threads.streamDomainEvents.pipe(
+    Stream.runForEach((event) => {
+      if (event.type !== "run.updated") return Effect.void;
+      if (STARTED_RUN.has(event.payload.status)) return takeBack(event.payload.threadId);
+      if (summariesOn && SETTLED_RUN.has(event.payload.status)) {
+        return enqueue([event.payload.threadId]);
+      }
+      return Effect.void;
+    }),
+    Effect.forkScoped,
+  );
 
   return BoardSummarizer.of({
     enqueue,

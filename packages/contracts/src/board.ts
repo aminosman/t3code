@@ -110,8 +110,31 @@ export const BoardCard = Schema.Struct({
   movedAt: Schema.String,
   /** Who moved it last: the user on the board, the thread's agent, or the summarizer. */
   movedBy: Schema.Literals(["user", "agent", "auto"]),
+  /** Whose move it is: the thread's agent, or the user it handed the card to. */
+  assignee: Schema.optional(Schema.Literals(["agent", "user"])),
 });
 export type BoardCard = typeof BoardCard.Type;
+
+export const BoardAssignee = Schema.Literals(["agent", "user"]);
+export type BoardAssignee = typeof BoardAssignee.Type;
+
+/** A comment on a card, by the user or the thread's agent. */
+export const BoardComment = Schema.Struct({
+  id: Schema.Number,
+  threadId: ThreadId,
+  author: BoardAssignee,
+  body: Schema.String,
+  createdAt: Schema.String,
+});
+export type BoardComment = typeof BoardComment.Type;
+
+/** How many comments a card has, and its latest, for the card's face. */
+export const BoardCommentsSummary = Schema.Struct({
+  threadId: ThreadId,
+  count: Schema.Number,
+  last: BoardComment,
+});
+export type BoardCommentsSummary = typeof BoardCommentsSummary.Type;
 
 export const BoardListInput = Schema.Struct({});
 export type BoardListInput = typeof BoardListInput.Type;
@@ -155,6 +178,7 @@ export const BoardListOutput = Schema.Struct({
   summaries: Schema.Array(BoardSummary),
   /** Requests waiting on the user, and approvals not yet used. */
   approvals: Schema.Array(BoardApproval),
+  comments: Schema.Array(BoardCommentsSummary),
   /** Threads waiting for or being summarized now. */
   summarizing: Schema.Array(ThreadId),
 });
@@ -210,6 +234,28 @@ export type BoardNudgeInput = typeof BoardNudgeInput.Type;
 
 export const BoardNudgeOutput = Schema.Struct({ sent: Schema.Number });
 export type BoardNudgeOutput = typeof BoardNudgeOutput.Type;
+
+export const BoardCommentsInput = Schema.Struct({ threadId: ThreadId });
+export type BoardCommentsInput = typeof BoardCommentsInput.Type;
+
+export const BoardCommentsOutput = Schema.Struct({ comments: Schema.Array(BoardComment) });
+export type BoardCommentsOutput = typeof BoardCommentsOutput.Type;
+
+/** The user comments on a card and/or reassigns it; handing it to the agent tells the thread. */
+export const BoardCardInput = Schema.Struct({
+  threadId: ThreadId,
+  comment: Schema.optional(Schema.String.check(Schema.isMaxLength(4000))),
+  assignee: Schema.optional(BoardAssignee),
+});
+export type BoardCardInput = typeof BoardCardInput.Type;
+
+export const BoardCardOutput = Schema.Struct({
+  assignee: BoardAssignee,
+  comments: Schema.Array(BoardComment),
+  /** Whether the thread was sent the comments and asked to carry on. */
+  told: Schema.Boolean,
+});
+export type BoardCardOutput = typeof BoardCardOutput.Type;
 
 export class BoardApiError extends Schema.TaggedError<BoardApiError>()("BoardApiError", {
   message: Schema.String,

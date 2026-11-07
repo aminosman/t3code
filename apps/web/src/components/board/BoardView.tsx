@@ -19,6 +19,7 @@ import {
   BOARD_REVIEWS_WANTED,
   type BoardApproval,
   type BoardColumn,
+  type BoardCommentsSummary,
   type BoardStage,
   type BoardSummary,
   type ThreadId,
@@ -33,6 +34,7 @@ import {
   MoreHorizontalIcon,
   SearchIcon,
   SparklesIcon,
+  MessageSquareIcon,
   ShieldCheckIcon,
   SlidersHorizontalIcon,
   SquareCheckIcon,
@@ -62,6 +64,7 @@ import {
   summaryIsStale,
   turnStatus,
 } from "./boardModel";
+import { CardBack } from "./CardBack";
 import { ColumnEditor } from "./ColumnEditor";
 import { useBoard } from "./useBoard";
 
@@ -148,6 +151,8 @@ interface BoardContext {
   readonly pendingApprovals: ReadonlyMap<string, BoardApproval>;
   readonly decide: (card: CardView, approve: boolean) => void;
   readonly nudge: (cards: ReadonlyArray<CardView>) => void;
+  readonly commentSummaries: ReadonlyMap<string, BoardCommentsSummary>;
+  readonly openCard: (card: CardView) => void;
 }
 
 export function BoardView(props: BoardViewProps) {
@@ -174,6 +179,7 @@ export function BoardView(props: BoardViewProps) {
         : { kind: "all" };
   const view = buildBoard(board.threads, board.cards, scope, board.columns, board.subCounts);
   const [editingColumns, setEditingColumns] = useState(false);
+  const [openCardId, setOpenCardId] = useState<string | null>(null);
   const projectsById = new Map(board.projects.map((project) => [project.id as string, project]));
   const ownerProject =
     view.owner === null ? undefined : projectsById.get(view.owner.thread.projectId);
@@ -185,11 +191,16 @@ export function BoardView(props: BoardViewProps) {
     (board.summaries.get(card.thread.id)?.summary.toLowerCase().includes(needle) ?? false) ||
     (projectsById.get(card.thread.projectId)?.title.toLowerCase().includes(needle) ?? false);
   const passes = (card: CardView, filter: BoardFilter) =>
-    (filter === "needs-you" && board.pendingApprovals.has(card.thread.id)) ||
+    (filter === "needs-you" &&
+      card.thread.archivedAt === null &&
+      (board.pendingApprovals.has(card.thread.id) || card.card?.assignee === "user")) ||
     passesFilter(card, filter, now, board.summaries.get(card.thread.id));
 
   const allCards = [...view.columns.values()].flat();
   const dragging = allCards.find((card) => card.thread.id === draggingId) ?? null;
+  const openCard =
+    (openCardId === null ? null : allCards.find((card) => card.thread.id === openCardId)) ??
+    (openCardId !== null && view.owner?.thread.id === openCardId ? view.owner : null);
   const openCards = allCards.filter((card) => card.thread.archivedAt === null);
 
   const goTo = props.onScopeChange;
@@ -224,6 +235,8 @@ export function BoardView(props: BoardViewProps) {
       void board.decide(card.thread.id as ThreadId, request.stage, approve, note);
     },
     nudge: (cards) => void board.nudge(cards.map((card) => card.thread.id as ThreadId)),
+    commentSummaries: board.commentSummaries,
+    openCard: (card) => setOpenCardId(card.thread.id),
     archive: (cards, into) =>
       void board.archiveMany(
         cards.map((card) => card.thread.id as ThreadId),
@@ -311,6 +324,29 @@ export function BoardView(props: BoardViewProps) {
         </Tooltip>
         {props.controls}
       </header>
+      {openCard !== null && board.environmentId !== null ? (
+        <CardBack
+          environmentId={board.environmentId}
+          thread={openCard.thread}
+          projectTitle={projectsById.get(openCard.thread.projectId)?.title ?? null}
+          card={openCard.card}
+          column={board.columns.find((column) => column.id === openCard.column)}
+          summary={board.summaries.get(openCard.thread.id)}
+          approval={board.pendingApprovals.get(openCard.thread.id)}
+          approvalColumnTitle={
+            board.columns.find(
+              (column) => column.id === board.pendingApprovals.get(openCard.thread.id)?.stage,
+            )?.title
+          }
+          onClose={() => setOpenCardId(null)}
+          onOpenThread={() => {
+            setOpenCardId(null);
+            context.open(openCard);
+          }}
+          onDecide={(approve) => context.decide(openCard, approve)}
+          onUpdate={(change) => board.updateCard(openCard.thread.id as ThreadId, change)}
+        />
+      ) : null}
       {editingColumns ? (
         <ColumnEditor
           open
@@ -700,8 +736,11 @@ function CardFace({
   const summary = context.summaries.get(thread.id);
   const summarizing = context.summarizing.has(thread.id);
   const request = context.pendingApprovals.get(thread.id);
+  const assignedToYou = card.card?.assignee === "user" && thread.archivedAt === null;
+  const commentInfo = context.commentSummaries.get(thread.id);
   const liveTurn = turnStatus(thread);
-  const turn = request !== undefined && liveTurn !== "working" ? "needs-you" : liveTurn;
+  const turn =
+    (request !== undefined || assignedToYou) && liveTurn !== "working" ? "needs-you" : liveTurn;
   const days = idleDays(thread, context.now);
   const archived = thread.archivedAt !== null;
   const suggestion =
@@ -830,6 +869,21 @@ function CardFace({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {commentInfo !== undefined ? (
+          <button
+            type="button"
+            className="board-badge board-badge-button"
+            aria-label={`${commentInfo.count} comment${commentInfo.count === 1 ? "" : "s"}; open the card`}
+            onPointerDown={stop}
+            onClick={(event) => {
+              event.stopPropagation();
+              context.openCard(card);
+            }}
+          >
+            <MessageSquareIcon className="size-3" />
+            {commentInfo.count}
+          </button>
+        ) : null}
         {summarizing ? <span className="board-badge board-badge-busy">Summarizing…</span> : null}
         {suggestion !== null ? (
           <Tooltip>
@@ -851,8 +905,21 @@ function CardFace({
             <TooltipPopup side="top">{summary?.reason}</TooltipPopup>
           </Tooltip>
         ) : null}
+        {assignedToYou ? (
+          <Tooltip>
+            <TooltipTrigger render={<span className="board-assignee" />}>You</TooltipTrigger>
+            <TooltipPopup side="top">
+              Assigned to you
+              {commentInfo?.last.author === "agent" ? `: ${commentInfo.last.body}` : ""}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {!lifted ? (
-          <span className="ml-auto" onPointerDown={stop} onClick={stop}>
+          <span
+            className={assignedToYou ? undefined : "ml-auto"}
+            onPointerDown={stop}
+            onClick={stop}
+          >
             <Menu>
               <MenuTrigger
                 render={
@@ -866,6 +933,7 @@ function CardFace({
                 <MoreHorizontalIcon className="size-3.5" />
               </MenuTrigger>
               <MenuPopup align="end">
+                <MenuItem onClick={() => context.openCard(card)}>Open card</MenuItem>
                 <MenuItem onClick={() => context.openBoard(card)}>Open its board</MenuItem>
                 {!archived ? (
                   <MenuItem onClick={() => context.nudge([card])}>Nudge forward</MenuItem>

@@ -223,6 +223,8 @@ const makeHandlers = Effect.gen(function* () {
       readonly summary?: string | undefined;
       readonly next?: string | undefined;
       readonly reviewedBy?: ReadonlyArray<string> | null | undefined;
+      readonly assignee?: "agent" | "user" | undefined;
+      readonly comment?: string | undefined;
       readonly threadId?: ThreadId | undefined;
     }) {
       const scope = yield* requireScope;
@@ -323,6 +325,21 @@ const makeHandlers = Effect.gen(function* () {
       if (reports || column !== undefined) {
         yield* board.saveSummary(summary).pipe(Effect.mapError(boardFailed));
       }
+      if (input.comment !== undefined && input.comment.trim().length > 0) {
+        yield* board
+          .comment(threadId, "agent", input.comment.trim())
+          .pipe(Effect.mapError(boardFailed));
+      }
+      if (input.assignee !== undefined) {
+        yield* board.assign(threadId, input.assignee).pipe(Effect.mapError(boardFailed));
+      }
+      const assignee =
+        input.assignee ??
+        (yield* board.card(threadId).pipe(Effect.mapError(boardFailed)))?.assignee ??
+        "agent";
+      const recent = (yield* board.comments(threadId).pipe(Effect.mapError(boardFailed)))
+        .slice(-10)
+        .map((entry) => ({ author: entry.author, body: entry.body, createdAt: entry.createdAt }));
       const shown = reports || column !== undefined ? summary : previous;
       return {
         threadId,
@@ -333,6 +350,8 @@ const makeHandlers = Effect.gen(function* () {
         reviewsWanted: BOARD_REVIEWS_WANTED,
         columns: columnList,
         approval,
+        assignee,
+        comments: recent,
       };
     }),
 

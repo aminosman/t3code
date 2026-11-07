@@ -3,7 +3,10 @@
 // created here, idempotently, when the service starts.
 import {
   type BoardApproval,
+  type BoardAssignee,
   type BoardCard,
+  type BoardComment,
+  type BoardCommentsSummary,
   type BoardColumn,
   type BoardStage,
   type BoardSubCards,
@@ -55,6 +58,16 @@ export interface BoardServiceShape {
     readonly approve: boolean;
     readonly note: string;
   }) => Effect.Effect<BoardApproval, BoardError>;
+  /** Hands the card to the agent or the user, placing it first if it was never placed. */
+  readonly assign: (threadId: string, assignee: BoardAssignee) => Effect.Effect<void, BoardError>;
+  readonly comments: (threadId: string) => Effect.Effect<ReadonlyArray<BoardComment>, BoardError>;
+  readonly comment: (
+    threadId: string,
+    author: BoardAssignee,
+    body: string,
+  ) => Effect.Effect<BoardComment, BoardError>;
+  /** Each card's comment count and latest comment. */
+  readonly commentSummaries: Effect.Effect<ReadonlyArray<BoardCommentsSummary>, BoardError>;
   /** Spends a granted approval once the card has moved. */
   readonly useApproval: (threadId: string, stage: BoardStage) => Effect.Effect<void, BoardError>;
   readonly setColumns: (
@@ -71,6 +84,7 @@ interface CardRow {
   readonly stage: string;
   readonly moved_at: string;
   readonly moved_by: string;
+  readonly assignee: string | null;
 }
 
 const toCard = (row: CardRow): BoardCard =>
@@ -79,6 +93,7 @@ const toCard = (row: CardRow): BoardCard =>
     stage: row.stage,
     movedAt: row.moved_at,
     movedBy: row.moved_by === "agent" || row.moved_by === "auto" ? row.moved_by : "user",
+    assignee: row.assignee === "user" ? "user" : "agent",
   }) as BoardCard;
 
 const Reviewers = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -99,6 +114,29 @@ const make = Effect.gen(function* () {
       moved_at TEXT NOT NULL,
       moved_by TEXT NOT NULL
     )
+  `.pipe(Effect.mapError(failed));
+  const cardFields = new Set(
+    (yield* sql<{ name: string }>`PRAGMA table_info(roost_board_cards)`.pipe(
+      Effect.mapError(failed),
+    )).map((row) => row.name),
+  );
+  if (!cardFields.has("assignee")) {
+    yield* sql`ALTER TABLE roost_board_cards ADD COLUMN assignee TEXT NOT NULL DEFAULT 'agent'`.pipe(
+      Effect.mapError(failed),
+    );
+  }
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS roost_board_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id TEXT NOT NULL,
+      author TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `.pipe(Effect.mapError(failed));
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_roost_board_comments_thread
+    ON roost_board_comments (thread_id, id)
   `.pipe(Effect.mapError(failed));
 
   yield* sql`
@@ -342,7 +380,7 @@ const make = Effect.gen(function* () {
 
   const card = (threadId: string) =>
     sql<CardRow>`
-      SELECT thread_id, stage, moved_at, moved_by FROM roost_board_cards
+      SELECT thread_id, stage, moved_at, moved_by, assignee FROM roost_board_cards
       WHERE thread_id = ${threadId}
     `.pipe(
       Effect.map((rows) => (rows[0] === undefined ? null : toCard(rows[0]))),
@@ -350,7 +388,7 @@ const make = Effect.gen(function* () {
     );
 
   const list = sql<CardRow>`
-    SELECT thread_id, stage, moved_at, moved_by FROM roost_board_cards
+    SELECT thread_id, stage, moved_at, moved_by, assignee FROM roost_board_cards
   `.pipe(
     Effect.map((rows) => rows.map(toCard)),
     Effect.mapError(failed),
@@ -377,10 +415,83 @@ const make = Effect.gen(function* () {
         { discard: true },
       ),
     );
-    return ids.map((threadId) =>
-      toCard({ thread_id: threadId, stage, moved_at: movedAt, moved_by: movedBy }),
-    );
+    const rows = yield* sql<CardRow>`
+      SELECT thread_id, stage, moved_at, moved_by, assignee FROM roost_board_cards
+      WHERE ${sql.in("thread_id", ids)}
+    `;
+    return rows.map(toCard);
   }, Effect.mapError(failed));
+
+  const assign: BoardServiceShape["assign"] = Effect.fn("BoardService.assign")(function* (
+    threadId,
+    assignee,
+  ) {
+    const placed = yield* card(threadId);
+    if (placed === null) {
+      // An unplaced card is placed where it shows: the first open column.
+      const first = (yield* columns).find((column) => !column.archives);
+      yield* move({ threadIds: [threadId], stage: first?.id ?? "research", movedBy: "user" });
+    }
+    yield* sql`UPDATE roost_board_cards SET assignee = ${assignee} WHERE thread_id = ${threadId}`;
+  }, Effect.mapError(failed));
+
+  interface CommentRow {
+    readonly id: number;
+    readonly thread_id: string;
+    readonly author: string;
+    readonly body: string;
+    readonly created_at: string;
+  }
+  const toComment = (row: CommentRow): BoardComment =>
+    ({
+      id: row.id,
+      threadId: row.thread_id,
+      author: row.author === "agent" ? "agent" : "user",
+      body: row.body,
+      createdAt: row.created_at,
+    }) as BoardComment;
+
+  const comments = (threadId: string) =>
+    sql<CommentRow>`
+      SELECT * FROM roost_board_comments WHERE thread_id = ${threadId} ORDER BY id
+    `.pipe(
+      Effect.map((rows) => rows.map(toComment)),
+      Effect.mapError(failed),
+    );
+
+  const comment: BoardServiceShape["comment"] = Effect.fn("BoardService.comment")(function* (
+    threadId,
+    author,
+    body,
+  ) {
+    const createdAt = DateTime.formatIso(yield* DateTime.now);
+    const rows = yield* sql<CommentRow>`
+        INSERT INTO roost_board_comments (thread_id, author, body, created_at)
+        VALUES (${threadId}, ${author}, ${body}, ${createdAt})
+        RETURNING *
+      `;
+    return toComment(rows[0]!);
+  }, Effect.mapError(failed));
+
+  const commentSummaries = sql<CommentRow & { readonly count: number }>`
+    SELECT c.*, counts.count FROM roost_board_comments c
+    JOIN (
+      SELECT thread_id, COUNT(*) AS count, MAX(id) AS last_id
+      FROM roost_board_comments GROUP BY thread_id
+    ) counts ON counts.last_id = c.id
+  `.pipe(
+    Effect.map((rows) =>
+      rows.map(
+        (row) =>
+          ({
+            threadId: row.thread_id,
+            count: row.count,
+            last: toComment(row),
+          }) as BoardCommentsSummary,
+      ),
+    ),
+    Effect.mapError(failed),
+  );
 
   // Done: archived, or placed in an archiving column while still open.
   const subCards = Effect.gen(function* () {
@@ -420,6 +531,10 @@ const make = Effect.gen(function* () {
     requestApproval,
     decideApproval,
     useApproval,
+    assign,
+    comments,
+    comment,
+    commentSummaries,
   });
 });
 

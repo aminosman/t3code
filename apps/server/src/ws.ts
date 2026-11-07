@@ -3111,6 +3111,7 @@ export const layerWsRpc = (
             subCards: board.subCards,
             summaries: board.summaries,
             approvals: board.approvals,
+            comments: board.commentSummaries,
             summarizing: summarizer.pending.pipe(
               Effect.map((ids) => ids.map((id) => ThreadId.make(id))),
             ),
@@ -3137,6 +3138,15 @@ export const layerWsRpc = (
               Effect.map((approval) => ({ approval })),
               Effect.mapError(boardFailed),
             ),
+        [WS_METHODS.boardComments]: (input) =>
+          board.comments(input.threadId).pipe(
+            Effect.map((comments) => ({ comments })),
+            Effect.mapError(boardFailed),
+          ),
+        [WS_METHODS.boardCard]: (input) =>
+          boardFlow
+            .card({ threadId: input.threadId, comment: input.comment, assignee: input.assignee })
+            .pipe(Effect.mapError(boardFailed)),
         [WS_METHODS.boardNudge]: (input) =>
           boardFlow.nudge(input.threadIds).pipe(
             Effect.map((sent) => ({ sent })),

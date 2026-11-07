@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_BOARD_COLUMNS } from "@t3tools/contracts";
 
+import { handBackMessage } from "./BoardFlow.ts";
+
 import {
   agentReportedTurn,
   shouldAutoMove,
@@ -88,5 +90,17 @@ describe("agentReportedTurn", () => {
       agentReportedTurn({ source: "auto", summarizedAt: "2026-11-07T10:05:00.000Z" }, turn),
     ).toBe(false);
     expect(agentReportedTurn(undefined, turn)).toBe(false);
+  });
+});
+
+describe("handBackMessage", () => {
+  it("passes on the user's comments since the agent last wrote", () => {
+    const message = handBackMessage([
+      { id: 1, threadId: "t", author: "user", body: "old note", createdAt: "" },
+      { id: 2, threadId: "t", author: "agent", body: "Please sign in.", createdAt: "" },
+      { id: 3, threadId: "t", author: "user", body: "Signed in.", createdAt: "" },
+    ] as never);
+    expect(message).toContain("- Signed in.");
+    expect(message).not.toContain("old note");
   });
 });

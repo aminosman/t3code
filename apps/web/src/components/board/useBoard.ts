@@ -64,6 +64,7 @@ export function useBoard(scopeThreadId: string | null) {
   });
   const decideCommand = useAtomCommand(serverEnvironment.boardDecide, { reportFailure: false });
   const nudgeCommand = useAtomCommand(serverEnvironment.boardNudge, { reportFailure: false });
+  const cardCommand = useAtomCommand(serverEnvironment.boardCard, { reportFailure: false });
   const summarizeCommand = useAtomCommand(serverEnvironment.boardSummarize, {
     reportFailure: false,
   });
@@ -117,6 +118,10 @@ export function useBoard(scopeThreadId: string | null) {
     (listing.data?.summaries ?? []).map((summary) => [summary.threadId as string, summary]),
   );
   const summarizing = new Set<string>(listing.data?.summarizing ?? []);
+  /** Each card's comment count and latest comment. */
+  const commentSummaries = new Map(
+    (listing.data?.comments ?? []).map((entry) => [entry.threadId as string, entry]),
+  );
   /** Each thread's request waiting on the user, if it has one. */
   const pendingApprovals = new Map(
     (listing.data?.approvals ?? [])
@@ -272,6 +277,28 @@ export function useBoard(scopeThreadId: string | null) {
     listing.refresh();
   };
 
+  /** Comments on a card and/or reassigns it; true when the server took it. */
+  const updateCard = async (
+    threadId: ThreadId,
+    change: { readonly comment?: string; readonly assignee?: "agent" | "user" },
+  ) => {
+    if (environmentId === null) return false;
+    const result = await cardCommand({ environmentId, input: { threadId, ...change } });
+    if (result._tag === "Failure") {
+      reportFailure("Could not update the card", result);
+      return false;
+    }
+    if (result.value.told) {
+      toastManager.add({
+        type: "success",
+        title: "Handed back to the agent",
+        description: "It was sent your comments and asked to carry on.",
+      });
+    }
+    listing.refresh();
+    return true;
+  };
+
   /** Asks threads to check their cards and move the work forward. */
   const nudge = async (threadIds: ReadonlyArray<ThreadId>) => {
     if (environmentId === null || threadIds.length === 0) return;
@@ -316,6 +343,8 @@ export function useBoard(scopeThreadId: string | null) {
     pendingApprovals,
     decide,
     nudge,
+    commentSummaries,
+    updateCard,
     threads,
     cards,
     subCounts: listing.data?.subCards ?? [],

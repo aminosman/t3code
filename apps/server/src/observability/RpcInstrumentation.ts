@@ -222,6 +222,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.boardSetColumns]: "board",
   [WS_METHODS.boardDecide]: "board",
   [WS_METHODS.boardNudge]: "board",
+  [WS_METHODS.boardComments]: "board",
+  [WS_METHODS.boardCard]: "board",
   [WS_METHODS.historyMeetingList]: "history",
   [WS_METHODS.historyMeetingRead]: "history",
   [WS_METHODS.historyThreadMessages]: "history",

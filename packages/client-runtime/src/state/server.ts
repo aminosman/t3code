@@ -1360,6 +1360,12 @@ export function createServerEnvironmentAtoms<R, E>(
         return threads;
       }),
     }),
+    /** One card's comments, for its card back. */
+    boardComments: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:board:comments",
+      tag: WS_METHODS.boardComments,
+      staleTimeMs: 5_000,
+    }),
     /** Roost's card wall: the stage of every placed thread. */
     boardList: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:board:list",
@@ -1666,6 +1672,10 @@ export function createServerEnvironmentAtoms<R, E>(
     boardSetColumns: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:board:set-columns",
       tag: WS_METHODS.boardSetColumns,
+    }),
+    boardCard: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:board:card",
+      tag: WS_METHODS.boardCard,
     }),
     boardDecide: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:board:decide",

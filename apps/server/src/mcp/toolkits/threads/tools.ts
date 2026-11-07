@@ -181,6 +181,13 @@ export const CardUpdateInput = Schema.Struct({
     description:
       "Who independently reviewed the current code changes (a reviewer's model, a person who approved the PR); [] when code changed and nobody has; null when no code changed.",
   }),
+  assignee: Schema.optional(Schema.Literals(["agent", "user"])).annotate({
+    description:
+      '"user" hands the card to the user when you need them to act; say what in comment. "agent" takes it back.',
+  }),
+  comment: Schema.optional(Schema.String.check(Schema.isMaxLength(4000))).annotate({
+    description: "A comment on the card, shown to the user: what you need from them, step by step.",
+  }),
   threadId: Schema.optional(ThreadId).annotate({
     description: "Omit for your own thread's card.",
   }),
@@ -204,6 +211,11 @@ export const CardUpdateOutput = Schema.Struct({
   columns: Schema.Array(CardColumnInfo),
   approval: Schema.NullOr(
     Schema.Struct({ stage: Schema.String, status: Schema.String, instruction: Schema.String }),
+  ),
+  assignee: Schema.Literals(["agent", "user"]),
+  /** The card's latest comments, oldest first. */
+  comments: Schema.Array(
+    Schema.Struct({ author: Schema.String, body: Schema.String, createdAt: Schema.String }),
   ),
 });
 
@@ -510,9 +522,9 @@ const HistoryFeedbackTool = Tool.make("t3_history_feedback", {
 const CardUpdateTool = Tool.make("t3_card_update", {
   description:
     "Keep your thread's card on the user's card wall current: its column, a short summary, " +
-    "who acts next, and who has reviewed the code. Send only what changed. With no arguments " +
-    "it changes nothing and returns the card and the board's columns with what each is for. " +
-    "Never archives the thread.",
+    "who acts next, who has reviewed the code, who it is assigned to, and comments. Send " +
+    "only what changed. With no arguments it changes nothing and returns the card, its " +
+    "latest comments and the board's columns with what each is for. Never archives the thread.",
   parameters: CardUpdateInput,
   success: CardUpdateOutput,
   failure,
