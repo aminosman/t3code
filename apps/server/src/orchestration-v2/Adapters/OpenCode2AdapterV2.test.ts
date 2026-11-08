@@ -2437,6 +2437,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             id: McpConnectionId.make("oneleet"),
             name: "Oneleet",
             projectId: ProjectId.make("project-opencode2"),
+            threadProjectId: ProjectId.make("project-opencode2"),
             endpoint: "http://127.0.0.1:3773/mcp/connections/oneleet",
           },
         ],

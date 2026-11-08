@@ -1328,6 +1328,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             id: McpConnectionId.make("oneleet"),
             name: "Oneleet",
             projectId: ProjectId.make("project-codex"),
+            threadProjectId: ProjectId.make("project-codex"),
             endpoint: "http://127.0.0.1:43123/mcp/connections/oneleet",
           },
         ],

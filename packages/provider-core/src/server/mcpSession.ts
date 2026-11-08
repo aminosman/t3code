@@ -11,6 +11,8 @@ export interface McpProviderSessionConnection {
   readonly id: McpConnectionId;
   readonly name: string;
   readonly projectId: ProjectId | null;
+  /** The calling thread's project, sent upstream as `x-t3-project-id`. */
+  readonly threadProjectId: ProjectId;
   readonly endpoint: string;
   readonly url?: string;
 }

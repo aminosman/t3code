@@ -376,6 +376,7 @@ export const layerWithOptions = (
               id: server.id,
               name: server.name,
               projectId: server.projectId,
+              threadProjectId: thread.projectId,
               endpoint: McpProviderSession.mcpConnectionEndpoint(endpoint, server.id),
               ...(server.url === undefined ? {} : { url: server.url }),
             }));
