@@ -230,7 +230,7 @@ import {
   SidebarChromeHeader,
   SidebarMeetingsEntry,
 } from "./sidebar/SidebarChrome";
-import { ProjectBoardButton, SidebarBoardEntry } from "./board/BoardEntryPoints";
+import { LegacyProjectBoardButton, SidebarBoardEntry } from "./board/BoardEntryPoints";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
@@ -2425,13 +2425,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
-        <div className="pointer-events-none absolute top-[calc(50%+1px)] right-7 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
-          <ProjectBoardButton
-            projectId={project.id}
-            projectName={project.displayName}
-            className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
-          />
-        </div>
+        <LegacyProjectBoardButton
+          projectId={project.id}
+          projectName={project.displayName}
+          className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+        />
         <Tooltip>
           <TooltipTrigger
             render={

@@ -35,6 +35,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
+import { BOARD_RPC_REQUIRED_SCOPES } from "../board/rpcRegistry.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -214,17 +215,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pushRemoveDevice]: AuthOrchestrationOperateScope,
   [WS_METHODS.pushTestDevice]: AuthOrchestrationOperateScope,
   [WS_METHODS.historySearch]: AuthOrchestrationReadScope,
-  [WS_METHODS.boardList]: AuthOrchestrationReadScope,
-  [WS_METHODS.boardMove]: AuthOrchestrationOperateScope,
-  [WS_METHODS.boardSummarize]: AuthOrchestrationOperateScope,
-  [WS_METHODS.boardSetColumns]: AuthOrchestrationOperateScope,
-  [WS_METHODS.boardDecide]: AuthOrchestrationOperateScope,
-  [WS_METHODS.boardNudge]: AuthOrchestrationOperateScope,
-  [WS_METHODS.boardComments]: AuthOrchestrationReadScope,
-  [WS_METHODS.boardCard]: AuthOrchestrationOperateScope,
-  [WS_METHODS.boardBranch]: AuthOrchestrationReadScope,
-  [WS_METHODS.boardChecks]: AuthOrchestrationReadScope,
-  [WS_METHODS.boardAddCard]: AuthOrchestrationOperateScope,
   [WS_METHODS.historyMeetingList]: AuthOrchestrationReadScope,
   [WS_METHODS.historyMeetingRead]: AuthOrchestrationReadScope,
   [WS_METHODS.historyThreadMessages]: AuthOrchestrationReadScope,
@@ -249,6 +239,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
+  // Roost: the card wall.
+  ...BOARD_RPC_REQUIRED_SCOPES,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

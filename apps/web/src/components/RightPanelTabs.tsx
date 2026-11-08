@@ -25,9 +25,9 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { BoardSurfaceIcon, boardSurfaceMenuItems } from "./board/BoardEntryPoints";
 import {
   Smartphone,
-  KanbanSquare,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -351,18 +351,7 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
       onClick: props.onAddDiff,
     },
-    ...(props.onAddBoard
-      ? [
-          {
-            label: "Board",
-            icon: KanbanSquare,
-            shortcut: "K",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddBoard,
-          },
-        ]
-      : []),
+    ...boardSurfaceMenuItems(props.onAddBoard),
     {
       label: "Pull request",
       icon: PullRequestGlyph.pullRequest,
@@ -664,7 +653,7 @@ function SurfaceIcon({
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "board":
-      return <KanbanSquare className="size-3 shrink-0" />;
+      return <BoardSurfaceIcon />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1062,18 +1051,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
     },
-    ...(props.onAddBoard
-      ? [
-          {
-            label: "Board",
-            icon: KanbanSquare,
-            shortcut: "K",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddBoard,
-          },
-        ]
-      : []),
+    ...boardSurfaceMenuItems(props.onAddBoard),
     {
       label: "Pull request",
       icon: PullRequestGlyph.pullRequest,

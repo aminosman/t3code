@@ -6,9 +6,9 @@ import { ExternalLinkIcon, GitBranchIcon, GitCommitHorizontalIcon } from "lucide
 import { useState } from "react";
 
 import { useEnvironmentQuery } from "~/state/query";
-import { serverEnvironment } from "~/state/server";
 
 import { Button } from "../ui/button";
+import { boardEnvironment } from "./boardAtoms";
 
 const FILES_FIRST = 8;
 const COMMITS_FIRST = 6;
@@ -32,7 +32,7 @@ export function BranchChanges({
   onViewDiff: () => void;
 }) {
   const query = useEnvironmentQuery(
-    serverEnvironment.boardBranch({ environmentId, input: { threadId: threadId as ThreadId } }),
+    boardEnvironment.boardBranch({ environmentId, input: { threadId: threadId as ThreadId } }),
   );
   const [allFiles, setAllFiles] = useState(false);
   const view = query.data;

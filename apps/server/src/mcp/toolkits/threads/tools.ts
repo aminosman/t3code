@@ -166,89 +166,6 @@ export const HistoryFeedbackInput = Schema.Struct({
   }),
 });
 
-export const CardUpdateInput = Schema.Struct({
-  stage: Schema.optional(Schema.String).annotate({
-    description: "The column the work now belongs in, by id or title. Omit to keep it.",
-  }),
-  summary: Schema.optional(Schema.String.check(Schema.isMaxLength(400))).annotate({
-    description: "One or two plain sentences: what the work is and where it stands now.",
-  }),
-  next: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
-    description:
-      'Who acts next and on what ("You: approve the migration", "Agent: rerun tests"); "" when nothing is pending.',
-  }),
-  reviewedBy: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))).annotate({
-    description:
-      "Who independently reviewed the current code changes (a reviewer's model, a person who approved the PR); [] when code changed and nobody has; null when no code changed.",
-  }),
-  assignee: Schema.optional(Schema.Literals(["agent", "user"])).annotate({
-    description:
-      '"user" hands the card to the user when you need them to act; say what in comment. "agent" takes it back.',
-  }),
-  tests: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        case: Schema.String,
-        result: Schema.Literals(["pass", "fail", "skip"]),
-        note: Schema.optional(Schema.String),
-      }),
-    ),
-  ).annotate({
-    description:
-      "The end-to-end test matrix: every case and permutation that matters for this change, each with its result. Replaces the last one.",
-  }),
-  regression: Schema.optional(
-    Schema.Struct({ passed: Schema.Boolean, command: Schema.String, summary: Schema.String }),
-  ).annotate({
-    description:
-      "The last regression run of the project's existing suites: what ran and whether it passed.",
-  }),
-  branch: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(200)))).annotate({
-    description:
-      "The git branch the work lives on, when it is not the thread's own; the card shows it as a pull request into the default branch. null clears it.",
-  }),
-  comment: Schema.optional(Schema.String.check(Schema.isMaxLength(4000))).annotate({
-    description: "A comment on the card, shown to the user: what you need from them, step by step.",
-  }),
-  threadId: Schema.optional(ThreadId).annotate({
-    description: "Omit for your own thread's card.",
-  }),
-});
-
-const CardColumnInfo = Schema.Struct({
-  id: Schema.String,
-  title: Schema.String,
-  description: Schema.String,
-  archives: Schema.Boolean,
-  requiresApproval: Schema.Boolean,
-  /** Facts Roost checks before the card may move in. */
-  checks: Schema.Array(Schema.String),
-});
-
-export const CardUpdateOutput = Schema.Struct({
-  threadId: ThreadId,
-  stage: Schema.String,
-  summary: Schema.String,
-  next: Schema.String,
-  reviewedBy: Schema.NullOr(Schema.Array(Schema.String)),
-  reviewsWanted: Schema.Number,
-  columns: Schema.Array(CardColumnInfo),
-  /** The checks this call ran for the column asked for, when it has any. */
-  checks: Schema.Array(
-    Schema.Struct({ kind: Schema.String, ok: Schema.Boolean, detail: Schema.String }),
-  ),
-  /** What to do when the card did not move. */
-  instruction: Schema.String,
-  approval: Schema.NullOr(
-    Schema.Struct({ stage: Schema.String, status: Schema.String, instruction: Schema.String }),
-  ),
-  assignee: Schema.Literals(["agent", "user"]),
-  /** The card's latest comments, oldest first. */
-  comments: Schema.Array(
-    Schema.Struct({ author: Schema.String, body: Schema.String, createdAt: Schema.String }),
-  ),
-});
-
 export const HistoryFeedbackOutput = Schema.Struct({
   recorded: Schema.Boolean,
   searchId: Schema.NullOr(Schema.Int),
@@ -549,22 +466,6 @@ const HistoryFeedbackTool = Tool.make("t3_history_feedback", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
-const CardUpdateTool = Tool.make("t3_card_update", {
-  description:
-    "Keep your thread's card on the user's card wall current: its column, a short summary, " +
-    "who acts next, who has reviewed the code, who it is assigned to, and comments. Send " +
-    "only what changed. With no arguments it changes nothing and returns the card, its " +
-    "latest comments and the board's columns with what each is for. Never archives the thread.",
-  parameters: CardUpdateInput,
-  success: CardUpdateOutput,
-  failure,
-  dependencies,
-})
-  .annotate(Tool.Title, "Update your card")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
-
 const MeetingListTool = Tool.make("t3_meeting_list", {
   description:
     "List the meetings recorded on this Mac, newest first: when, how long, who was named, and " +
@@ -702,7 +603,6 @@ const ThreadArchiveTool = Tool.make("t3_thread_archive", {
 export const ThreadsToolkit = Toolkit.make(
   HistorySearchTool,
   HistoryFeedbackTool,
-  CardUpdateTool,
   MeetingListTool,
   MeetingReadTool,
   ThreadListTool,

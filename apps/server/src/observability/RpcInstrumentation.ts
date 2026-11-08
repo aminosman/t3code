@@ -5,6 +5,7 @@ import * as References from "effect/References";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
+import { BOARD_RPC_AGGREGATES } from "../board/rpcRegistry.ts";
 import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
@@ -216,17 +217,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pushRemoveDevice]: "push",
   [WS_METHODS.pushTestDevice]: "push",
   [WS_METHODS.historySearch]: "history",
-  [WS_METHODS.boardList]: "board",
-  [WS_METHODS.boardMove]: "board",
-  [WS_METHODS.boardSummarize]: "board",
-  [WS_METHODS.boardSetColumns]: "board",
-  [WS_METHODS.boardDecide]: "board",
-  [WS_METHODS.boardNudge]: "board",
-  [WS_METHODS.boardComments]: "board",
-  [WS_METHODS.boardCard]: "board",
-  [WS_METHODS.boardBranch]: "board",
-  [WS_METHODS.boardChecks]: "board",
-  [WS_METHODS.boardAddCard]: "board",
   [WS_METHODS.historyMeetingList]: "history",
   [WS_METHODS.historyMeetingRead]: "history",
   [WS_METHODS.historyThreadMessages]: "history",
@@ -259,6 +249,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeServerConfig]: "server",
   [WS_METHODS.subscribeServerLifecycle]: "server",
   [WS_METHODS.subscribeAuthAccess]: "auth",
+  // Roost: the card wall.
+  ...BOARD_RPC_AGGREGATES,
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

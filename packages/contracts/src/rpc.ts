@@ -36,6 +36,8 @@ import {
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
+// Roost: the card wall's RPCs.
+import { BOARD_RPCS, BOARD_WS_METHODS } from "./boardRpc.ts";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -358,31 +360,6 @@ import {
   HistoryThreadMessagesOutput,
 } from "./history.ts";
 import {
-  BoardApiError,
-  BoardListInput,
-  BoardListOutput,
-  BoardMoveInput,
-  BoardMoveOutput,
-  BoardSummarizeInput,
-  BoardSummarizeOutput,
-  BoardSetColumnsInput,
-  BoardSetColumnsOutput,
-  BoardDecideInput,
-  BoardDecideOutput,
-  BoardNudgeInput,
-  BoardNudgeOutput,
-  BoardCommentsInput,
-  BoardCommentsOutput,
-  BoardCardInput,
-  BoardCardOutput,
-  BoardBranchInput,
-  BoardBranchView,
-  BoardChecksInput,
-  BoardChecksOutput,
-  BoardAddCardInput,
-  BoardAddCardOutput,
-} from "./board.ts";
-import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -593,19 +570,6 @@ export const WS_METHODS = {
   historyMeetingNotesWrite: "history.meetingNotesWrite",
   historyPhoneMeetingUploadUrl: "history.phoneMeetingUploadUrl",
   historyPhoneMeetingImport: "history.phoneMeetingImport",
-
-  // board (Roost): the card wall, a stage per thread
-  boardList: "board.list",
-  boardMove: "board.move",
-  boardSummarize: "board.summarize",
-  boardSetColumns: "board.setColumns",
-  boardDecide: "board.decide",
-  boardNudge: "board.nudge",
-  boardComments: "board.comments",
-  boardCard: "board.card",
-  boardBranch: "board.branch",
-  boardChecks: "board.checks",
-  boardAddCard: "board.addCard",
   historyMeetingsProject: "history.meetingsProject",
   historyAskMeetings: "history.askMeetings",
 
@@ -743,6 +707,7 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  ...BOARD_WS_METHODS,
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1870,72 +1835,6 @@ const WsHistoryPhoneMeetingUploadUrlRpc = Rpc.make(WS_METHODS.historyPhoneMeetin
   error: Schema.Union([HistoryApiError, EnvironmentAuthorizationError]),
 });
 
-const WsBoardListRpc = Rpc.make(WS_METHODS.boardList, {
-  payload: BoardListInput,
-  success: BoardListOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardMoveRpc = Rpc.make(WS_METHODS.boardMove, {
-  payload: BoardMoveInput,
-  success: BoardMoveOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardSummarizeRpc = Rpc.make(WS_METHODS.boardSummarize, {
-  payload: BoardSummarizeInput,
-  success: BoardSummarizeOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardSetColumnsRpc = Rpc.make(WS_METHODS.boardSetColumns, {
-  payload: BoardSetColumnsInput,
-  success: BoardSetColumnsOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardDecideRpc = Rpc.make(WS_METHODS.boardDecide, {
-  payload: BoardDecideInput,
-  success: BoardDecideOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardNudgeRpc = Rpc.make(WS_METHODS.boardNudge, {
-  payload: BoardNudgeInput,
-  success: BoardNudgeOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardCommentsRpc = Rpc.make(WS_METHODS.boardComments, {
-  payload: BoardCommentsInput,
-  success: BoardCommentsOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardCardRpc = Rpc.make(WS_METHODS.boardCard, {
-  payload: BoardCardInput,
-  success: BoardCardOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardBranchRpc = Rpc.make(WS_METHODS.boardBranch, {
-  payload: BoardBranchInput,
-  success: BoardBranchView,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardChecksRpc = Rpc.make(WS_METHODS.boardChecks, {
-  payload: BoardChecksInput,
-  success: BoardChecksOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
-const WsBoardAddCardRpc = Rpc.make(WS_METHODS.boardAddCard, {
-  payload: BoardAddCardInput,
-  success: BoardAddCardOutput,
-  error: Schema.Union([BoardApiError, EnvironmentAuthorizationError]),
-});
-
 const WsHistoryPhoneMeetingImportRpc = Rpc.make(WS_METHODS.historyPhoneMeetingImport, {
   payload: HistoryPhoneMeetingImportInput,
   success: HistoryPhoneMeetingImportOutput,
@@ -2533,17 +2432,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsHistoryMeetingNotesWriteRpc,
   WsHistoryPhoneMeetingUploadUrlRpc,
   WsHistoryPhoneMeetingImportRpc,
-  WsBoardListRpc,
-  WsBoardMoveRpc,
-  WsBoardSummarizeRpc,
-  WsBoardSetColumnsRpc,
-  WsBoardDecideRpc,
-  WsBoardNudgeRpc,
-  WsBoardCommentsRpc,
-  WsBoardCardRpc,
-  WsBoardBranchRpc,
-  WsBoardChecksRpc,
-  WsBoardAddCardRpc,
   WsHistoryMeetingsProjectRpc,
   WsHistoryAskMeetingsRpc,
   WsSubscribePreviewEventsRpc,
@@ -2582,4 +2470,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
+  ...BOARD_RPCS,
 ).middleware(RpcScopeAuthorization);

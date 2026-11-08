@@ -30,10 +30,10 @@ import {
 import { useProjects, useQuietThreadShells } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
-import { serverEnvironment } from "~/state/server";
 import { olderSettledThreads, threadEnvironment, threadFamilies } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
+import { boardEnvironment } from "./boardAtoms";
 
 const NO_ENVIRONMENTS: ReadonlyArray<EnvironmentId> = [];
 const NO_OLDER_SETTLED = Atom.make(null);
@@ -53,21 +53,21 @@ export function useBoard(scopeThreadId: string | null) {
   const older = useEnvironmentQuery(
     environmentId === null || olderCut == null
       ? null
-      : serverEnvironment.boardOlderSettled({ environmentId, input: { before: olderCut.before } }),
+      : boardEnvironment.boardOlderSettled({ environmentId, input: { before: olderCut.before } }),
   );
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const listing = useEnvironmentQuery(
-    environmentId === null ? null : serverEnvironment.boardList({ environmentId, input: {} }),
+    environmentId === null ? null : boardEnvironment.boardList({ environmentId, input: {} }),
   );
-  const moveCommand = useAtomCommand(serverEnvironment.boardMove, { reportFailure: false });
-  const setColumnsCommand = useAtomCommand(serverEnvironment.boardSetColumns, {
+  const moveCommand = useAtomCommand(boardEnvironment.boardMove, { reportFailure: false });
+  const setColumnsCommand = useAtomCommand(boardEnvironment.boardSetColumns, {
     reportFailure: false,
   });
-  const decideCommand = useAtomCommand(serverEnvironment.boardDecide, { reportFailure: false });
-  const nudgeCommand = useAtomCommand(serverEnvironment.boardNudge, { reportFailure: false });
-  const cardCommand = useAtomCommand(serverEnvironment.boardCard, { reportFailure: false });
-  const addCardCommand = useAtomCommand(serverEnvironment.boardAddCard, { reportFailure: false });
-  const summarizeCommand = useAtomCommand(serverEnvironment.boardSummarize, {
+  const decideCommand = useAtomCommand(boardEnvironment.boardDecide, { reportFailure: false });
+  const nudgeCommand = useAtomCommand(boardEnvironment.boardNudge, { reportFailure: false });
+  const cardCommand = useAtomCommand(boardEnvironment.boardCard, { reportFailure: false });
+  const addCardCommand = useAtomCommand(boardEnvironment.boardAddCard, { reportFailure: false });
+  const summarizeCommand = useAtomCommand(boardEnvironment.boardSummarize, {
     reportFailure: false,
   });
   const archiveCommand = useOrchestrationCommand(threadEnvironment.archive, {

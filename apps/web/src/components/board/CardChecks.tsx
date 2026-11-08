@@ -5,7 +5,7 @@ import type { BoardColumn, BoardSummary, EnvironmentId, ThreadId } from "@t3tool
 import { CheckIcon, CircleDashedIcon, XIcon } from "lucide-react";
 
 import { useEnvironmentQuery } from "~/state/query";
-import { serverEnvironment } from "~/state/server";
+import { boardEnvironment } from "./boardAtoms";
 
 export function CardChecks({
   environmentId,
@@ -21,7 +21,7 @@ export function CardChecks({
   summary: BoardSummary | undefined;
 }) {
   const query = useEnvironmentQuery(
-    serverEnvironment.boardChecks({ environmentId, input: { threadId: threadId as ThreadId } }),
+    boardEnvironment.boardChecks({ environmentId, input: { threadId: threadId as ThreadId } }),
   );
   const at = columns.findIndex((column) => column.id === currentStage);
   const tests = summary?.tests ?? null;

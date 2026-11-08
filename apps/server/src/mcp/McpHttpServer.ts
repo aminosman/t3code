@@ -52,6 +52,8 @@ import * as AgentStartGuard from "./AgentStartGuard.ts";
 import { ThreadsToolkit } from "./toolkits/threads/tools.ts";
 import * as ThreadsHandlers from "./toolkits/threads/handlers.ts";
 import { ScreenToolkit } from "./toolkits/screen/tools.ts";
+import { BoardToolkit } from "../board/mcp/tools.ts";
+import * as BoardHandlers from "../board/mcp/handlers.ts";
 import * as ScreenHandlers from "./toolkits/screen/handlers.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -1173,6 +1175,8 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
   layerThreadsToolkit,
   toolkitRegistration(ScreenToolkit, ScreenHandlers.layer),
+  // Roost: the card wall's t3_card_update.
+  toolkitRegistration(BoardToolkit, BoardHandlers.layer),
 );
 
 export const layer = layerTools.pipe(Layer.provideMerge(layerMcpTransport));

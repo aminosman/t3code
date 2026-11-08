@@ -175,3 +175,41 @@ export function ProjectBoardButton({
     </Tooltip>
   );
 }
+
+/** The board's entry in the right panel's add menus; none where it cannot open. */
+export function boardSurfaceMenuItems(onAddBoard: (() => void) | undefined) {
+  return onAddBoard === undefined
+    ? []
+    : [
+        {
+          label: "Board",
+          icon: KanbanSquareIcon,
+          shortcut: "K",
+          available: true,
+          disabledReason: "",
+          onClick: onAddBoard,
+        },
+      ];
+}
+
+/** The Board tab's icon in the right panel. */
+export function BoardSurfaceIcon() {
+  return <KanbanSquareIcon className="size-3 shrink-0" />;
+}
+
+/** The project row's board button in the legacy sidebar, shown on hover beside its actions. */
+export function LegacyProjectBoardButton(props: {
+  projectId: string;
+  projectName: string;
+  className: string;
+}) {
+  return (
+    <div className="pointer-events-none absolute top-[calc(50%+1px)] right-7 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+      <ProjectBoardButton
+        projectId={props.projectId}
+        projectName={props.projectName}
+        className={props.className}
+      />
+    </div>
+  );
+}

@@ -1,3 +1,6 @@
+// Roost: the card wall.
+import { CARD_WALL_INSTRUCTIONS } from "./cardWallInstructions.ts";
+
 const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
 Link each PR you create, take over, or push to: one link_pull_request per PR, full URL, every stack layer, as your next call. Host tools do not link for you. If linking fails, say so. Skip PRs you only read or review, and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. Never wait with sleep, loops, gh --watch, Monitor, or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch.
 </pull_request_linking>`;
@@ -15,22 +18,6 @@ This thread is one of many, and the work is also talked about out loud. The same
 - The search is new and is improved from how it serves you. After a search that mattered to the work, call t3_history_feedback once: found true, or found false with a sentence on what you expected to find and how you found it in the end. A miss you report becomes a test case; a miss you work around silently stays a miss.
 - Treat what you find as a record of that moment, not the present state of the code: check a thread's claims against the repository and the git log. Meeting notes are a small local model's summary and transcripts are a recogniser's hearing; names and words can be wrong, so read the transcript around a point before relying on it.
 </history>`;
-
-// Roost's card wall. In every prompt, not only the tool description, because the
-// habit is at the end of a turn, when the agent is not looking for a tool.
-const CARD_WALL_INSTRUCTIONS = `<card_wall>
-This thread is a card on the user's card wall, a Trello-style board the user runs many agents from. The thread's goal is to get its card to done. When the t3-code MCP server exposes t3_card_update:
-- End every turn with one t3_card_update call, including a turn that ends with a question for the user. On the thread's first turn send stage, summary and next; after that send what changed. Its result lists the columns: each one's description is the requirement for being there.
-- Move the card forward yourself once the current column's work is done and the next one's requirement is met. Do that column's work next unless the user said otherwise.
-- A column marked requiresApproval cannot be entered without the user: asking for it files an approval request on the card. Stop there and say what you want to do; a message arrives when they decide.
-- Whenever you stop for the user (a question, a decision, something only they can do or provide), assign the card to them (assignee "user") with a comment saying exactly what you need, and stop. That is how they find what needs them. Their answer starts your next turn, and the card comes back to you.
-- summary: one or two plain sentences on what the work is and where it stands. next: who acts next and on what ("You: approve the merge", "Agent: rerun tests"), "" when nothing is pending.
-- branch: when the work is committed on a git branch other than the one checked out in this thread, send its name once. The card shows the branch as a pull request into the default branch.
-- reviewedBy: who independently reviewed the current code changes (a reviewer agent's model, a person who approved the PR); [] when code changed and nobody has; null when no code changed. Get two independent reviews (delegate_task, other models, read-only) before committing.
-- tests: the end-to-end test matrix, every case and permutation that matters, each with its result. regression: the run of the project's existing suites and whether it passed.
-- Some columns list checks: facts Roost confirms itself (reviews, a pushed feature branch, merged into staging or main, tests and regression passing) before the card may move in. A refused move says what is missing.
-It never archives the thread; the user does.
-</card_wall>`;
 
 // Ownership picks delegate_task or t3_thread_launch, and the sidebar nests by it.
 // scripts/spawn-routing-eval.py scores this text on real requests; keep that score.

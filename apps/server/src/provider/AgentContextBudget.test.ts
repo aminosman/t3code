@@ -1,6 +1,5 @@
 import { HistorySearch } from "../historySearch/HistorySearch.ts";
-import { BoardService } from "../board/BoardService.ts";
-import { BoardFlow } from "../board/BoardFlow.ts";
+import * as BoardServer from "../board/BoardServer.ts";
 import { TuiInbox } from "../tuiInbox/TuiInbox.ts";
 import { TuiScreen } from "../tuiScreen/TuiScreen.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -52,8 +51,7 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(DeviceService)({}),
   Layer.mock(HistorySearch)({}),
-  Layer.mock(BoardService)({}),
-  Layer.mock(BoardFlow)({}),
+  BoardServer.layerUnused,
   Layer.mock(TuiInbox)({}),
   Layer.mock(TuiScreen)({}),
   Layer.mock(DocumentText)({}),

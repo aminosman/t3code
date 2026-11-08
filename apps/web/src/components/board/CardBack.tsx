@@ -14,7 +14,6 @@ import { BotIcon, MessageSquareIcon, UserIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentQuery } from "~/state/query";
-import { serverEnvironment } from "~/state/server";
 
 import { Button } from "../ui/button";
 import {
@@ -28,6 +27,7 @@ import {
 import { Textarea } from "../ui/textarea";
 import { BranchChanges } from "./BranchChanges";
 import { CardChecks } from "./CardChecks";
+import { boardEnvironment } from "./boardAtoms";
 
 const when = (at: string) => {
   const date = new Date(at);
@@ -79,7 +79,7 @@ export function CardBack({
   }) => Promise<boolean>;
 }) {
   const comments = useEnvironmentQuery(
-    serverEnvironment.boardComments({ environmentId, input: { threadId: thread.id as ThreadId } }),
+    boardEnvironment.boardComments({ environmentId, input: { threadId: thread.id as ThreadId } }),
   );
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);

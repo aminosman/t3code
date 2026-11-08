@@ -31,9 +31,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
-import * as BoardService from "./board/BoardService.ts";
-import * as BoardSummarizer from "./board/BoardSummarizer.ts";
-import * as BoardFlow from "./board/BoardFlow.ts";
+import * as BoardServer from "./board/BoardServer.ts";
 import * as McpConnectionService from "./mcp/connections/McpConnectionService.ts";
 import * as PushDeviceRegistry from "./push/PushDeviceRegistry.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
@@ -499,9 +497,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(McpAppRequests.McpAppRequests)({}),
   Layer.mock(McpConnectionService.McpConnectionService)({}),
   Layer.mock(HistorySearch.HistorySearch)({}),
-  Layer.mock(BoardService.BoardService)({}),
-  Layer.mock(BoardSummarizer.BoardSummarizer)({}),
-  Layer.mock(BoardFlow.BoardFlow)({}),
+  BoardServer.layerUnused,
   Layer.mock(PushDeviceRegistry.PushDeviceRegistry)({}),
   Layer.mock(PushNotifier.PushNotifier)({}),
   Layer.mock(TuiInbox.TuiInbox)({}),
