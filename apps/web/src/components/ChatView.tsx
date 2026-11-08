@@ -3847,7 +3847,9 @@ export default function ChatView(props: ChatViewProps) {
         <ChatRightPanel
           sheet={shouldUsePlanSidebarSheet}
           workspaceLayoutElement={workspaceLayoutElement}
-          widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
+          // Roost: one width for every thread, so opening another chat (a card on
+          // the board, the sidebar) keeps the panel the size it was.
+          widthStorageKey="t3code:preview-panel-width"
           sheetAnimationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           onCloseSheet={closePreviewPanelStable}
           open={rightPanelOpen}
