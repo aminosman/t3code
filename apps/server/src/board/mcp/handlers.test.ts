@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_BOARD_COLUMNS,
   EnvironmentId,
+  OrchestratorMcpFailure,
   type BoardComment,
   type BoardSummary,
   type OrchestrationV2ThreadShell,
@@ -18,6 +19,9 @@ import * as Ref from "effect/Ref";
 import { McpSchema, McpServer } from "effect/ai";
 
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
+import * as AgentStartGuard from "../../mcp/AgentStartGuard.ts";
+import * as OrchestratorMcpService from "../../mcp/OrchestratorMcpService.ts";
+import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import { checkRecorded } from "../BoardChecks.ts";
@@ -117,6 +121,12 @@ const makeHarness = Effect.gen(function* () {
   const approvals = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
   const notes = yield* Ref.make<ReadonlyArray<BoardComment>>([]);
   const assigned = yield* Ref.make<ReadonlyMap<string, "agent" | "user">>(new Map());
+  const delegated = yield* Ref.make<ReadonlyArray<{ model: string; role: string }>>([]);
+  const reviews = yield* Ref.make<
+    ReadonlyArray<{ threadId: string; head: string; reviewerThreadId: string; reviewer: string }>
+  >([]);
+  const workState = yield* Ref.make("abc1234567890+00000001");
+  const failNext = yield* Ref.make(0);
   const layer = McpHttpServer.toolkitRegistration(BoardToolkit, BoardHandlers.layer).pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provide(
@@ -127,6 +137,16 @@ const makeHarness = Effect.gen(function* () {
     ),
     Layer.provide(
       Layer.mock(BoardFlow)({
+        reviewTarget: () =>
+          Ref.get(workState).pipe(
+            Effect.map((state) => ({
+              cwd: "/tmp/work",
+              branch: "feat/login",
+              head: "abc1234567890",
+              state,
+              base: "main",
+            })),
+          ),
         // Recorded facts as the board reads them; git facts taken as holding.
         checkColumn: (threadId, column) =>
           Ref.get(saved).pipe(
@@ -218,6 +238,15 @@ const makeHarness = Effect.gen(function* () {
           ),
         assign: (threadId, assignee) =>
           Ref.update(assigned, (map) => new Map([...map, [threadId, assignee]])),
+        reviews: (threadId, head) =>
+          Ref.get(reviews).pipe(
+            Effect.map((list) =>
+              list
+                .filter((entry) => entry.threadId === threadId && entry.head === head)
+                .map((entry) => ({ ...entry, requestedAt: "" })),
+            ),
+          ),
+        recordReview: (review) => Ref.update(reviews, (list) => [...list, review]),
         saveSummary: (summary) =>
           Ref.update(saved, (list) => [
             ...list.filter((entry) => entry.threadId !== summary.threadId),
@@ -225,9 +254,85 @@ const makeHarness = Effect.gen(function* () {
           ]),
       }),
     ),
+    Layer.provide(
+      Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+        capabilities: () =>
+          Effect.succeed({
+            parentThreadId: callerThreadId,
+            inheritedProviderInstanceId: "claudeAgent",
+            inheritedModel: "claude-opus-5-5",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            providers: [
+              {
+                providerInstanceId: "claudeAgent",
+                driverKind: "claudeAgent",
+                displayName: "Claude",
+                models: [{ id: "claude-opus-5-5" }],
+                canRunChildTask: true,
+                canRunCrossProviderChildTask: true,
+                constraints: [],
+              },
+              {
+                providerInstanceId: "codex",
+                driverKind: "codex",
+                displayName: "Codex",
+                models: [
+                  {
+                    id: "gpt-6.1-sol",
+                    options: [{ id: "reasoningEffort", values: ["medium", "high"] }],
+                  },
+                ],
+                canRunChildTask: true,
+                canRunCrossProviderChildTask: true,
+                constraints: [],
+              },
+              {
+                providerInstanceId: "claudeAgent_kimi",
+                driverKind: "claudeAgent",
+                displayName: "Kimi",
+                models: [{ id: "k3.1-pro", label: "Kimi K3.1 Pro" }],
+                canRunChildTask: true,
+                canRunCrossProviderChildTask: true,
+                constraints: [],
+              },
+            ],
+          } as never),
+        delegateTask: (_scope, input) =>
+          Ref.get(failNext).pipe(
+            Effect.flatMap((fail) =>
+              fail > 0 && input.target?.model === "k3.1-pro"
+                ? Ref.set(failNext, fail - 1).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new OrchestratorMcpFailure({
+                          code: "orchestration_error",
+                          message: "busy",
+                        }),
+                      ),
+                    ),
+                  )
+                : Effect.void,
+            ),
+            Effect.andThen(
+              Ref.modify(delegated, (list) => [
+                { childThreadId: ThreadId.make(`thread-review-${list.length + 1}`) } as never,
+                [...list, { model: input.target?.model ?? "", role: input.role ?? "" }],
+              ]),
+            ),
+          ),
+      }),
+    ),
+    Layer.provide(Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) })),
+    Layer.provide(
+      Layer.mock(AgentStartGuard.AgentStartGuard)({
+        admit: () => Effect.void,
+        record: () => Effect.void,
+      }),
+    ),
     Layer.provide(NodeServices.layer),
   );
-  return { moved, saved, approvals, layer };
+  return { moved, saved, approvals, delegated, workState, failNext, layer };
 });
 
 const call = (
@@ -343,4 +448,67 @@ it.effect(
       ]);
       expect([...(yield* Ref.get(approvals)).keys()]).toEqual([]);
     }),
+);
+
+it.effect(
+  "starts two reviewers on other models once per state of the work, only for its own card",
+  () =>
+    Effect.gen(function* () {
+      const { delegated, workState, layer } = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const asked = yield* call("t3_card_update", {
+          stage: "review",
+          summary: "Fix the login loop",
+        });
+        const instruction = (asked.structuredContent as { instruction: string }).instruction;
+        expect(instruction).toContain("Not moved");
+        expect(instruction).toContain(
+          "Roost started 2 reviewers on abc1234567 plus uncommitted changes",
+        );
+        expect(instruction).toContain("gpt-6.1-sol (Codex), Kimi K3.1 Pro");
+        // The same work again: no new round.
+        const again = yield* call("t3_card_update", { stage: "review" });
+        expect((again.structuredContent as { instruction: string }).instruction).toContain(
+          "already started reviewers",
+        );
+        // Another thread's card: the agent is not the one to be reviewed.
+        yield* call("t3_card_update", { stage: "review", threadId: workThreadId });
+        // New edits: a new round.
+        yield* Ref.set(workState, "abc1234567890+00000002");
+        yield* call("t3_card_update", { stage: "review" });
+      }).pipe(Effect.provide(layer));
+      expect(yield* Ref.get(delegated)).toEqual([
+        { model: "gpt-6.1-sol", role: "review" },
+        { model: "k3.1-pro", role: "review" },
+        { model: "gpt-6.1-sol", role: "review" },
+        { model: "k3.1-pro", role: "review" },
+      ]);
+    }),
+);
+
+it.effect("starts only the missing reviewer when a round was cut short", () =>
+  Effect.gen(function* () {
+    const { delegated, failNext, layer } = yield* makeHarness;
+    yield* Ref.set(failNext, 1);
+    yield* Effect.gen(function* () {
+      // Kimi fails to start; Codex still starts, and the agent is told not to delegate itself.
+      const first = yield* call("t3_card_update", { stage: "review" });
+      const firstNote = (first.structuredContent as { instruction: string }).instruction;
+      expect(firstNote).toContain("Roost started 1 reviewer");
+      expect(firstNote).toContain("could not start Kimi K3.1 Pro (busy)");
+      expect(firstNote).toContain("do not delegate reviews yourself");
+      const second = yield* call("t3_card_update", { stage: "review" });
+      expect((second.structuredContent as { instruction: string }).instruction).toContain(
+        "Roost started 2 reviewers",
+      );
+      const third = yield* call("t3_card_update", { stage: "review" });
+      expect((third.structuredContent as { instruction: string }).instruction).toContain(
+        "already started reviewers",
+      );
+    }).pipe(Effect.provide(layer));
+    expect((yield* Ref.get(delegated)).map((entry) => entry.model)).toEqual([
+      "gpt-6.1-sol",
+      "k3.1-pro",
+    ]);
+  }),
 );

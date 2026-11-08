@@ -44,6 +44,7 @@ describe("checkGit", () => {
     Effect.gen(function* () {
       const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "board-checks-"));
       const origin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "board-origin-"));
+      const fork = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "board-fork-"));
       const run = (...args: string[]) =>
         NodeChildProcess.execFileSync("git", ["-C", dir, ...args], {
           env: {
@@ -57,8 +58,10 @@ describe("checkGit", () => {
       const write = (file: string, text: string) =>
         NodeFS.writeFileSync(NodePath.join(dir, file), text);
       NodeChildProcess.execFileSync("git", ["init", "-q", "--bare", origin]);
+      NodeChildProcess.execFileSync("git", ["init", "-q", "--bare", fork]);
       run("init", "-q", "-b", "main");
       run("remote", "add", "origin", origin);
+      run("remote", "add", "fork", fork);
       write("a.txt", "one\n");
       run("add", ".");
       run("commit", "-q", "-m", "start");
@@ -76,9 +79,20 @@ describe("checkGit", () => {
 
       assert.isTrue((yield* check("feature-branch", "feat/x")).ok);
       assert.isFalse((yield* check("feature-branch", "main")).ok);
-      assert.strictEqual((yield* check("pushed", "feat/x")).detail, "feat/x is not on origin");
+      assert.strictEqual(
+        (yield* check("pushed", "feat/x")).detail,
+        "feat/x is not pushed to any remote",
+      );
+      // A fork pushes its feature branches to its own remote, not to origin.
+      run("push", "-q", "fork", "feat/x");
+      assert.strictEqual((yield* check("pushed", "feat/x")).detail, "pushed to fork/feat/x");
       run("push", "-q", "origin", "feat/x");
-      assert.isTrue((yield* check("pushed", "feat/x")).ok);
+      assert.strictEqual((yield* check("pushed", "feat/x")).detail, "pushed to origin/feat/x");
+      run("branch", "-q", "--set-upstream-to=fork/feat/x", "feat/x");
+      assert.strictEqual((yield* check("pushed", "feat/x")).detail, "pushed to fork/feat/x");
+      // A branch made from origin/main tracks it; that is not where the branch was pushed.
+      run("branch", "-q", "--set-upstream-to=origin/main", "feat/x");
+      assert.strictEqual((yield* check("pushed", "feat/x")).detail, "pushed to origin/feat/x");
       write("b.txt", "dirty\n");
       assert.strictEqual((yield* check("pushed", "feat/x")).detail, "1 file not committed");
       NodeFS.rmSync(NodePath.join(dir, "b.txt"));
@@ -90,6 +104,7 @@ describe("checkGit", () => {
       assert.isFalse((yield* check("merged", "feat/x", "main")).ok);
       NodeFS.rmSync(dir, { recursive: true, force: true });
       NodeFS.rmSync(origin, { recursive: true, force: true });
+      NodeFS.rmSync(fork, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

@@ -1176,7 +1176,10 @@ export const layerTools = Layer.mergeAll(
   layerThreadsToolkit,
   toolkitRegistration(ScreenToolkit, ScreenHandlers.layer),
   // Roost: the card wall's t3_card_update.
-  toolkitRegistration(BoardToolkit, BoardHandlers.layer),
+  toolkitRegistration(BoardToolkit, BoardHandlers.layer).pipe(
+    Layer.provide(OrchestratorMcpService.layer),
+    Layer.provide(AgentStartGuard.layer),
+  ),
 );
 
 export const layer = layerTools.pipe(Layer.provideMerge(layerMcpTransport));

@@ -33,6 +33,15 @@ export class BoardError extends Schema.TaggedError<BoardError>()("BoardError", {
   }
 }
 
+/** A reviewer Roost started for a card: which commit, which thread, which model. */
+export interface BoardReviewRequest {
+  readonly threadId: string;
+  readonly head: string;
+  readonly reviewerThreadId: string;
+  readonly reviewer: string;
+  readonly requestedAt: string;
+}
+
 export interface BoardServiceShape {
   readonly list: Effect.Effect<ReadonlyArray<BoardCard>, BoardError>;
   /** Each thread's subagent children, counted here because shells omit idle ones. */
@@ -71,6 +80,12 @@ export interface BoardServiceShape {
     author: BoardAssignee,
     body: string,
   ) => Effect.Effect<BoardComment, BoardError>;
+  /** The reviewers Roost started for this card on one commit of its branch. */
+  readonly reviews: (
+    threadId: string,
+    head: string,
+  ) => Effect.Effect<ReadonlyArray<BoardReviewRequest>, BoardError>;
+  readonly recordReview: (review: BoardReviewRequest) => Effect.Effect<void, BoardError>;
   /** Each card's comment count and latest comment. */
   readonly commentSummaries: Effect.Effect<ReadonlyArray<BoardCommentsSummary>, BoardError>;
   /** Spends a granted approval once the card has moved. */
@@ -234,6 +249,17 @@ const make = Effect.gen(function* () {
       decided_at TEXT,
       note TEXT NOT NULL,
       PRIMARY KEY (thread_id, stage)
+    )
+  `.pipe(Effect.mapError(failed));
+
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS roost_board_reviews (
+      thread_id TEXT NOT NULL,
+      head TEXT NOT NULL,
+      reviewer_thread_id TEXT NOT NULL,
+      reviewer TEXT NOT NULL,
+      requested_at TEXT NOT NULL,
+      PRIMARY KEY (thread_id, reviewer_thread_id)
     )
   `.pipe(Effect.mapError(failed));
 
@@ -579,8 +605,41 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed((): ReadonlyArray<BoardSubCards> => []),
   );
 
+  const reviews: BoardServiceShape["reviews"] = (threadId, head) =>
+    sql<{
+      readonly thread_id: string;
+      readonly head: string;
+      readonly reviewer_thread_id: string;
+      readonly reviewer: string;
+      readonly requested_at: string;
+    }>`
+      SELECT * FROM roost_board_reviews
+      WHERE thread_id = ${threadId} AND head = ${head}
+      ORDER BY requested_at
+    `.pipe(
+      Effect.map((rows) =>
+        rows.map((row) => ({
+          threadId: row.thread_id,
+          head: row.head,
+          reviewerThreadId: row.reviewer_thread_id,
+          reviewer: row.reviewer,
+          requestedAt: row.requested_at,
+        })),
+      ),
+      Effect.mapError(failed),
+    );
+
+  const recordReview: BoardServiceShape["recordReview"] = (review) =>
+    sql`
+      INSERT OR REPLACE INTO roost_board_reviews
+        (thread_id, head, reviewer_thread_id, reviewer, requested_at)
+      VALUES (${review.threadId}, ${review.head}, ${review.reviewerThreadId}, ${review.reviewer}, ${review.requestedAt})
+    `.pipe(Effect.asVoid, Effect.mapError(failed));
+
   return BoardService.of({
     list,
+    reviews,
+    recordReview,
     subCards,
     move,
     card,

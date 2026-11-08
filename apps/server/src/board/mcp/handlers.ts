@@ -9,6 +9,16 @@ import { ThreadManagementService } from "../../orchestration-v2/ThreadManagement
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
 import { ThreadToolError } from "../../mcp/toolkits/threads/tools.ts";
+import * as AgentStartGuard from "../../mcp/AgentStartGuard.ts";
+import * as OrchestratorMcpService from "../../mcp/OrchestratorMcpService.ts";
+import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
+import {
+  AUTO_REVIEWERS,
+  pickReviewers,
+  reviewBrief,
+  reviewsAlreadyNote,
+  reviewsStartedNote,
+} from "../autoReview.ts";
 import { BoardFlow } from "../BoardFlow.ts";
 import { BoardService } from "../BoardService.ts";
 import { BoardToolkit } from "./tools.ts";
@@ -28,6 +38,85 @@ const makeHandlers = Effect.gen(function* () {
   const threads = yield* ThreadManagementService;
   const board = yield* BoardService;
   const boardFlow = yield* BoardFlow;
+  const orchestrator = yield* OrchestratorMcpService.OrchestratorMcpService;
+  const providerRegistry = yield* ProviderRegistry;
+  const startGuard = yield* AgentStartGuard.AgentStartGuard;
+  // ROOST_BOARD_AUTO_REVIEW=0 leaves reviews to the agent.
+  const autoReview = process.env.ROOST_BOARD_AUTO_REVIEW !== "0";
+
+  /**
+   * Two reviewers on other models, started for the calling thread as if it had
+   * delegated them, once per state of the work. Returns what the agent is told.
+   */
+  const startReviewers = Effect.fn("BoardToolkit.startReviewers")(function* (
+    scope: McpInvocationContext.McpThreadInvocationScope,
+    threadId: ThreadId,
+    title: string,
+    summary: string,
+  ) {
+    const target = yield* boardFlow.reviewTarget(threadId);
+    if (target === null) return "";
+    const earlier = yield* board.reviews(threadId, target.state);
+    if (earlier.length >= AUTO_REVIEWERS) {
+      return reviewsAlreadyNote(
+        earlier.map((entry) => entry.reviewer),
+        target.state,
+      );
+    }
+    const spent = new Set(
+      (yield* providerRegistry.getProviders)
+        .filter((provider) =>
+          (provider.usageLimits?.windows ?? []).some((window) => window.usedPercent >= 100),
+        )
+        .map((provider) => String(provider.instanceId)),
+    );
+    // A round cut short (one failed to start) gets only its missing reviewers.
+    const reviewers = pickReviewers(yield* orchestrator.capabilities(scope, {}), spent)
+      .filter((reviewer) => !earlier.some((entry) => entry.reviewer === reviewer.name))
+      .slice(0, AUTO_REVIEWERS - earlier.length);
+    if (reviewers.length === 0) return "";
+    yield* startGuard.admit(scope.thread.threadId, reviewers.length);
+    const task = reviewBrief({ title, summary, ...target });
+    const started: string[] = [];
+    const failed: string[] = [];
+    for (const [index, reviewer] of reviewers.entries()) {
+      // One reviewer failing to start does not stop the other.
+      const result = yield* orchestrator
+        .delegateTask(scope, {
+          task,
+          target: reviewer.target,
+          title: `Review by ${reviewer.name}: ${title}`.slice(0, 120),
+          role: "review",
+          clientRequestId: `board-review:${threadId}:${target.state}:${index + earlier.length}`,
+        })
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.sync(() => {
+              failed.push(`${reviewer.name} (${describeCause(cause)})`);
+              return null;
+            }),
+          ),
+        );
+      if (result === null || result.childThreadId === null) continue;
+      yield* startGuard.record(scope.thread.threadId, [result.childThreadId]);
+      yield* board.recordReview({
+        threadId,
+        head: target.state,
+        reviewerThreadId: result.childThreadId,
+        reviewer: reviewer.name,
+        requestedAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      started.push(reviewer.name);
+    }
+    const running = [...earlier.map((entry) => entry.reviewer), ...started];
+    const failedNote =
+      failed.length === 0
+        ? ""
+        : ` Roost could not start ${failed.join("; ")}. Asking again starts only the missing reviewer; do not delegate reviews yourself.`;
+    return started.length === 0
+      ? failedNote
+      : reviewsStartedNote(running, target.state) + failedNote;
+  });
 
   const requireScope = Effect.gen(function* () {
     const scope = yield* McpInvocationContext.McpInvocationContext;
@@ -161,6 +250,26 @@ const makeHandlers = Effect.gen(function* () {
           .map((entry) => entry.detail)
           .join("; ")}. Do that, record it (reviewedBy, tests, regression, branch), and ask again.`;
         column = undefined;
+        // Missing reviews on the agent's own card: Roost starts them.
+        if (
+          autoReview &&
+          failing.some((entry) => entry.kind === "reviews") &&
+          threadId === scope.thread.threadId &&
+          target.lineage.relationshipToParent !== "subagent"
+        ) {
+          instruction += yield* startReviewers(
+            scope,
+            threadId,
+            target.title,
+            (input.summary ?? previous?.summary ?? "").trim(),
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.succeed(
+                ` Roost could not start reviewers (${describeCause(cause)}); get two reviews with delegate_task.`,
+              ),
+            ),
+          );
+        }
       }
     }
 
@@ -240,4 +349,5 @@ const makeHandlers = Effect.gen(function* () {
   } satisfies McpToolAccess.Handlers<typeof BoardToolkit.tools>;
 });
 
+/** Needs OrchestratorMcpService and AgentStartGuard, which McpHttpServer provides. */
 export const layer = McpToolAccess.toLayer(BoardToolkit, makeHandlers);

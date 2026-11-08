@@ -30,6 +30,16 @@ import { BoardError, BoardService } from "./BoardService.ts";
 import { agentReportedTurn } from "./BoardSummarizer.ts";
 import { setBoardStopCheck } from "./stopGuard.ts";
 
+/** A short, stable fingerprint of text (FNV-1a), to tell one working tree from another. */
+function fingerprint(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
 export interface BoardFlowShape {
   readonly decide: (input: {
     readonly threadId: string;
@@ -45,6 +55,18 @@ export interface BoardFlowShape {
     threadId: string,
   ) => Effect.Effect<
     ReadonlyArray<{ stage: string; results: ReadonlyArray<BoardCheckResult> }>,
+    BoardError
+  >;
+  /** What a reviewer reads: the card's folder, branch, commit, and the base it goes into. */
+  readonly reviewTarget: (threadId: string) => Effect.Effect<
+    {
+      readonly cwd: string;
+      readonly branch: string;
+      readonly head: string;
+      /** The commit plus a fingerprint of uncommitted changes: what one round of review saw. */
+      readonly state: string;
+      readonly base: string | null;
+    } | null,
     BoardError
   >;
   /** One column's checks for this card. */
@@ -194,8 +216,49 @@ const make = Effect.gen(function* () {
     const head = yield* git(["rev-parse", "--abbrev-ref", "HEAD"]);
     const current = head === null || head === "HEAD" ? null : head;
     const placed = yield* board.card(threadId);
-    return { git, current, branch: placed?.branch ?? shell.branch ?? current };
+    return { cwd, git, current, branch: placed?.branch ?? shell.branch ?? current };
   });
+
+  const reviewTarget: BoardFlowShape["reviewTarget"] = Effect.fn("BoardFlow.reviewTarget")(
+    function* (threadId) {
+      const where = yield* facts(threadId);
+      if (where === null || where.branch === null) return null;
+      const head = (yield* where.git(["rev-parse", "--verify", "--quiet", where.branch]))?.trim();
+      if (!head) return null;
+      const compared = yield* branch(threadId).pipe(Effect.orElseSucceed(() => null));
+      // Reviews come before the commit, so edits made after one count as new work.
+      // New files count by their contents, so a fix in one is new work too. NUL-separated,
+      // so odd names survive; a nested repo ("dir/") or an unreadable file hashes as its name.
+      const checkedOut = where.branch === where.current;
+      const untracked = checkedOut
+        ? ((yield* where.git(["ls-files", "-z", "--others", "--exclude-standard"])) ?? "")
+            .split("\0")
+            .filter((path) => path.length > 0 && !path.endsWith("/"))
+        : [];
+      // Past the first 200, a file counts by its name only.
+      const untrackedHashes = yield* Effect.forEach(untracked.slice(0, 200), (path) =>
+        where.git(["hash-object", "--", path]).pipe(Effect.map((hash) => `${path} ${hash ?? "?"}`)),
+      );
+      // --binary, so an edit to a tracked binary file changes the state too.
+      const diff = checkedOut
+        ? yield* where.git(["diff", "--no-ext-diff", "--binary", "HEAD"])
+        : "";
+      // A state that cannot be read is not "the same as before": no automatic round on it.
+      if (diff === null) return null;
+      const uncommitted =
+        `${diff}\n${untrackedHashes.join("\n")}\n${untracked.slice(200).join("\n")}`.trim();
+      // Nothing on the branch and nothing uncommitted: there is nothing to review.
+      if ((compared?.ahead ?? 1) === 0 && uncommitted.length === 0) return null;
+      return {
+        cwd: where.cwd,
+        branch: where.branch,
+        head,
+        state: uncommitted.length === 0 ? head : `${head}+${fingerprint(uncommitted)}`,
+        base: compared?.base ?? null,
+      };
+    },
+    Effect.mapError(failed),
+  );
 
   const checkColumn: BoardFlowShape["checkColumn"] = Effect.fn("BoardFlow.checkColumn")(function* (
     threadId,
@@ -265,6 +328,8 @@ const make = Effect.gen(function* () {
   const stopCheck = Effect.fn("BoardFlow.stopCheck")(function* (threadId: string) {
     const shell = yield* threads.getThreadShell(ThreadId.make(threadId));
     if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) return null;
+    // A delegated child (a reviewer, a helper) reports to its parent, which owns the card.
+    if (shell.lineage.relationshipToParent === "subagent") return null;
     const turnStartedAt =
       shell.latestRunRequestedAt == null ? null : DateTime.formatIso(shell.latestRunRequestedAt);
     const previous = (yield* board.summaries).find((entry) => entry.threadId === threadId);
@@ -276,7 +341,7 @@ const make = Effect.gen(function* () {
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => setBoardStopCheck(null)));
 
-  return BoardFlow.of({ decide, nudge, card, branch, checks, checkColumn, addCard });
+  return BoardFlow.of({ decide, nudge, card, branch, checks, checkColumn, reviewTarget, addCard });
 });
 
 export const layer = Layer.effect(BoardFlow, make);

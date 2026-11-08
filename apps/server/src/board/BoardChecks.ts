@@ -85,9 +85,30 @@ export const checkGit = Effect.fn("BoardChecks.checkGit")(function* (
         detail: DEFAULT_NAMES.has(branch) ? `on ${branch}, not a feature branch` : `on ${branch}`,
       };
     case "pushed": {
-      const remote = `origin/${branch}`;
-      if ((yield* git(["rev-parse", "--verify", "--quiet", remote])) === null) {
-        return { kind: check.kind, ok: false, detail: `${branch} is not on origin` };
+      // The branch's upstream, else its copy on any remote, origin first: a fork
+      // pushes feature branches to its own remote, not to origin.
+      const tracked = yield* git([
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        `${branch}@{upstream}`,
+      ]);
+      const remotes = ((yield* git(["remote"])) ?? "")
+        .split("\n")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0)
+        .toSorted((a, b) => (a === "origin" ? -1 : b === "origin" ? 1 : 0));
+      // An upstream that is the base (a branch made from origin/main) is not where it was pushed.
+      const own = tracked?.trim() ?? "";
+      let remote: string | null = remotes.some((name) => own === `${name}/${branch}`) ? own : null;
+      for (const name of remote === null ? remotes : []) {
+        if ((yield* git(["rev-parse", "--verify", "--quiet", `${name}/${branch}`])) !== null) {
+          remote = `${name}/${branch}`;
+          break;
+        }
+      }
+      if (remote === null) {
+        return { kind: check.kind, ok: false, detail: `${branch} is not pushed to any remote` };
       }
       const unpushed =
         Number.parseInt((yield* git(["rev-list", "--count", `${remote}..${branch}`])) ?? "0", 10) ||
