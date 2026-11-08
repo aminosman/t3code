@@ -4,14 +4,15 @@ The card wall (board) is Roost-only. Its code lives in its own folders, which
 upstream T3 Code never touches:
 
 - `apps/server/src/board/`: storage (`BoardService`), the summarizer, approvals,
-  nudges, checks, the mini PR, the Claude Stop guard, the Codex first-turn note,
-  the agents' `t3_card_update` toolkit (`board/mcp/`), and the RPC handlers and
+  nudges, checks, the mini PR, the automatic reviewers, the agents' `t3_card_update` toolkit (`board/mcp/`), and the RPC handlers and
   layers (`BoardServer.ts`, `rpcRegistry.ts`).
 - `apps/web/src/components/board/`: every board UI, its styles (`board.css`), its
   client atoms (`boardAtoms.ts`) and its entry points (`BoardEntryPoints.tsx`).
 - `packages/contracts/src/board.ts` (types) and `boardRpc.ts` (the RPC group).
-- `packages/provider-core/src/server/cardWallInstructions.ts`: the `<card_wall>`
-  block every agent's prompt carries.
+
+Agents learn the board only from the `t3_card_update` tool description. Roost
+adds nothing to their prompts, first messages or turn ends; each project's
+agent file (AGENTS.md, CLAUDE.md) says when to update the card.
 
 Everything else is a hook-in: a line or two in an upstream file that points at
 those folders. On an upstream merge, a conflict in one of these files is resolved
@@ -26,21 +27,17 @@ by keeping upstream's version and putting the hook-in back. This is the list.
 | `apps/server/src/auth/RpcAuthorization.ts`                          | import; `...BOARD_RPC_REQUIRED_SCOPES` at the end of `RPC_REQUIRED_SCOPES`                                                                                                                              |
 | `apps/server/src/observability/RpcInstrumentation.ts`               | import; `...BOARD_RPC_AGGREGATES` at the end of `RPC_AGGREGATES`                                                                                                                                        |
 | `apps/server/src/mcp/McpHttpServer.ts`                              | import `BoardToolkit` and `BoardHandlers`; `toolkitRegistration(BoardToolkit, BoardHandlers.layer)` at the end of `layerTools`                                                                          |
-| `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts`      | the `stopHook` option on `makeClaudeQueryOptions`, merged into `hooks.Stop`; `boardStopHook(threadId)` when the session has T3's MCP server                                                             |
-| `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`       | `CARD_WALL_FIRST_TURN_NOTE` appended to the first turn's input when the session has T3's MCP server                                                                                                     |
 | `apps/server/src/ws.test.ts`, `provider/AgentContextBudget.test.ts` | `BoardServer.layerUnused` beside the other unused mocks                                                                                                                                                 |
 | `apps/server/src/provider/agentContextBudget.json`                  | the measured prompt and tool bytes, which include the board's                                                                                                                                           |
-| `orchestration-v2/Adapters/CodexAdapterV2.test.ts`                  | the first-turn note in the expected input                                                                                                                                                               |
 
 ## Shared packages
 
-| File                                                       | Hook-in                                                                                              |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `packages/contracts/src/rpc.ts`                            | import; `...BOARD_WS_METHODS` at the end of `WS_METHODS`; `...BOARD_RPCS` at the end of `WsRpcGroup` |
-| `packages/contracts/src/index.ts`                          | `export * from "./board.ts"` and `"./boardRpc.ts"`                                                   |
-| `packages/provider-core/src/server/runtimeInstructions.ts` | import; `CARD_WALL_INSTRUCTIONS` after `THREAD_HISTORY_INSTRUCTIONS` in both builders                |
-| `packages/shared/src/t3McpToolPresentation.ts`             | the `t3_card_update` presentation entry                                                              |
-| `packages/client-runtime/src/t3ToolSummary.ts`             | the `t3_card_update` summary case                                                                    |
+| File                                           | Hook-in                                                                                              |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/rpc.ts`                | import; `...BOARD_WS_METHODS` at the end of `WS_METHODS`; `...BOARD_RPCS` at the end of `WsRpcGroup` |
+| `packages/contracts/src/index.ts`              | `export * from "./board.ts"` and `"./boardRpc.ts"`                                                   |
+| `packages/shared/src/t3McpToolPresentation.ts` | the `t3_card_update` presentation entry                                                              |
+| `packages/client-runtime/src/t3ToolSummary.ts` | the `t3_card_update` summary case                                                                    |
 
 ## Web
 

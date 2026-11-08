@@ -118,7 +118,6 @@ import {
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { CARD_WALL_FIRST_TURN_NOTE } from "../../board/firstTurnNote.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
@@ -6940,16 +6939,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 : null;
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             return Effect.gen(function* () {
-              // Roost's card wall: the first message also tells Codex to keep its card.
-              const cardNote =
-                turnInput.providerTurnOrdinal === 1 &&
-                (yield* readMcpSession(turnInput.appThread.id)) !== undefined
-                  ? [{ type: "text" as const, text: CARD_WALL_FIRST_TURN_NOTE }]
-                  : [];
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined
-                  ? [...(yield* toCodexInput(turnInput)), ...cardNote]
+                  ? yield* toCodexInput(turnInput)
                   : [],
               );
             }).pipe(

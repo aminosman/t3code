@@ -48,7 +48,6 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { boardStopHook } from "../../board/stopGuard.ts";
 import type {
   AskUserQuestionInput,
   WebSearchOutput,
@@ -1474,8 +1473,6 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
-  /** Roost's card wall: sends a turn back once when the agent left its card unreported. */
-  readonly stopHook?: HookCallback;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1599,15 +1596,8 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions || input.stopHook !== undefined
-      ? {
-          hooks: {
-            ...(deviceInstructions
-              ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] }
-              : {}),
-            ...(input.stopHook === undefined ? {} : { Stop: [{ hooks: [input.stopHook] }] }),
-          },
-        }
+    ...(deviceInstructions
+      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
       : {}),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -9996,12 +9986,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
-          const stopHook =
-            mcpOverrides.mcpServers === undefined
-              ? undefined
-              : boardStopHook(turnInput.appThread.id);
           const queryOptions = makeClaudeQueryOptions({
-            ...(stopHook === undefined ? {} : { stopHook }),
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
             resume: shouldResume,

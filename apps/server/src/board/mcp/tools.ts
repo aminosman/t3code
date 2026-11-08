@@ -94,10 +94,15 @@ export const CardUpdateOutput = Schema.Struct({
 
 const CardUpdateTool = Tool.make("t3_card_update", {
   description:
-    "Keep your thread's card on the user's card wall current: its column, a short summary, " +
-    "who acts next, who has reviewed the code, who it is assigned to, and comments. Send " +
-    "only what changed. With no arguments it changes nothing and returns the card, its " +
-    "latest comments and the board's columns with what each is for. Never archives the thread.",
+    "Read or update this thread's card on the user's card wall, a Trello-style board of " +
+    "threads. Send only the fields that changed; with no arguments it changes nothing and " +
+    "returns the card, its latest comments and the board's columns, each with the requirement " +
+    "for being in it. Moving into a column marked requiresApproval files an approval request " +
+    "instead, and a message arrives in this thread when the user decides. A column's checks " +
+    "(reviews, a pushed branch, merged, tests passing) are confirmed by Roost; a refused move " +
+    "says what is missing. When a reviews check fails on code changes, Roost starts two " +
+    "read-only reviewers on other models and their findings arrive in this thread. Never " +
+    "archives the thread.",
   parameters: CardUpdateInput,
   success: CardUpdateOutput,
   failure: Schema.Union([ThreadToolError, OrchestratorMcpFailure]),

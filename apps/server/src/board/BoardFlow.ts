@@ -16,7 +16,6 @@ import { ChildProcessSpawner } from "effect/process";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
@@ -27,8 +26,6 @@ import { compareBranch, gitIn } from "./BoardBranch.ts";
 import { checkGit, checkRecorded } from "./BoardChecks.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { BoardError, BoardService } from "./BoardService.ts";
-import { agentReportedTurn } from "./BoardSummarizer.ts";
-import { setBoardStopCheck } from "./stopGuard.ts";
 
 /** A short, stable fingerprint of text (FNV-1a), to tell one working tree from another. */
 function fingerprint(text: string): string {
@@ -112,9 +109,6 @@ export function handBackMessage(comments: ReadonlyArray<BoardComment>): string {
   const said = fresh.map((entry) => `- ${entry.body.trim()}`).join("\n");
   return `[Card wall] The user handed this card back to you.${said ? ` Their comments on it:\n${said}\n` : " "}Carry on with the work and keep the card current with t3_card_update.`;
 }
-
-const STOP_REASON =
-  "Before you end this turn, update your card with one t3_card_update call: the column, a summary, next, and reviewedBy if code changed. If you are waiting on the user, assign the card to them with a comment saying what you need. Then end the turn.";
 
 const NUDGE_MESSAGE =
   "[Card wall] Check your card with t3_card_update and move the work forward: if the current column's work is done and the next column's requirement is met, do it and move the card. If the next column needs approval, ask for it and stop. If something blocks you, say what in the card's next.";
@@ -323,23 +317,6 @@ const make = Effect.gen(function* () {
     yield* board.move({ threadIds: [threadId], stage: column.id, movedBy: "user" });
     return threadId;
   }, Effect.mapError(failed));
-
-  // A turn ending with the card unreported is sent back once to update it.
-  const stopCheck = Effect.fn("BoardFlow.stopCheck")(function* (threadId: string) {
-    const shell = yield* threads.getThreadShell(ThreadId.make(threadId));
-    if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) return null;
-    // A delegated child (a reviewer, a helper) reports to its parent, which owns the card.
-    if (shell.lineage.relationshipToParent === "subagent") return null;
-    const turnStartedAt =
-      shell.latestRunRequestedAt == null ? null : DateTime.formatIso(shell.latestRunRequestedAt);
-    const previous = (yield* board.summaries).find((entry) => entry.threadId === threadId);
-    return agentReportedTurn(previous, turnStartedAt) ? null : STOP_REASON;
-  });
-  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-  setBoardStopCheck((threadId) =>
-    runPromise(stopCheck(threadId).pipe(Effect.orElseSucceed(() => null))),
-  );
-  yield* Effect.addFinalizer(() => Effect.sync(() => setBoardStopCheck(null)));
 
   return BoardFlow.of({ decide, nudge, card, branch, checks, checkColumn, reviewTarget, addCard });
 });

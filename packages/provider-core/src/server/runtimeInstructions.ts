@@ -1,6 +1,3 @@
-// Roost: the card wall.
-import { CARD_WALL_INSTRUCTIONS } from "./cardWallInstructions.ts";
-
 const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
 Link each PR you create, take over, or push to: one link_pull_request per PR, full URL, every stack layer, as your next call. Host tools do not link for you. If linking fails, say so. Skip PRs you only read or review, and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. Never wait with sleep, loops, gh --watch, Monitor, or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch.
 </pull_request_linking>`;
@@ -53,7 +50,6 @@ export function buildRuntimeInstructionSections(runtime: RuntimeInfo): ReadonlyA
     runtimeInfo(runtime),
     PULL_REQUEST_LINKING_INSTRUCTIONS,
     THREAD_HISTORY_INSTRUCTIONS,
-    CARD_WALL_INSTRUCTIONS,
     freshThreads(FRESH_THREAD_OWNERSHIP),
     freshThreads(FRESH_THREAD_BRIEF),
   ];
@@ -68,7 +64,6 @@ export function buildRuntimeInstructions(runtime: RuntimeInfo): string {
     runtimeInfo(runtime),
     PULL_REQUEST_LINKING_INSTRUCTIONS,
     THREAD_HISTORY_INSTRUCTIONS,
-    CARD_WALL_INSTRUCTIONS,
     freshThreads(`${FRESH_THREAD_OWNERSHIP}\n${FRESH_THREAD_BRIEF}`),
   ].join("\n\n");
 }
