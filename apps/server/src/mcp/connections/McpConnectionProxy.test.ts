@@ -32,11 +32,14 @@ import * as McpStdioHost from "./McpStdioHost.ts";
 
 const threadId = ThreadId.make("thread-proxy");
 const project = ProjectId.make("project-proxy");
+/** The calling thread's project, unlike the project the connection is signed in for. */
+const threadProject = ProjectId.make("project-thread");
 const oneleet = McpConnectionId.make("oneleet");
 
 interface UpstreamCall {
   readonly authorization: string | undefined;
   readonly sessionId: string | undefined;
+  readonly caller: Readonly<Record<string, string | undefined>>;
   readonly body: string;
 }
 
@@ -51,6 +54,11 @@ const makeUpstreamRoute = (calls: Array<UpstreamCall>, acceptedKey: string) =>
       calls.push({
         authorization: request.headers.authorization,
         sessionId: request.headers["mcp-session-id"],
+        caller: {
+          environmentId: request.headers["x-t3-environment-id"],
+          threadId: request.headers["x-t3-thread-id"],
+          projectId: request.headers["x-t3-project-id"],
+        },
         body,
       });
       if (request.headers.authorization !== `Bearer ${acceptedKey}`) {
@@ -134,6 +142,7 @@ describe("McpConnectionProxy", () => {
               id: oneleet,
               name: "Oneleet",
               projectId: project,
+              threadProjectId: threadProject,
               endpoint: McpProviderSession.mcpConnectionEndpoint(
                 credential.config.endpoint,
                 oneleet,
@@ -147,6 +156,10 @@ describe("McpConnectionProxy", () => {
             accept: "application/json, text/event-stream",
             authorization: credential.config.authorizationHeader,
             "mcp-session-id": "agent-session-9",
+            // An agent cannot claim another thread, project or environment.
+            "x-t3-thread-id": "someone-else",
+            "x-t3-project-id": "other-project",
+            "x-t3-environment-id": "other-environment",
           },
           body: HttpBody.text(
             '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}',
@@ -163,6 +176,12 @@ describe("McpConnectionProxy", () => {
         expect(calls).toHaveLength(1);
         expect(calls[0]!.authorization).toBe("Bearer upstream-key");
         expect(calls[0]!.sessionId).toBe("agent-session-9");
+        // The upstream learns who is calling, from Roost, not from the agent.
+        expect(calls[0]!.caller).toEqual({
+          environmentId: credential.config.environmentId,
+          threadId,
+          projectId: threadProject,
+        });
 
         // A bearer the registry does not know is refused before any upstream call.
         const rejected = yield* httpClient.post("/mcp/connections/oneleet", {
@@ -222,6 +241,7 @@ describe("McpConnectionProxy", () => {
               id: oneleet,
               name: "Oneleet",
               projectId: project,
+              threadProjectId: project,
               endpoint: McpProviderSession.mcpConnectionEndpoint(
                 credential.config.endpoint,
                 oneleet,
@@ -242,6 +262,9 @@ describe("McpConnectionProxy", () => {
         expect(text).toContain("mcp_connection_needs_sign_in");
         expect(text).toContain("Oneleet");
         expect(calls).toHaveLength(1);
+        // A rejected call still told the upstream who was calling.
+        expect(calls[0]!.caller.threadId).toBe(threadId);
+        expect(calls[0]!.caller.projectId).toBe(project);
         yield* sessions.clear(threadId);
       }),
     ).pipe(

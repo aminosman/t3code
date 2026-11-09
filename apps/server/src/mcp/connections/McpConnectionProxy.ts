@@ -34,6 +34,20 @@ const FORWARDED_RESPONSE_HEADERS = [
   "mcp-protocol-version",
 ] as const;
 
+/**
+ * Who is calling, for the upstream: the bearer's thread (a native subagent names its
+ * parent), its project, this environment. Never taken from the agent's headers.
+ */
+const callerHeaders = (input: {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly projectId: string;
+}): Record<string, string> => ({
+  "x-t3-environment-id": input.environmentId,
+  "x-t3-thread-id": input.threadId,
+  "x-t3-project-id": input.projectId,
+});
+
 const pick = (
   headers: Readonly<Record<string, string | undefined>>,
   names: ReadonlyArray<string>,
@@ -145,11 +159,17 @@ const proxyRoute = Effect.gen(function* () {
 
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const target = upstream.value;
+  const caller = callerHeaders({
+    environmentId: config.environmentId,
+    threadId: scope.thread.threadId,
+    projectId: entry.threadProjectId,
+  });
   const send = (authorization: string | undefined) =>
     httpClient.execute(
       HttpClientRequest.make(request.method)(target.url).pipe(
         HttpClientRequest.setHeaders({
           ...pick(request.headers, FORWARDED_REQUEST_HEADERS),
+          ...caller,
           ...(authorization === undefined ? {} : { authorization }),
         }),
         body === undefined

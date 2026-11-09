@@ -40,6 +40,7 @@ describe("pi T3 MCP injection", () => {
             id: McpConnectionId.make("oneleet"),
             name: "Oneleet",
             projectId: ProjectId.make("project-pi"),
+            threadProjectId: ProjectId.make("project-pi"),
             endpoint: "http://127.0.0.1:43123/mcp/connections/oneleet",
           },
         ],
