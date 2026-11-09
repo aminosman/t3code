@@ -485,6 +485,24 @@ describe("rightPanelStore", () => {
     expect(store.getUserActionRevision(refA)).toBe(revision);
   });
 
+  it("drops Roost's old board tab during migration", () => {
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "board",
+          surfaces: [
+            { id: "board", kind: "board" },
+            { id: "browser:new", kind: "preview", resourceId: null },
+          ],
+        },
+      },
+    });
+    const state = selectThreadRightPanelState(migrated.byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["browser:new"]);
+    expect(state.activeSurfaceId).toBe("browser:new");
+  });
+
   it("restores a saved maximized panel during migration", () => {
     const migrated = migratePersistedRightPanelState({
       byThreadKey: {
