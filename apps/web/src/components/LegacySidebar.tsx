@@ -230,7 +230,6 @@ import {
   SidebarChromeHeader,
   SidebarMeetingsEntry,
 } from "./sidebar/SidebarChrome";
-import { LegacyProjectBoardButton, SidebarBoardEntry } from "./board/BoardEntryPoints";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
@@ -2425,11 +2424,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
-        <LegacyProjectBoardButton
-          projectId={project.id}
-          projectName={project.displayName}
-          className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
-        />
         <Tooltip>
           <TooltipTrigger
             render={
@@ -3124,7 +3118,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             </SidebarMenuItem>
           </SidebarMenu>
           <SidebarMeetingsEntry />
-          <SidebarBoardEntry />
         </SidebarGroup>
       }
     >

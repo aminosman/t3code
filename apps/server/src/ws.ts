@@ -194,7 +194,6 @@ import * as PushDeviceRegistry from "./push/PushDeviceRegistry.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
 import { listPushDevices, removePushDevice } from "./push/pushDevices.ts";
 import * as HistorySearch from "./historySearch/HistorySearch.ts";
-import * as BoardServer from "./board/BoardServer.ts";
 import * as Meetings from "./historySearch/Meetings.ts";
 import * as MeetingsProject from "./historySearch/MeetingsProject.ts";
 import * as PhoneMeetings from "./historySearch/PhoneMeetings.ts";
@@ -1298,7 +1297,6 @@ export const layerWsRpc = (
           Effect.provideService(ServerSettings.ServerSettingsService, settingsForPush),
         );
       const history = yield* HistorySearch.HistorySearch;
-      const boardHandlers = yield* BoardServer.rpcHandlers;
       const historyFailed = (error: HistorySearch.HistorySearchError) =>
         new HistoryApiError({ message: error.reason });
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -1900,8 +1898,6 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
-        // Roost: the card wall.
-        ...boardHandlers,
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3372,7 +3368,6 @@ export const layer = Layer.unwrap(
     const tuiInbox = yield* TuiInbox.TuiInbox;
     const tuiScreen = yield* TuiScreen.TuiScreen;
     const historySearch = yield* HistorySearch.HistorySearch;
-    const boardLayer = yield* BoardServer.captureLayer;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
@@ -3453,7 +3448,6 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(TuiInbox.TuiInbox, tuiInbox)),
               Layer.provide(Layer.succeed(TuiScreen.TuiScreen, tuiScreen)),
               Layer.provide(Layer.succeed(HistorySearch.HistorySearch, historySearch)),
-              Layer.provide(boardLayer),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(OtlpEndpointCheck.layer),

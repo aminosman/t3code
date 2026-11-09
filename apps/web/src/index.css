@@ -2,7 +2,6 @@
 @layer theme, base, clerk, components, utilities;
 @import "tailwindcss";
 /* Roost's card wall keeps its styles in its own file, away from upstream's. */
-@import "./components/board/board.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));
