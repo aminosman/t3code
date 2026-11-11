@@ -1,6 +1,7 @@
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import { roostFullAccessAllowsWithoutAsking } from "./roostFullAccess.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -9657,7 +9658,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
-          if (!requiresClaudeApproval(context)) {
+          // The CLI's live mode: a policy downgrade (init/status says default or auto) keeps asking.
+          const livePermissionMode =
+            (yield* Ref.get(queryContext))?.permissionMode ?? context.queryPolicy.permissionMode;
+          if (
+            !requiresClaudeApproval(context) ||
+            roostFullAccessAllowsWithoutAsking({
+              permissionMode: livePermissionMode,
+              runtimeMode: context.input.runtimePolicy.runtimeMode,
+              installPermissionCallback: context.queryPolicy.installPermissionCallback,
+              toolName,
+              toolInput,
+              matchedAskRule: callbackOptions.matchedAskRule,
+            })
+          ) {
             return {
               behavior: "allow",
               updatedInput: toolInput,
