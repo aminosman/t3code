@@ -37,6 +37,35 @@ export const McpConnectionUrl = TrimmedNonEmptyString.check(
   ),
 );
 
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** An `http://` loopback URL with an explicit port, e.g. `http://localhost:3118/callback`. */
+export const isMcpLoopbackRedirectUri = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "http:" &&
+      LOOPBACK_HOSTS.has(url.hostname) &&
+      url.port !== "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      url.username === "" &&
+      url.password === ""
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const McpConnectionLoopbackRedirectUri = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(2_048),
+  Schema.makeFilter((value) =>
+    isMcpLoopbackRedirectUri(value)
+      ? true
+      : "The redirect URI must be http://localhost, 127.0.0.1 or [::1] with a port, and no query.",
+  ),
+);
+
 export const McpConnectionHttpTransport = Schema.Struct({
   type: Schema.Literal("http"),
   url: McpConnectionUrl,
@@ -45,6 +74,11 @@ export const McpConnectionHttpTransport = Schema.Struct({
   scopes: Schema.optionalKey(TrimmedString),
   /** For authorization servers without dynamic client registration. */
   oauthClientId: Schema.optionalKey(TrimmedString),
+  /**
+   * For a client id whose app only allows a fixed loopback redirect: Roost
+   * sends exactly this redirect and listens there while a sign-in is open.
+   */
+  oauthRedirectUri: Schema.optionalKey(McpConnectionLoopbackRedirectUri),
 });
 export type McpConnectionHttpTransport = typeof McpConnectionHttpTransport.Type;
 

@@ -1,5 +1,8 @@
 // Fake OAuth and MCP servers answer with hand-built JSON bodies.
 // @effect-diagnostics preferSchemaOverJson:off
+// @effect-diagnostics nodeBuiltinImport:off - The tests hold a real loopback port.
+import * as NodeNet from "node:net";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { McpConnectionId, ProjectId, type McpConnection } from "@t3tools/contracts";
@@ -300,5 +303,109 @@ describe("McpConnectionService", () => {
           expect(states.at(-1)).toEqual(["connected"]);
         }).pipe(Effect.scoped);
       }).pipe(Effect.provide(testLayer(oauthHttp))),
+  );
+
+  const loopbackSeen: Array<SeenRequest> = [];
+  const loopbackHttp = fakeHttp(
+    {
+      "https://api.example.com/.well-known/oauth-protected-resource/mcp": () =>
+        json({
+          resource: "https://api.example.com/mcp",
+          authorization_servers: ["https://auth.example.com/"],
+        }),
+      "https://auth.example.com/.well-known/oauth-authorization-server": () => json(AS_METADATA),
+      "https://auth.example.com/oauth/token": () =>
+        json({ access_token: "slack-access", expires_in: 3_600 }),
+    },
+    loopbackSeen,
+  );
+
+  /** A port the OS just handed out, already released again. */
+  const freePort = Effect.callback<number>((resume) => {
+    const probe = NodeNet.createServer();
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      probe.close(() => resume(Effect.succeed(typeof address === "object" ? address!.port : 0)));
+    });
+  });
+
+  const holdPort = (port: number) =>
+    Effect.acquireRelease(
+      Effect.callback<NodeNet.Server>((resume) => {
+        const holder = NodeNet.createServer();
+        holder.listen(port, "127.0.0.1", () => resume(Effect.succeed(holder)));
+      }),
+      (holder) =>
+        Effect.callback<void>((resume) => {
+          holder.close(() => resume(Effect.void));
+        }),
+    );
+
+  it.live("signs in through a fixed loopback redirect, and refuses a port in use", () =>
+    Effect.gen(function* () {
+      const service = yield* McpConnectionService.McpConnectionService;
+      const slack = McpConnectionId.make("slack");
+      const port = yield* freePort;
+      const redirectUri = `http://localhost:${port}/callback`;
+      yield* service.upsert(slack, {
+        name: "Slack",
+        enabled: true,
+        transport: {
+          type: "http",
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauthClientId: "fixed-client",
+          oauthRedirectUri: redirectUri,
+        },
+      });
+      const started = yield* service.startOAuth({
+        id: slack,
+        projectId: project,
+        callbackOrigin: "http://127.0.0.1:3773",
+      });
+      const authorizationUrl = new URL(started.authorizationUrl);
+      expect(authorizationUrl.searchParams.get("redirect_uri")).toBe(redirectUri);
+      expect(authorizationUrl.searchParams.get("client_id")).toBe("fixed-client");
+      const state = authorizationUrl.searchParams.get("state")!;
+
+      // The service's HttpClient is the fake one; the browser's leg needs a real socket.
+      const response = yield* Effect.promise(() =>
+        // @effect-diagnostics-next-line globalFetchInEffect:off
+        fetch(`http://127.0.0.1:${port}/callback?code=code-1&state=${state}`),
+      );
+      expect(response.status).toBe(200);
+      expect(yield* Effect.promise(() => response.text())).toContain("Slack is connected");
+      const exchange = new URLSearchParams(loopbackSeen.at(-1)!.body);
+      expect(exchange.get("redirect_uri")).toBe(redirectUri);
+      expect(exchange.get("client_id")).toBe("fixed-client");
+      expect(yield* service.statuses).toEqual([
+        {
+          connectionId: slack,
+          projectId: project,
+          state: "connected",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      expect(yield* service.serversForProject(otherProject)).toEqual([]);
+
+      const busyPort = yield* freePort;
+      yield* holdPort(busyPort);
+      yield* service.upsert(slack, {
+        name: "Slack",
+        enabled: true,
+        transport: {
+          type: "http",
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauthClientId: "fixed-client",
+          oauthRedirectUri: `http://localhost:${busyPort}/callback`,
+        },
+      });
+      const busy = yield* service
+        .startOAuth({ id: slack, projectId: otherProject, callbackOrigin: "http://127.0.0.1:3773" })
+        .pipe(Effect.flip);
+      expect(busy.reason).toBe("invalid");
+      expect(busy.detail).toContain(`Port ${busyPort} is already in use`);
+    }).pipe(Effect.scoped, Effect.provide(testLayer(loopbackHttp))),
   );
 });

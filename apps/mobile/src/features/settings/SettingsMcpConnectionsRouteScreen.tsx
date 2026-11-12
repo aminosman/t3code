@@ -167,6 +167,9 @@ function ProjectRow({
   const [key, setKeyDraft] = useState("");
   const bearer = config.transport.type === "http" && config.transport.auth === "bearer";
   const connected = status?.state === "connected";
+  // The browser has to reach that loopback address, so the phone cannot finish this sign-in.
+  const signInOnServerOnly =
+    config.transport.type === "http" && config.transport.oauthRedirectUri !== undefined;
 
   async function run<A>(command: () => Promise<AtomCommandResult<A, unknown>>): Promise<A | null> {
     setPending(true);
@@ -192,7 +195,13 @@ function ProjectRow({
       <Text accessibilityLiveRegion="polite" className="text-sm text-foreground-muted">
         {error ??
           status?.detail ??
-          (connected ? "Connected." : bearer ? "Paste this project's API key." : "Needs sign-in.")}
+          (connected
+            ? "Connected."
+            : bearer
+              ? "Paste this project's API key."
+              : signInOnServerOnly
+                ? "Needs sign-in from a browser on the computer running this server."
+                : "Needs sign-in.")}
       </Text>
       {bearer && !pending ? (
         <>
@@ -221,7 +230,7 @@ function ProjectRow({
           />
         </>
       ) : null}
-      {!bearer && !connected ? (
+      {!bearer && !connected && !signInOnServerOnly ? (
         <SettingsActionRow
           icon="globe"
           label="Sign in"

@@ -1,15 +1,21 @@
+// @effect-diagnostics nodeBuiltinImport:off - A fixed loopback OAuth redirect is a Node HTTP boundary.
+import * as NodeHttp from "node:http";
+
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpRouter, HttpServerRequest } from "effect/http";
 import {
   MCP_CONNECTION_RESERVED_IDS,
   McpConnectionError,
@@ -30,6 +36,7 @@ import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { mcpConnectionAuthSecretName as authSecretName } from "../../settingsSecrets.ts";
+import { mcpConnectionCallbackResponse } from "./McpConnectionCallbackPage.ts";
 import * as McpConnectionOAuth from "./McpConnectionOAuth.ts";
 import { listUpstreamTools, serverNameOf, toolSummaries } from "./McpJsonRpc.ts";
 import * as McpStdioHost from "./McpStdioHost.ts";
@@ -87,6 +94,23 @@ const EMPTY_AUTH_RECORD: AuthRecord = { version: 1, projects: {} };
 
 export const MCP_OAUTH_CALLBACK_PATH = "/oauth/mcp/callback";
 const PENDING_FLOW_TTL_MS = 10 * 60 * 1_000;
+// Long enough for the callback page to reach the browser before its listener closes.
+const LOOPBACK_CLOSE_DELAY_MS = 1_000;
+
+/** The addresses a fixed loopback redirect is served on; `localhost` may resolve to either. */
+const loopbackListenHosts = (hostname: string): ReadonlyArray<string> =>
+  hostname === "localhost" ? ["127.0.0.1", "::1"] : hostname === "[::1]" ? ["::1"] : [hostname];
+
+const errnoCode = (cause: unknown): string | undefined =>
+  typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"
+    ? cause.code
+    : undefined;
+
+interface LoopbackListener {
+  readonly scope: Scope.Closeable;
+  /** The open sign-ins redirecting here; the listener closes when none are left. */
+  readonly states: Set<string>;
+}
 
 interface PendingFlow {
   readonly connectionId: McpConnectionId;
@@ -207,6 +231,14 @@ const make = Effect.gen(function* () {
   const httpServices = Context.make(HttpClient.HttpClient, httpClient).pipe(
     Context.add(Crypto.Crypto, crypto),
   );
+  const provided =
+    <Args extends ReadonlyArray<unknown>, A, E>(
+      method: (...args: Args) => Effect.Effect<A, E, HttpClient.HttpClient | Crypto.Crypto>,
+    ) =>
+    (...args: Args) =>
+      method(...args).pipe(Effect.provide(httpServices));
+  const serviceScope = yield* Effect.scope;
+  const loopbacks = new Map<string, LoopbackListener>();
 
   const lockFor = (id: string) =>
     Effect.suspend(() => {
@@ -404,6 +436,84 @@ const make = Effect.gen(function* () {
     }
   };
 
+  const releaseLoopback = (redirectUri: string, state: string) =>
+    Effect.suspend(() => {
+      const listener = loopbacks.get(redirectUri);
+      if (listener === undefined) return Effect.void;
+      listener.states.delete(state);
+      if (listener.states.size > 0) return Effect.void;
+      loopbacks.delete(redirectUri);
+      return Scope.close(listener.scope, Exit.void);
+    });
+
+  /**
+   * Serves a fixed loopback redirect for one sign-in: the browser lands on
+   * this listener instead of Roost's own origin. Shared by sign-ins to the same
+   * redirect; a port someone else holds fails the sign-in before it starts.
+   */
+  const listenLoopback = Effect.fn("McpConnectionService.listenLoopback")(function* (
+    redirectUri: string,
+    state: string,
+  ) {
+    const existing = loopbacks.get(redirectUri);
+    if (existing !== undefined) {
+      existing.states.add(state);
+      return;
+    }
+    const target = new URL(redirectUri);
+    const port = Number(target.port);
+    const route = HttpRouter.add(
+      "GET",
+      `/${target.pathname.slice(1)}`,
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const callbackUrl = new URL(request.url, target.origin);
+        const response = yield* mcpConnectionCallbackResponse(
+          provided(completeOAuth)(callbackUrl),
+          target.pathname,
+        );
+        yield* releaseLoopback(redirectUri, callbackUrl.searchParams.get("state") ?? "").pipe(
+          Effect.delay(LOOPBACK_CLOSE_DELAY_MS),
+          Effect.forkIn(serviceScope),
+        );
+        return response;
+      }),
+    );
+    const scope = yield* Scope.fork(serviceScope, "sequential");
+    for (const host of loopbackListenHosts(target.hostname)) {
+      yield* HttpRouter.serve(route, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.provide(
+          NodeHttpServer.layer(NodeHttp.createServer, {
+            host,
+            port,
+            disablePreemptiveShutdown: true,
+          }),
+        ),
+        Layer.buildWithScope(scope),
+        Effect.catchTags({
+          ServeError: (error) => {
+            const code = errnoCode(error.cause);
+            // A machine without IPv6 loopback still answers `localhost` on 127.0.0.1.
+            if (host === "::1" && target.hostname === "localhost" && code !== "EADDRINUSE") {
+              return Effect.void;
+            }
+            return Effect.fail(
+              new McpConnectionError({
+                reason: "invalid",
+                detail:
+                  code === "EADDRINUSE"
+                    ? `Port ${port} is already in use, so Roost cannot receive the sign-in at ${redirectUri}. Another app (Claude Code uses the same port for some servers) may be signing in; finish or close that and try again.`
+                    : `Roost could not listen at ${redirectUri} for the sign-in: ${code ?? String(error.cause)}.`,
+              }),
+            );
+          },
+        }),
+        Effect.onError(() => Scope.close(scope, Exit.void)),
+      );
+    }
+    loopbacks.set(redirectUri, { scope, states: new Set([state]) });
+  });
+
   const startOAuth = Effect.fn("McpConnectionService.startOAuth")(function* (
     input: McpConnectionConnectInput,
   ) {
@@ -414,14 +524,15 @@ const make = Effect.gen(function* () {
         detail: `"${config.name}" does not sign in with OAuth.`,
       });
     }
+    const fixedRedirectUri = config.transport.oauthRedirectUri;
     const origin = httpOriginOf(input.callbackOrigin);
-    if (origin === undefined) {
+    if (fixedRedirectUri === undefined && origin === undefined) {
       return yield* new McpConnectionError({
         reason: "invalid",
         detail: "The callback origin must be an HTTP(S) URL.",
       });
     }
-    const redirectUri = `${origin}${MCP_OAUTH_CALLBACK_PATH}`;
+    const redirectUri = fixedRedirectUri ?? `${origin}${MCP_OAUTH_CALLBACK_PATH}`;
     const discovery = yield* McpConnectionOAuth.discover(config.transport.url);
     const metadata = discovery.authorizationServer;
     const issuer = metadata.issuer ?? "";
@@ -462,6 +573,15 @@ const make = Effect.gen(function* () {
       ...(input.returnUrl === undefined ? {} : { returnUrl: input.returnUrl }),
       expiresAt: now + PENDING_FLOW_TTL_MS,
     });
+    if (fixedRedirectUri !== undefined) {
+      yield* listenLoopback(fixedRedirectUri, pkce.state).pipe(
+        Effect.tapError(() => Effect.sync(() => pendingFlows.delete(pkce.state))),
+      );
+      yield* releaseLoopback(fixedRedirectUri, pkce.state).pipe(
+        Effect.delay(PENDING_FLOW_TTL_MS),
+        Effect.forkIn(serviceScope),
+      );
+    }
     return {
       authorizationUrl: McpConnectionOAuth.buildAuthorizationUrl({
         metadata,
@@ -737,13 +857,6 @@ const make = Effect.gen(function* () {
       ...(upstream.authorization === undefined ? {} : { authorization: upstream.authorization }),
     });
   });
-
-  const provided =
-    <Args extends ReadonlyArray<unknown>, A, E>(
-      method: (...args: Args) => Effect.Effect<A, E, HttpClient.HttpClient | Crypto.Crypto>,
-    ) =>
-    (...args: Args) =>
-      method(...args).pipe(Effect.provide(httpServices));
 
   return McpConnectionService.of({
     upsert,

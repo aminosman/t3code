@@ -1,4 +1,5 @@
 import {
+  isMcpLoopbackRedirectUri,
   McpConnectionId,
   MCP_CONNECTION_RESERVED_IDS,
   type EnvironmentId,
@@ -99,6 +100,9 @@ export function AddMcpConnectionDialog({
   const [clientId, setClientId] = useState(
     initialTransport?.type === "http" ? (initialTransport.oauthClientId ?? "") : "",
   );
+  const [redirectUri, setRedirectUri] = useState(
+    initialTransport?.type === "http" ? (initialTransport.oauthRedirectUri ?? "") : "",
+  );
   const [commandLine, setCommandLine] = useState(
     initialTransport?.type === "stdio"
       ? [initialTransport.command, ...initialTransport.args].join(" ")
@@ -116,10 +120,17 @@ export function AddMcpConnectionDialog({
   const effectiveId = idTouched ? id : mcpConnectionIdFromName(name);
   const trimmedUrl = url.trim();
   const commandParts = splitArgs(commandLine.trim());
+  const trimmedRedirectUri = redirectUri.trim();
+  const redirectUriInvalid =
+    auth === "oauth" &&
+    trimmedRedirectUri.length > 0 &&
+    !isMcpLoopbackRedirectUri(trimmedRedirectUri);
   const canSave =
     name.trim().length > 0 &&
     isValidId(effectiveId) &&
-    (transport === "http" ? /^https?:\/\//u.test(trimmedUrl) : commandParts.length > 0);
+    (transport === "http"
+      ? /^https?:\/\//u.test(trimmedUrl) && !redirectUriInvalid
+      : commandParts.length > 0);
 
   const close = () => {
     setError(null);
@@ -139,6 +150,9 @@ export function AddMcpConnectionDialog({
               auth,
               ...(auth === "oauth" && scopes.trim() ? { scopes: scopes.trim() } : {}),
               ...(auth === "oauth" && clientId.trim() ? { oauthClientId: clientId.trim() } : {}),
+              ...(auth === "oauth" && trimmedRedirectUri
+                ? { oauthRedirectUri: trimmedRedirectUri }
+                : {}),
             },
           }
         : {
@@ -312,6 +326,23 @@ export function AddMcpConnectionDialog({
                             value={clientId}
                             onChange={(event) => setClientId(event.target.value)}
                           />
+                        </div>
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="mcp-connection-redirect-uri">
+                            Redirect URI (optional)
+                          </Label>
+                          <Input
+                            id="mcp-connection-redirect-uri"
+                            placeholder="http://localhost:3118/callback"
+                            value={redirectUri}
+                            aria-invalid={redirectUriInvalid || undefined}
+                            onChange={(event) => setRedirectUri(event.target.value)}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            {redirectUriInvalid
+                              ? "Use http://localhost, 127.0.0.1 or [::1] with a port."
+                              : "Only when the client id's app allows one fixed loopback redirect. Sign in from a browser on the computer running this server."}
+                          </p>
                         </div>
                       </>
                     ) : null}
